@@ -1,1 +1,3 @@
-class LocalBackup:
+from backupbase import BackupBase
+
+class LocalBackup(BackupBase):
