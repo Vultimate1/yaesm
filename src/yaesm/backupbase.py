@@ -1,24 +1,24 @@
-from abc import ABC
+import abc
 
-class BackupBase(ABC):
+class BackupBase(abc.ABC):
     """Abstract base class for the Snapshot, LocalBackup, and SSHBackup classes."""
 
-    @abstractmethod
+    @abc.abstractmethod
     def bootstrap(self):
         """Perform the bootstrap process for the backup environment (for this backup)."""
         ...
 
-    @abstractmethod
+    @abc.abstractmethod
     def execute(self):
         """Execute a single backup (for this backup)."""
         ...
 
-    @abstractmethod
+    @abc.abstractmethod
     def cleanup(self):
         """Cleanup after executing a backup (for this backup)."""
         ...
 
-    @abstractmethod
+    @abc.abstractmethod
     def all_existing(self):
         """Return list of all exisiting backups (for this backup) on the filesystem."""
         ...

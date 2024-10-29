@@ -1,10 +1,12 @@
 import yaml
+from snapshot import Snapshot
+from localbackup import LocalBackup
+from sshbackup import SSHBackup
 
 class Config:
 
-    """
-    Basic overview of Config class:
-      config = Config.new(path_to_config_file)
+    """Basic overview of Config class:
+      config = Config(path_to_config_file)
       config.snapshots = [list of Snapshot objects]
       config.local_backups = [list of LocalBackup objects]
       config.ssh_backups = [list of SSHBackup objects]
@@ -44,7 +46,6 @@ class Config:
           daily_times:
             11:30
             23:59
-
 
       ssh_backups:
         home_to_my_server:
@@ -87,38 +88,38 @@ class Config:
 
         self.snapshots = []
         for name, vals in c["snapshots"].items():
-            snapshot = Snapshot.new(name, vals)
+            snapshot = Snapshot(name, vals)
             self.snapshots.append(snapshot)
 
         self.local_backups = []
         for name, vals in c["local_backups"].items():
-            local_backup = LocalBackup.new(name, vals)
+            local_backup = LocalBackup(name, vals)
             self.local_backups.append(local_backup)
 
         self.ssh_backups = []
         for name, vals in c["ssh_backups"].items():
-            ssh_backup = SSHBackup.new(name, vals)
+            ssh_backup = SSHBackup(name, vals)
             self.ssh_backups.append(ssh_backup)
 
-        self.remote_backups = []
-        for name, vals in c["remote_backups"].items():
-            remote_backup = RemoteBackup.new(name, vals)
-            self.remote_backups.append(remote_backup)
+        # self.remote_backups = []
+        # for name, vals in c["remote_backups"].items():
+        #     remote_backup = RemoteBackup(name, vals)
+        #     self.remote_backups.append(remote_backup)
 
         for key, val in c["settings"]:
             if self.__valid_setting(name, val):
                 self.settings.key = val
 
     def display_backups(type):
-	if type=="local":
+        if type=="local":
             for backup in self.local_backups:
                 print("SSH: |  dest  |  key  ")
                 print("     |  ", self.local_backups[i].name, "  |  ",  self.local_backups[i].val)
-	if type=="ssh":
+        if type=="ssh":
             for backup in self.ssh_backups:
                 print("SSH: |  dest  |  key  ")
                 print("     |  ", self.ssh_backups[i].name, "  |  ",  self.ssh_backups[i].val)
-	if type=="snapshots":
+        if type=="snapshots":
             for backup in self.snapshots:
                 print("SSH: |  dest  |  key  ")
                 print("     |  ", self.snapshots[i].name, "  |  ", self.snapshots[i].val)
@@ -126,4 +127,3 @@ class Config:
             for backup in self.remote_backups:
                 print("SSH: |  dest  |  key  ")
                 print("     |  ", self.remote_backups[i].name, "  |  ", self.remote_backups[i].val)
-	
