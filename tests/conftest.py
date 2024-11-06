@@ -5,7 +5,7 @@ import subprocess
 def superuser():
     """Fixture to skip the test if we are not the superuser."""
     whoami = subprocess.run(["whoami"], capture_output=True, encoding="utf-8")
-    if "root" != whoami.stdout.rstrip():
+    if "root" != whoami.stdout.removesuffix("\n"):
         pytest.skip("superuser required")
     return True
 
