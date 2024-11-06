@@ -16,19 +16,16 @@ def loopback_generator(superuser, tmp_path_factory):
 
     def generator():
         loopfile = tmp_path_factory.mktemp("loop") / "loop"
-        truncate = subprocess.run(["truncate", "--size", "1G", loopfile])
-        truncate.check_returncode()
-        losetup = subprocess.run(["losetup", "--find", "--show", loopfile], capture_output=True, encoding="utf-8")
-        losetup.check_returncode()
-        loop = losetup.stdout.rstrip()
+        subprocess.run(["truncate", "--size", "1G", loopfile], check=True)
+        losetup = subprocess.run(["losetup", "--find", "--show", loopfile], check=True, capture_output=True, encoding="utf-8")
+        loop = losetup.stdout.removesuffix("\n")
         generated_loopbacks.append(loop)
         return loop
 
     yield generator
 
     for loop in generated_loopbacks:
-        losetup = subprocess.run(["losetup", "--detach", loop])
-        losetup.check_returncode()
+        subprocess.run(["losetup", "--detach", loop], check=True)
 
 @pytest.fixture
 def loopback(loopback_generator):
