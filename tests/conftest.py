@@ -16,7 +16,7 @@ def superuser():
 
 @pytest.fixture
 def tmp_base_0755_perms(tmp_path_factory):
-    """Fixture to ensure the base of temporary directories has 0755 permissions.
+    """Fixture to ensure the base of temporary directories have 0755 permissions.
     By default these directories have 0700 permissions meaning only the owner of
     the temp base can access its contents. Puts permissions back to original
     during cleanup.
