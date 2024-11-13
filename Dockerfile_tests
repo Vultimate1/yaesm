@@ -1,0 +1,22 @@
+# This Dockerfile is used for building a container to run the yaesm test suite.
+# Usage (from yaesm root):
+#   $ docker build -t yaesm-tests -f Dockerfile_tests .
+#   $ docker run --privileged=true --rm yaesm-tests
+
+FROM debian
+
+RUN apt-get --yes update \
+ && apt-get --yes upgrade \
+ && apt-get --yes install python3 python3-venv python3-pip \
+ && apt-get --yes install sudo openssh-client openssh-server rsync btrfs-progs
+
+# for ssh
+EXPOSE 22
+
+RUN mkdir /yaesm
+COPY . /yaesm
+WORKDIR /yaesm
+RUN python3 -m venv /yaesm-venv
+RUN . /yaesm-venv/bin/activate && pip3 install -r requirements.txt -r requirements_tests.txt
+
+ENTRYPOINT ["/bin/sh", "-c", "mkdir /run/sshd && /usr/sbin/sshd && . /yaesm-venv/bin/activate && pytest tests"]
