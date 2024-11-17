@@ -1,0 +1,42 @@
+# This Dockerfile is used for building a container to run the yaesm test suite with pytest.
+#
+# Usage (from yaesm root):
+#   $ docker build -t yaesm-pytest -f Dockerfile_tests .
+#   $ docker run -v .:/mnt-yaesm/yaesm yaesm-pytest $PYTEST_ARGS
+#
+# Note that the yaesm root must be mounted at /mnt-yaesm/yaesm.
+
+FROM debian
+
+RUN apt-get --yes update \
+ && apt-get --yes upgrade \
+ && apt-get --yes install python3 python3-venv python3-pip \
+ && apt-get --yes install sudo openssh-client openssh-server rsync btrfs-progs
+
+# for ssh
+EXPOSE 22
+
+RUN mkdir /yaesm-build-time
+COPY . /yaesm-build-time
+RUN python3 -m venv /yaesm-venv
+RUN . /yaesm-venv/bin/activate && pip3 install -r /yaesm-build-time/requirements.txt -r /yaesm-build-time/requirements_tests.txt
+
+RUN mkdir /mnt-yaesm
+
+RUN touch /yaesm-pytest.sh
+RUN chmod +x /yaesm-pytest.sh
+
+RUN echo '#!/bin/sh' > /yaesm-pytest.sh && \
+    echo 'set -e' >> /yaesm-pytest.sh && \
+    echo 'if [ ! -d /run/sshd ]; then' >> /yaesm-pytest.sh && \
+    echo '  mkdir /run/sshd' >> /yaesm-pytest.sh && \
+    echo 'fi' >> /yaesm-pytest.sh && \
+    echo 'if [ ! -d /mnt-yaesm/yaesm ]; then' >> /yaesm-pytest.sh && \
+    echo '  echo Error the docker run command should have opt -v' "'\$YAESM_DIR':/mnt-yaesm. Exiting. 1>&2" >> /yaesm-pytest.sh && \
+    echo '  exit 1' >> /yaesm-pytest.sh && \
+    echo 'fi' >> /yaesm-pytest.sh && \
+    echo 'cd /mnt-yaesm/yaesm' >> /yaesm-pytest.sh && \
+    echo '. /yaesm-venv/bin/activate' >> /yaesm-pytest.sh && \
+    echo 'exec pytest "$@"' >> /yaesm-pytest.sh
+
+ENTRYPOINT ["/yaesm-pytest.sh"]
