@@ -75,6 +75,11 @@ def localhost_server_generator(ssh_key_generator, tmp_user_generator, tmp_path_f
     return generator
 
 @pytest.fixture
+def localhost_server(localhost_server_generator):
+    """Fixture to setup a single localhost mock ssh server."""
+    return localhost_server_generator()
+
+@pytest.fixture
 def ssh_key_generator(tmp_path_factory):
     """Fixture for creating temporary ssh keys. Returns path to the generated
     private ssh key. The public key name is the private key name suffixed with
