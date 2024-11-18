@@ -13,7 +13,7 @@ class SSHTarget:
     used for authentication to the server.
 
     Example::
-        sshtarget = SSHTarget("ssh://p22:fred@fredserver:/home/backups", "/home/larry/.ssh/id_rsa")
+        sshtarget = SSHTarget("ssh://p22:fred@fredserver:/home/backups", Path("/home/larry/.ssh/id_rsa"))
         returncode, stdout, stderr = sshtarget.exec_command(f"ls -l {sshtarget.path}")
     """
     def __init__(self, target_spec, key:Path):
