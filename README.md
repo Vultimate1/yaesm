@@ -9,7 +9,7 @@ Please do not hesitate to open an [issue](https://github.com/Vultimate1/yaesm/is
 To run the test suite use the `docker-pytest.sh` script:
 
 ```
-$ ./docker-pytest.sh -H ### print docker-pytest help message
+$ ./docker-pytest.sh -H ### print docker-pytest.sh help message
 $ ./docker-pytest.sh ./tests
 $ ./docker-pytest.sh $PYTEST_ARGS
 ```
