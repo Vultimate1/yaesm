@@ -7,7 +7,7 @@ DAYS_IN_MONTH_NO_LEAP_YEAR = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
 def get_hours_and_minutes(times) -> tuple:
     """Returns a tuple of the list of hours and the list of minutes respectively.
     These lists a parallel.
-    
+
     On failure (where a time is not of type `datetime.datetime`), both entries = `-1`."""
     minutes, hours = []
     for t in times:
@@ -23,7 +23,7 @@ class Timeframe:
 
     Given a valid timeframe type, the object will attempt to
     convert the arguments into a list of times for backups.
-    
+
     `**kwargs` must contain any other information related to a
     timeframe from the yaml file (other than keep). This class
     assumes that all additional args for a timeframe have been 
@@ -31,6 +31,7 @@ class Timeframe:
 
     def __init__(self, frame_type, keep, **kwargs):
         self.keep = keep
+        self.frame_type = frame_type
 
         self.iters = []
         type_init_pairings = {
