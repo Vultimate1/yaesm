@@ -1,9 +1,6 @@
 from datetime import datetime
 import croniter
 
-VALID_DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
-DAYS_IN_MONTH_NO_LEAP_YEAR = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
-
 def get_hours_and_minutes(times) -> tuple:
     """Returns a tuple of the list of hours and the list of minutes respectively.
     These lists a parallel.
@@ -29,6 +26,9 @@ class Timeframe:
     assumes that all additional args for a timeframe have been 
     passed on init."""
 
+    VALID_DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+    DAYS_IN_MONTH_NO_LEAP_YEAR = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+
     def __init__(self, frame_type, keep, **kwargs):
         self.keep = keep
         self.frame_type = frame_type
@@ -48,6 +48,13 @@ class Timeframe:
         except KeyError:
             # TODO: What to do other than just re-raise?
             raise KeyError("'{0}' is not a valid timeframe type.".format(frame_type))
+
+    def check_keep_limit(self):
+        """Checks if we've exceeded the limit set by `Timeframe.keep`.
+        Deletes the earliest backups until the amount is equal to the
+        limit again."""
+        # TODO
+        pass
 
     def _five_minute_init(self, base, **kwargs):
         # Every 5 minutes...
@@ -82,7 +89,7 @@ class Timeframe:
 
         days = kwargs["days"]
         for i in range(len(days)):
-            if type(days[i]) != str or days[i] not in VALID_DAYS:
+            if type(days[i]) != str or days[i] not in self.VALID_DAYS:
                 raise TypeError("All values in 'weekly_days' must be valid days of the week.")
             # croniter only needs the first 3 chars of the day.
             days[i] = days[i][0:3]
@@ -123,9 +130,9 @@ class Timeframe:
                     "All values in 'yearly_days' must be integers in range [1, 365]."
                 )
             month = 1
-            for m in DAYS_IN_MONTH_NO_LEAP_YEAR:
-                if days[i] > DAYS_IN_MONTH_NO_LEAP_YEAR[m]:
-                    days[i] -= DAYS_IN_MONTH_NO_LEAP_YEAR[m]
+            for m in self.DAYS_IN_MONTH_NO_LEAP_YEAR:
+                if days[i] > self.DAYS_IN_MONTH_NO_LEAP_YEAR[m]:
+                    days[i] -= self.DAYS_IN_MONTH_NO_LEAP_YEAR[m]
                     month += 1
             months.append(month)
 

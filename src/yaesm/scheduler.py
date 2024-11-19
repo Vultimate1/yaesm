@@ -25,8 +25,7 @@ class Scheduler:
         for time_iter, obj in self.timeframe_iters:
             if time_iter.get_next(datetime) <= present:
                 # TODO Make a backup here!
-                # TODO Check if we've exceeded the Timeframe's keep amount
-                continue
+                obj.check_keep()
             else:
                 if time_iter.get_prev(datetime) < next_timeframe:
                     next_timeframe = time_iter
