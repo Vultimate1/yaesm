@@ -3,12 +3,25 @@ from yaesm.sshtarget import SSHTarget, SSHTargetException
 from pathlib import Path
 
 @pytest.fixture
-def sshtarget(localhost_server):
-    user = localhost_server["user"]
-    key = localhost_server["key"]
-    target_spec = f"ssh://p22:{user.pw_name}@localhost:{user.pw_dir}"
-    sshtarget = SSHTarget(target_spec, key)
-    return sshtarget
+def sshtarget_generator(localhost_server_generator):
+    """Fixture for generating SSHTargets for mock localhost ssh servers. Note
+    that the target path is the home directory of the localhost ssh server user.
+    """
+    def generator():
+        localhost_server = localhost_server_generator()
+        user = localhost_server["user"]
+        key = localhost_server["key"]
+        target_spec = f"ssh://p22:{user.pw_name}@localhost:{user.pw_dir}"
+        sshtarget = SSHTarget(target_spec, key)
+        return sshtarget
+    return generator
+
+@pytest.fixture
+def sshtarget(sshtarget_generator):
+    """Fixture for generating a single SSHTarget on a mock localhost ssh server.
+    See the sshtarget_generator fixture for more information.
+    """
+    return sshtarget_generator()
 
 def test_sshtarget_constructor(localhost_server):
     user = localhost_server["user"]
