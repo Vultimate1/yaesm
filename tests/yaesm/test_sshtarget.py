@@ -25,7 +25,11 @@ def test_sshtarget_constructor(localhost_server):
     assert target.key  == key
 
 def test_sshtarget_connection_and_command_execution(sshtarget):
-    returncode, stdout, stderr = sshtarget.exec_command("whoami && echo foo 1>&2 && exit 12")
+    returncode, stdout_str, stderr_str = sshtarget.exec_command("whoami && echo foo 1>&2 && exit 12")
     assert returncode == 12
-    assert stdout == f"{sshtarget.user}\n"
-    assert stderr == "foo\n"
+    assert stdout_str == f"{sshtarget.user}\n"
+    assert stderr_str == "foo\n"
+
+    stdin, stdout, stderr = sshtarget.exec_command("echo foo && echo bar 1>&2", return_files=True)
+    assert stdout.read().decode("utf-8") == "foo\n"
+    assert stderr.read().decode("utf-8") == "bar\n"
