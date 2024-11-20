@@ -1,63 +1,42 @@
+### conftest.py is implicitly imported into all pytest test files. This file
+### can be thought of as a collection of globally available pytest fixtures.
+
 import pytest
 import subprocess
 import os
 import pwd
 import grp
+import shutil
 from random import choice
 from string import ascii_lowercase
 from pathlib import Path
 
 @pytest.fixture
-def superuser():
-    """Fixture to skip the test if we are not the superuser."""
-    if os.geteuid() != 0:
-        pytest.skip("superuser required")
-    return True
-
-@pytest.fixture
-def tmp_base_0755_perms(tmp_path_factory):
-    """Fixture to ensure the base of temporary directories have 0755 permissions.
-    By default these directories have 0700 permissions meaning only the owner of
-    the temp base can access its contents. Puts permissions back to original
-    during cleanup.
-    """
-    tmp_base = tmp_path_factory.getbasetemp()
-    tmp_base_mode = tmp_base.stat().st_mode
-    tmp_base_base = tmp_base.parent
-    tmp_base_base_mode = tmp_base_base.stat().st_mode
-    tmp_base.chmod(0o755)
-    tmp_base_base.chmod(0o755)
-    yield
-    tmp_base.chmod(tmp_base_mode)
-    tmp_base_base.chmod(tmp_base_base_mode)
-
-@pytest.fixture
-def loopback_generator(superuser, tmp_path_factory):
-    """Fixture to generate and cleanup loopback devices."""
-    loopbacks = []
+def loopback_generator(path_generator):
+    """Fixture to generate loopback devices."""
     def generator():
-        loopfile = tmp_path_factory.mktemp("loop") / "loop"
+        loopfile = None
+        while loopfile is None or loopfile.is_file():
+            loopfile = path_generator("yaesm-test-loopfile")
         subprocess.run(["truncate", "--size", "1G", loopfile], check=True)
         losetup = subprocess.run(["losetup", "--find", "--show", loopfile], check=True, capture_output=True, encoding="utf-8")
         loop = Path(losetup.stdout.removesuffix("\n"))
-        loopbacks.append(loop)
         return loop
-
-    yield generator
-
-    for loop in loopbacks:
-        subprocess.run(["losetup", "--detach", loop], check=True)
+    return generator
 
 @pytest.fixture
 def loopback(loopback_generator):
-    """Fixture for a single loopback device."""
+    """Fixture to generate a single loopback device. See the loopback_generator
+    fixture for more information.
+    """
     return loopback_generator()
 
 @pytest.fixture
-def localhost_server_generator(ssh_key_generator, tmp_user_generator, tmp_path_factory):
+def localhost_server_generator(ssh_key_generator, tmp_user_generator):
     """Fixture to setup mock ssh servers on the localhost. This fixture makes
     key auth possible as it will create and add the ssh_key to the localhost
     server users ~/.ssh/authorized_keys file to allow passwordless login.
+    The generator function returns a hash - {"user":pwd_object, "key":path_to_key}
     """
     def generator():
         user = tmp_user_generator()
@@ -76,72 +55,93 @@ def localhost_server_generator(ssh_key_generator, tmp_user_generator, tmp_path_f
 
 @pytest.fixture
 def localhost_server(localhost_server_generator):
-    """Fixture to setup a single localhost mock ssh server."""
+    """Fixture to setup a single mock ssh server on the localhost. See
+    the localhost_server_generator fixture for more information."""
     return localhost_server_generator()
 
 @pytest.fixture
-def ssh_key_generator(tmp_path_factory):
-    """Fixture for creating temporary ssh keys. Returns path to the generated
-    private ssh key. The public key name is the private key name suffixed with
-    '.pub'.
+def ssh_key_generator(path_generator):
+    """Fixture for generating ssh keys. Returns path to the generated private
+    ssh key. The public key name is the private key name suffixed with '.pub'.
     """
     def generator():
-        key = tmp_path_factory.mktemp("tmp_ssh_key").joinpath("id_rsa")
+        key = path_generator("id_rsa")
         subprocess.run(["ssh-keygen", "-N", "", "-t", "rsa", "-b", "4096", "-f", key], check=True)
         return key
-    return generator # cleanup happens automatically due to tmp_path_factory
+    return generator
 
 @pytest.fixture
-def yaesm_test_users_group(superuser):
-    """Fixture for creating a temporary group named 'yaesm-test-users'. Returns
-    a grp object for the created group.
+def ssh_key(ssh_key_generator):
+    """Fixture to provide a single ssh key. See the ssh_key_generator fixture
+    for more information.
     """
-    group = "yaesm-test-users"
-    subprocess.run(["groupadd", "--force", group], check=True)
-    yield grp.getgrnam(group)
-    subprocess.run(["groupdel", group], check=True)
+    return ssh_key_generator()
 
 @pytest.fixture
-def tmp_user_home(tmp_base_0755_perms, tmp_path_factory):
-    """Fixture to provide the temporary directory to be used as the base home
-    directory for temporary users. Note that this uses the them 'tmp_base_0755_perms'
-    fixture to ensure that the temporary directory base can actually be reached
-    by the temporary user.
+def yaesm_test_users_group():
+    """Fixture for creating a group named 'yaesm-test-users'. Returns a grp
+    object for the created group.
     """
-    home = tmp_path_factory.mktemp("tmp_user_home")
-    home.chmod(0o755)
-    return home
+    group_name = "yaesm-test-users"
+    subprocess.run(["groupadd", "--force", group_name], check=True)
+    return grp.getgrnam(group_name)
 
 @pytest.fixture
-def tmp_user_generator(superuser, yaesm_test_users_group, tmp_user_home):
+def tmp_user_generator(yaesm_test_users_group, random_string_generator):
     """Fixture to generate and cleanup temporary users on the system. Note that
     the created user has a locked password meaning only root can sign in as this
     user. The returned value is a pwd object for the created user.
     """
-    tmp_users = []
     def generator():
-        username = ""
+        username = None
         while True:
             try:
-                username = "yaesm-test-user-" + ''.join(choice(ascii_lowercase) for i in range(5))
+                username = "yaesm-test-user-" + random_string_generator()
                 pwd.getpwnam(username)
             except:
                 break
-        subprocess.run(["useradd", "-m", "-b", tmp_user_home, "-G", yaesm_test_users_group.gr_name, username], check=True)
+        subprocess.run(["useradd", "-m", "-G", yaesm_test_users_group.gr_name, username], check=True)
         subprocess.run(["passwd", "--lock", username], check=True)
         user = pwd.getpwnam(username)
-        tmp_users.append(user)
         return user
-
-    yield generator
-
-    for user in tmp_users:
-        # users home dir is a tmp_path so no need to use --remove option here
-        subprocess.run(["userdel", "--force", user.pw_name], check=True)
+    return generator
 
 @pytest.fixture
 def tmp_user(tmp_user_generator):
-    """Fixture for creating and deleting a temporary user on the system. Note
-    that the returned user is a pwd object.
+    """Fixture for creating a temporary user on the system. See the tmp_user_generator
+    fixture for more information.
     """
     return tmp_user_generator()
+
+@pytest.fixture
+def random_string_generator():
+    """Fixture for generating random ascii lowercase strings of arbitrary length."""
+    def generator(length=5):
+        return "".join(choice(ascii_lowercase) for i in range(length))
+    return generator
+
+@pytest.fixture
+def path_generator(random_string_generator):
+    """Fixture for generating paths that do not exist on the system. Allows
+    callers to specify the prefix of the basename of the path, the length of the
+    basenames random suffix, the base_dir of the path, and if the path should be
+    removed during cleanup.
+    """
+    tmp_paths_to_cleanup = []
+    def generator(name_prefix, base_dir="/tmp", suffix_length=5, cleanup=False):
+        base_dir = Path(base_dir)
+        tmp_path = None
+        while tmp_path is None or tmp_path.exists():
+            basename = name_prefix + random_string_generator(length=suffix_length)
+            tmp_path = base_dir.joinpath(basename)
+        if cleanup:
+            tmp_paths_to_cleanup.append(tmp_path)
+        return tmp_path
+
+    yield generator
+
+    for path in tmp_paths_to_cleanup:
+        if path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path)
