@@ -13,3 +13,5 @@ $ ./docker-pytest.sh -H ### print docker-pytest.sh help message
 $ ./docker-pytest.sh ./tests
 $ ./docker-pytest.sh $PYTEST_ARGS
 ```
+
+Note that all tests assume they are running in a containerized environment. It is NOT SAFE to run the test suite without the use of `docker-pytest.sh`. See `tests/README` for more information about the test suite.
