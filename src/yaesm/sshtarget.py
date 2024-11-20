@@ -1,6 +1,5 @@
 import paramiko
 import re
-import subprocess
 from pathlib import Path
 
 class SSHTargetException(Exception):
