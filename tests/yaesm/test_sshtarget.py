@@ -58,16 +58,6 @@ def test_sshtarget_constructor():
     assert target.path == Path("/a/random/path")
     assert target.key  == key
 
-# def test_sshtarget_connection_and_command_execution(sshtarget):
-#     returncode, stdout_str, stderr_str = sshtarget.exec_command("whoami && echo foo 1>&2 && exit 12")
-#     assert returncode == 12
-#     assert stdout_str == f"{sshtarget.user}\n"
-#     assert stderr_str == "foo\n"
-
-#     stdin, stdout, stderr = sshtarget.exec_command("echo foo && echo bar 1>&2", return_files=True)
-#     assert stdout.read().decode("utf-8") == "foo\n"
-#     assert stderr.read().decode("utf-8") == "bar\n"
-
 def test_openssh_command(sshtarget):
     proc = subprocess.Popen(sshtarget.openssh_cmd("whoami && printf '%s\\n' foo 1>&2 && exit 73"), encoding="utf-8", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout_str, stderr_str = proc.communicate()
