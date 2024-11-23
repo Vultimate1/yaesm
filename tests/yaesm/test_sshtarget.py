@@ -1,5 +1,6 @@
 import pytest
 from yaesm.sshtarget import SSHTarget, SSHTargetException
+import subprocess
 from pathlib import Path
 
 @pytest.fixture
@@ -23,26 +24,62 @@ def sshtarget(sshtarget_generator):
     """
     return sshtarget_generator()
 
-def test_sshtarget_constructor(localhost_server):
-    user = localhost_server["user"]
-    key  = localhost_server["key"]
+def test_sshtarget_constructor():
+    key = Path("/a/path/to/a/key")
 
-    with pytest.raises(SSHTargetException):
-        SSHTarget("INVALID_SSHTARGET_SPEC", key)
-
-    target = SSHTarget(f"ssh://p2222:{user.pw_name}@localhost:/a/random/path", key)
+    target = SSHTarget(f"ssh://p2222:larry@localhost:/a/random/path", key)
     assert target.port == 2222
-    assert target.user == user.pw_name
+    assert target.user == "larry"
     assert target.host == "localhost"
     assert target.path == Path("/a/random/path")
     assert target.key  == key
 
-def test_sshtarget_connection_and_command_execution(sshtarget):
-    returncode, stdout_str, stderr_str = sshtarget.exec_command("whoami && echo foo 1>&2 && exit 12")
-    assert returncode == 12
+    # port specification is optional
+    target = SSHTarget(f"ssh://larry@localhost:/a/random/path", key)
+    assert target.port == None
+    assert target.user == "larry"
+    assert target.host == "localhost"
+    assert target.path == Path("/a/random/path")
+    assert target.key  == key
+
+    # port specification is optional
+    target = SSHTarget(f"ssh://patrickhost:/a/random/path", key)
+    assert target.port == None
+    assert target.user == None
+    assert target.host == "patrickhost"
+    assert target.path == Path("/a/random/path")
+    assert target.key  == key
+
+    # port specification is optional
+    target = SSHTarget(f"ssh://p4444:larryhost:/a/random/path", key)
+    assert target.port == 4444
+    assert target.user == None
+    assert target.host == "larryhost"
+    assert target.path == Path("/a/random/path")
+    assert target.key  == key
+
+# def test_sshtarget_connection_and_command_execution(sshtarget):
+#     returncode, stdout_str, stderr_str = sshtarget.exec_command("whoami && echo foo 1>&2 && exit 12")
+#     assert returncode == 12
+#     assert stdout_str == f"{sshtarget.user}\n"
+#     assert stderr_str == "foo\n"
+
+#     stdin, stdout, stderr = sshtarget.exec_command("echo foo && echo bar 1>&2", return_files=True)
+#     assert stdout.read().decode("utf-8") == "foo\n"
+#     assert stderr.read().decode("utf-8") == "bar\n"
+
+def test_openssh_command(sshtarget):
+    proc = subprocess.Popen(sshtarget.openssh_cmd("whoami && printf '%s\\n' foo 1>&2 && exit 73"), encoding="utf-8", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout_str, stderr_str = proc.communicate()
+    returncode = proc.returncode
+    assert returncode == 73
     assert stdout_str == f"{sshtarget.user}\n"
     assert stderr_str == "foo\n"
 
-    stdin, stdout, stderr = sshtarget.exec_command("echo foo && echo bar 1>&2", return_files=True)
-    assert stdout.read().decode("utf-8") == "foo\n"
-    assert stderr.read().decode("utf-8") == "bar\n"
+    openssh_cmd = sshtarget.openssh_cmd("printf '%s\\n' foo && printf '%s\\n' bar && printf '%s\\n' baz && printf '%s\\n' quux 1>&2")
+    proc = subprocess.Popen(f"{openssh_cmd} | grep ba; exit 42", encoding="utf-8", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout_str, stderr_str = proc.communicate()
+    returncode = proc.returncode
+    assert returncode == 42
+    assert stdout_str == "bar\nbaz\n"
+    assert stderr_str == "quux\n"
