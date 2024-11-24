@@ -1,5 +1,6 @@
 import re
 import shlex
+import subprocess
 from pathlib import Path
 
 class SSHTargetException(Exception):
@@ -35,23 +36,23 @@ class SSHTarget:
         else:
             raise SSHTargetException(f"invalid SSHTarget spec: {target_spec}")
 
-    def openssh_cmd(self, command, extra_opts="", quote_command=True):
-        """Returns a string of an openssh command that executes 'command' on the
+    def openssh_cmd(self, cmd, extra_opts="", quote_cmd=True):
+        """Returns a string of an openssh command that executes 'cmd' on the
         SSHTargets remote server. The returned openssh command enforces key-based
         auth, host key checking, and ssh multiplexing.
 
-        If 'quote_command' is true then the 'command' arg is quoted with shlex.quote().
+        If 'quote_cmd' is true then the 'cmd' arg is quoted with shlex.quote().
 
         The caller can pass extra openssh opts by setting 'extra_opts' to a string
         containing openssh options.
 
         Example usage::
-            p = subprocess.Popen(sshtarget.openssh_command("btrfs send /home/fred") + " | btrfs receive /home-backups/yaesm-backup@1999_05_13_23:59", shell=True, encoding="utf-8", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            stdout, stderr = p.communicate()
-            returncode = p.returncode
+            p = subprocess.run("set -o pipefail; " + sshtarget.openssh_cmd("btrfs send /home/fred") + " | btrfs receive /home-backups/yaesm-backup@1999_05_13_23:59", shell=True, check=True, capture_output=True, encoding="utf-8")
+            stdout = p.stdout
+            stderr = p.stderr
         """
-        if quote_command:
-            command = shlex.quote(command)
+        if quote_cmd:
+            cmd = shlex.quote(cmd)
         host = self.host if self.user is None else f"{self.user}@{self.host}"
         port_opt = "" if self.port is None else f"-p {self.port}"
-        return f"ssh {extra_opts} -q -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ControlMaster=auto -o 'ControlPath=~/.ssh/yaesm-controlmaster-%r@%h:%p' -o ControlPersist=310 -i '{self.key}' {port_opt} '{host}' {command}"
+        return f"ssh {extra_opts} -q -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ControlMaster=auto -o 'ControlPath=~/.ssh/yaesm-controlmaster-%r@%h:%p' -o ControlPersist=310 -i '{self.key}' {port_opt} '{host}' {cmd}"

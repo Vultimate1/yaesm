@@ -58,18 +58,20 @@ def test_sshtarget_constructor():
     assert target.path == Path("/a/random/path")
     assert target.key  == key
 
-def test_openssh_command(sshtarget):
-    proc = subprocess.Popen(sshtarget.openssh_cmd("whoami && printf '%s\\n' foo 1>&2 && exit 73"), encoding="utf-8", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout_str, stderr_str = proc.communicate()
-    returncode = proc.returncode
+def test_openssh_cmd(sshtarget):
+    p = subprocess.run(sshtarget.openssh_cmd("whoami && printf '%s\\n' foo 1>&2 && exit 73"), shell=True, capture_output=True, encoding="utf-8")
+    returncode = p.returncode
+    stdout = p.stdout
+    stderr = p.stderr
     assert returncode == 73
-    assert stdout_str == f"{sshtarget.user}\n"
-    assert stderr_str == "foo\n"
+    assert stdout == f"{sshtarget.user}\n"
+    assert stderr == "foo\n"
 
-    openssh_cmd = sshtarget.openssh_cmd("printf '%s\\n' foo && printf '%s\\n' bar && printf '%s\\n' baz && printf '%s\\n' quux 1>&2")
-    proc = subprocess.Popen(f"{openssh_cmd} | grep ba; exit 42", encoding="utf-8", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout_str, stderr_str = proc.communicate()
-    returncode = proc.returncode
+    openssh_cmd = sshtarget.openssh_cmd("printf '%s\\n' foo && printf '%s\\n' bar && printf '%s\\n' baz && 1>&2 printf '%s\\n' quux")
+    p = subprocess.run(f"{openssh_cmd} | grep ba; exit 42", shell=True, capture_output=True, encoding="utf-8")
+    returncode = p.returncode
+    stdout = p.stdout
+    stderr = p.stderr
     assert returncode == 42
-    assert stdout_str == "bar\nbaz\n"
-    assert stderr_str == "quux\n"
+    assert stdout == "bar\nbaz\n"
+    assert stderr == "quux\n"
