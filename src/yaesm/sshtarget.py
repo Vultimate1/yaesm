@@ -19,8 +19,9 @@ class SSHTarget:
         sshtarget = SSHTarget("ssh://p22:fred@fredserver:/backups", Path("/home/larry/.ssh/id_rsa"))
         sshtarget = SSHTarget("ssh://fredhost:/backups, Path("/home/larry/.ssh/id_rsa"))
     """
-    def __init__(self, target_spec, key:Path):
+    def __init__(self, target_spec, key:Path, sshconfig=None):
         self.key = Path(key)
+        self.sshconfig = sshconfig
         target_spec_re = re.compile("^ssh://(p[0-9]+:)?([^:]+):(.+)$")
         user_host_re = re.compile("^([^@]+)@(.+)$")
         if target_spec_re_result := target_spec_re.match(target_spec):
@@ -54,5 +55,6 @@ class SSHTarget:
         if quote_cmd:
             cmd = shlex.quote(cmd)
         host = self.host if self.user is None else f"{self.user}@{self.host}"
+        configfile_opt = "" if self.sshconfig is None else f"-F '{self.sshconfig}'"
         port_opt = "" if self.port is None else f"-p {self.port}"
-        return f"ssh {extra_opts} -q -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ControlMaster=auto -o 'ControlPath=~/.ssh/yaesm-controlmaster-%r@%h:%p' -o ControlPersist=310 -i '{self.key}' {port_opt} '{host}' {cmd}"
+        return f"ssh {extra_opts} {configfile_opt} {port_opt} -q -i '{self.key}' -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ControlMaster=auto -o 'ControlPath=~/.ssh/yaesm-controlmaster-%r@%h:%p' -o ControlPersist=310 '{host}' {cmd}"
