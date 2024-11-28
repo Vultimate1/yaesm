@@ -76,8 +76,10 @@ YAESM_DIR=$(dirname "$0")
 cd "$YAESM_DIR" || exit 1
 
 if [ $IMAGE_EXISTS -ne 0 ] || [ $BUILD_IMAGE -eq 0 ]; then
-    if ! $DOCKER build --no-cache -t $IMAGE_NAME -f $DOCKERFILE .; then
-        printf '%s: docker build command exited with status %d. Exiting.\n' "$SCRIPT" "$?" 1>&2
+    $DOCKER build --no-cache -t $IMAGE_NAME -f $DOCKERFILE .
+    BUILD_SUCCEEDED=$?
+    if ! $BUILD_SUCCEEDED; then
+        printf '%s: docker build command exited with status %d. Exiting.\n' "$SCRIPT" "$BUILD_SUCCEEDED" 1>&2
         exit 1
     fi
 fi
