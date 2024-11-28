@@ -32,6 +32,8 @@ RUN echo '#!/bin/sh' > /yaesm-pytest.sh && \
     echo '  mkdir /run/sshd' >> /yaesm-pytest.sh && \
     echo 'fi' >> /yaesm-pytest.sh && \
     echo '$(which sshd)' >> /yaesm-pytest.sh && \
+    echo 'ssh-keyscan localhost > ~/.ssh/known_hosts' >> /yaesm-pytest.sh && \
+    echo 'chmod 600 ~/.ssh/known_hosts' >> /yaesm-pytest.sh && \
     echo 'if [ ! -d /mnt-yaesm/yaesm ]; then' >> /yaesm-pytest.sh && \
     echo '  echo Error the docker run command should have opt -v' "'\$YAESM_DIR':/mnt-yaesm. Exiting. 1>&2" >> /yaesm-pytest.sh && \
     echo '  exit 1' >> /yaesm-pytest.sh && \
