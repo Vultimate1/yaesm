@@ -76,7 +76,7 @@ def test_openssh_cmd(sshtarget):
     assert stdout == "bar\nbaz\n"
     assert stderr == "quux\n"
 
-def test_with_copy(sshtarget):
+def test_with_path(sshtarget):
     new_sshtarget = sshtarget.with_path(Path("/foo"))
     assert new_sshtarget.path == Path("/foo")
     assert new_sshtarget.user == sshtarget.user
