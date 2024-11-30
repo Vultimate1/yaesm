@@ -58,3 +58,9 @@ class SSHTarget:
         configfile_opt = "" if self.sshconfig is None else f"-F '{self.sshconfig}'"
         port_opt = "" if self.port is None else f"-p {self.port}"
         return f"ssh {extra_opts} {configfile_opt} {port_opt} -q -i '{self.key}' -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ControlMaster=auto -o 'ControlPath=~/.ssh/yaesm-controlmaster-%r@%h:%p' -o ControlPersist=310 '{host}' {cmd}"
+
+    def with_path(self, path:Path):
+        """Returns a copy of 'self' (via copy.deepcopy()) but with path 'path'."""
+        sshtarget = copy.deepcopy(self)
+        sshtarget.path = Path(path)
+        return sshtarget

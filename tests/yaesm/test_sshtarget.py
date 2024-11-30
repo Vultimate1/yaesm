@@ -75,3 +75,10 @@ def test_openssh_cmd(sshtarget):
     assert returncode == 42
     assert stdout == "bar\nbaz\n"
     assert stderr == "quux\n"
+
+def test_with_copy(sshtarget):
+    new_sshtarget = sshtarget.with_path(Path("/foo"))
+    assert new_sshtarget.path == Path("/foo")
+    assert new_sshtarget.user == sshtarget.user
+    assert new_sshtarget.host == sshtarget.host
+    assert new_sshtarget.key == sshtarget.key
