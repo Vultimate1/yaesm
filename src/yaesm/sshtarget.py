@@ -1,6 +1,7 @@
 import re
 import shlex
 import subprocess
+import copy
 from pathlib import Path
 
 class SSHTargetException(Exception):
