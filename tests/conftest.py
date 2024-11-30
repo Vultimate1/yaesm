@@ -14,6 +14,7 @@ from pathlib import Path
 @pytest.fixture
 def loopback_generator(path_generator):
     """Fixture to generate loopback devices."""
+    loops = []
     def generator():
         loopfile = None
         while loopfile is None or loopfile.is_file():
@@ -21,8 +22,13 @@ def loopback_generator(path_generator):
         subprocess.run(["truncate", "--size", "1G", loopfile], check=True)
         losetup = subprocess.run(["losetup", "--find", "--show", loopfile], check=True, capture_output=True, encoding="utf-8")
         loop = Path(losetup.stdout.removesuffix("\n"))
+        loops.append(loop)
         return loop
-    return generator
+
+    yield generator
+
+    for loop in loops:
+        subprocess.run(["losetup", "--detach", loop], check=True)
 
 @pytest.fixture
 def loopback(loopback_generator):
