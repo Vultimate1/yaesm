@@ -38,27 +38,34 @@ class SSHTarget:
         else:
             raise SSHTargetException(f"invalid SSHTarget spec: {target_spec}")
 
+    def openssh_opts(self, extra_opts=""):
+        """Returns a string containing OpenSSH options to enforce key-based
+        authentication, ssh multiplexing, and strict host-key checking. Also
+        ensures the proper port and configuration file is used. Extra OpenSSH
+        options can be added by setting 'extra_opts' to a string containing
+        OpenSSH options.
+        """
+        host = self.host if self.user is None else f"{self.user}@{self.host}"
+        configfile_opt = "" if self.sshconfig is None else f"-F '{self.sshconfig}'"
+        port_opt = "" if self.port is None else f"-p {self.port}"
+        return f"{extra_opts} -q -i '{self.key}' -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ControlMaster=auto -o 'ControlPath=~/.ssh/yaesm-controlmaster-%r@%h:%p' -o ControlPersist=310 {configfile_opt} {port_opt} '{host}'"
+
     def openssh_cmd(self, cmd, extra_opts="", quote_cmd=True):
-        """Returns a string of an openssh command that executes 'cmd' on the
-        SSHTargets remote server. The returned openssh command enforces key-based
-        auth, host key checking, and ssh multiplexing.
+        """Returns a string of an OpenSSH command that executes 'cmd' on the
+        SSHTargets remote server. See 'openssh_opts()' for details on the OpenSSH
+        options that are used.
 
         If 'quote_cmd' is true then the 'cmd' arg is quoted with shlex.quote().
 
         The caller can pass extra openssh opts by setting 'extra_opts' to a string
-        containing openssh options.
+        containing OpenSSH options.
 
         Example usage::
-            p = subprocess.run("set -o pipefail; " + sshtarget.openssh_cmd("btrfs send /home/fred") + " | btrfs receive /home-backups/yaesm-backup@1999_05_13_23:59", shell=True, check=True, capture_output=True, encoding="utf-8")
-            stdout = p.stdout
-            stderr = p.stderr
+            p = subprocess.run(sshtarget.openssh_cmd("btrfs send /home/fred/snapshots/snapshot12") + " | " + "btrfs receive /fred-home-backups/", shell=True, check=True, capture_output=True, encoding="utf-8")
         """
         if quote_cmd:
             cmd = shlex.quote(cmd)
-        host = self.host if self.user is None else f"{self.user}@{self.host}"
-        configfile_opt = "" if self.sshconfig is None else f"-F '{self.sshconfig}'"
-        port_opt = "" if self.port is None else f"-p {self.port}"
-        return f"ssh {extra_opts} {configfile_opt} {port_opt} -q -i '{self.key}' -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ControlMaster=auto -o 'ControlPath=~/.ssh/yaesm-controlmaster-%r@%h:%p' -o ControlPersist=310 '{host}' {cmd}"
+        return f"ssh {self.openssh_opts(extra_opts)} {cmd}"
 
     def with_path(self, path:Path):
         """Returns a copy of 'self' (via copy.deepcopy()) but with path 'path'."""
