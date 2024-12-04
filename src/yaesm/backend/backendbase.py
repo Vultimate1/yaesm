@@ -32,7 +32,7 @@ class BackendBase(abc.ABC):
             self.exec_backup_remote_to_local(timeframe)
         backups = bckp.backups_collect(dst_dir) # sorted newest to oldest
         to_delete = []
-        while len(backups) > timeframe.keep():
+        while len(backups) > timeframe.keep:
             to_delete.append(backups.pop())
         if to_delete:
             if (isinstance(dst_dir, SSHTarget)):
