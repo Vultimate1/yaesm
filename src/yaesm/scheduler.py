@@ -1,4 +1,5 @@
 from datetime import datetime
+import heapq
 import time
 import croniter
 
@@ -25,7 +26,10 @@ class Scheduler:
     DAYS_IN_MONTH_NO_LEAP_YEAR = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
 
     def __init__(self, timeframes):
-        # This is a 2D list with pairings of `Timeframe` and croniter iterator respectively.
+        # This is a priority queue (`heapq`), containing tuples with elements:
+        # 1st: The time since epoch (for sorting the queue + checking if expired)
+        # 2nd: The croniter object of the timeframe
+        # 3rd: The timeframe object
         self.timeframe_iters = []
         type_init_pairings = {
             "5minute" : self._five_minute_init,
@@ -45,7 +49,8 @@ class Scheduler:
 
     def _five_minute_init(self, base, obj, **kwargs):
         # Every 5 minutes...
-        self.timeframe_iters.append(croniter("*/5 * * * *", base))
+        time_iter = croniter("*/5 * * * *", base)
+        heapq.heappush(self.timeframe_iters, (time_iter.get_next(float), time_iter, obj))
 
     def _hourly_init(self, base, obj, **kwargs):
         # Assuming kwargs is handled outside of the class, this should NEVER throw a KeyError.
@@ -57,7 +62,8 @@ class Scheduler:
 
         minutes = ",".join(minutes)
         # At every minute in of every hour...
-        self.timeframe_iters.append([croniter("{0} * * * *".format(minutes), base)])
+        time_iter = croniter("{0} * * * *".format(minutes), base)
+        heapq.heappush(self.timeframe_iters, (time_iter.get_next(float), time_iter, obj))
 
     def _daily_init(self, base, obj, **kwargs):
         hours, minutes = get_hours_and_minutes(kwargs["times"])
@@ -65,9 +71,11 @@ class Scheduler:
             raise TypeError("All values in 'daily_times' must be timestamps.")
 
         # Every day at each hour:minute...
-        self.timeframe_iters = list(
+        time_iters = list(
             map(lambda m, h: croniter("{0} {1} * * *".format(m, h), base), minutes, hours)
         )
+        for time_iter in time_iters:
+            heapq.heappush(self.timeframe_iters, (time_iter.get_next(float), time_iter, obj))
 
     def _weekly_init(self, base, obj, **kwargs):
         hours, minutes = get_hours_and_minutes(kwargs["times"])
@@ -83,9 +91,11 @@ class Scheduler:
 
         days = ",".join(days)
         # Every specified day of the week at each hour:minute...
-        self.timeframe_iters = list(
+        time_iters = list(
             map(lambda m, h: croniter("{0} {1} * * {2}".format(m, h, days), base), minutes, hours)
         )
+        for time_iter in time_iters:
+            heapq.heappush(self.timeframe_iters, (time_iter.get_next(float), time_iter, obj))
 
     def _monthly_init(self, base, obj, **kwargs):
         hours, minutes = get_hours_and_minutes(kwargs["times"])
@@ -99,9 +109,11 @@ class Scheduler:
 
         days = ",".join(days)
         # Every month on each specified day at each hour:minute...
-        self.timeframe_iters = list(
+        time_iters = list(
             map(lambda m, h: croniter("{0} {1} {2} * *".format(m, h, days), base), minutes, hours)
         )
+        for time_iter in time_iters:
+            heapq.heappush(self.timeframe_iters, (time_iter.get_next(float), time_iter, obj))
 
     def _yearly_init(self, base, obj, **kwargs):
         hours, minutes = get_hours_and_minutes(kwargs["times"])
@@ -124,12 +136,14 @@ class Scheduler:
             months.append(month)
 
         # Every specified day of the year at each hour:minute...
-        self.timeframe_iters = list(
+        time_iters = list(
             map(
                 lambda mi, h, d, mo: croniter("{0} {1} {2} {3} *".format(mi, h, d, mo), base),
                 minutes, hours, days, months
             )
         )
+        for time_iter in time_iters:
+            heapq.heappush(self.timeframe_iters, (time_iter.get_next(float), time_iter, obj))
 
     def check_and_sleep(self):
         """Checks if any timeframe has expired,
