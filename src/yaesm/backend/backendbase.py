@@ -10,7 +10,7 @@ class BackendBase(abc.ABC):
     """Abstract base class for execution backend classes such as RsyncBackend
     and BtrfsBackend. An actual backend class inherits from BackendBase, and
     implements the methods '_exec_backup_local_to_local()',
-    '_exec_backup_local_to_remote()', 'exec_backup_remote_to_local()',
+    '_exec_backup_local_to_remote()', '_exec_backup_remote_to_local()',
     '_delete_backups_local()', and '_delete_backups_remote()' must be
     implemented. Any code using a backend only needs to interact with the
     'do_backup()' method, which is defined in this class.
@@ -25,40 +25,43 @@ class BackendBase(abc.ABC):
         else:
             dst_dir = dst_dir.joinpath(timeframe.name)
         if backup.backup_type == "local_to_local":
-            self.exec_backup_local_to_local(src_dir, dst_dir)
+            self._exec_backup_local_to_local(src_dir, dst_dir)
         elif backup.backup_type == "local_to_remote":
-            self.exec_backup_local_to_remote(src_dir, dst_dir)
+            self._exec_backup_local_to_remote(src_dir, dst_dir)
         else: # remote_to_local
-            self.exec_backup_remote_to_local(timeframe)
+            self._exec_backup_remote_to_local(timeframe)
         backups = bckp.backups_collect(dst_dir) # sorted newest to oldest
         to_delete = []
         while len(backups) > timeframe.keep:
             to_delete.append(backups.pop())
         if to_delete:
             if (isinstance(dst_dir, SSHTarget)):
-                self.delete_backups_remote(*to_delete)
+                self._delete_backups_remote(*to_delete)
             else:
-                self.delete_backups_local(*to_delete)
+                self._delete_backups_local(*to_delete)
 
     @abc.abstractmethod
     def _exec_backup_local_to_local(self, src_dir:Path, dst_dir:Path):
         """Execute a single local to local backup of 'src_dir' and place it in
         'dst_dir'. Places that backup in 'dst_dir' literally. Does not perform
-        any cleanup."""
+        any cleanup.
+        """
         ...
 
     @abc.abstractmethod
     def _exec_backup_local_to_remote(self, src_dir:Path, dst_dir:SSHTarget):
         """Execute a single local to remote backup of 'src_dir' and place it in
         the SSHTarget 'dst_dir'. Places that backup in the remote 'dst_dir.path'
-        literally. Does not perform any cleanup."""
+        literally. Does not perform any cleanup.
+        """
         ...
 
     @abc.abstractmethod
     def _exec_backup_remote_to_local(self, src_dir:SSHTarget, dst_dir:Path):
         """Execute a single remote to local backup of the SSHTarget 'src_dir' and
         place it in 'dst_dir'. Places that backup in 'dst_dir' literally. Does
-        not perform any cleanup."""
+        not perform any cleanup.
+        """
         ...
 
     @abc.abstractmethod
