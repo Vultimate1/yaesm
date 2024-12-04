@@ -45,10 +45,9 @@ class SSHTarget:
         options can be added by setting 'extra_opts' to a string containing
         OpenSSH options.
         """
-        host = self.host if self.user is None else f"{self.user}@{self.host}"
         configfile_opt = "" if self.sshconfig is None else f"-F '{self.sshconfig}'"
         port_opt = "" if self.port is None else f"-p {self.port}"
-        return f"{extra_opts} -q -i '{self.key}' -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ControlMaster=auto -o 'ControlPath=~/.ssh/yaesm-controlmaster-%r@%h:%p' -o ControlPersist=310 {configfile_opt} {port_opt} '{host}'"
+        return f"{extra_opts} -q -i '{self.key}' -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ControlMaster=auto -o 'ControlPath=~/.ssh/yaesm-controlmaster-%r@%h:%p' -o ControlPersist=310 {configfile_opt} {port_opt}"
 
     def openssh_cmd(self, cmd, extra_opts="", quote_cmd=True):
         """Returns a string of an OpenSSH command that executes 'cmd' on the
@@ -65,7 +64,8 @@ class SSHTarget:
         """
         if quote_cmd:
             cmd = shlex.quote(cmd)
-        return f"ssh {self.openssh_opts(extra_opts)} {cmd}"
+        host = self.host if self.user is None else f"{self.user}@{self.host}"
+        return f"ssh {self.openssh_opts(extra_opts)} '{host}' {cmd}"
 
     def with_path(self, path:Path):
         """Returns a copy of 'self' (via copy.deepcopy()) but with path 'path'."""
