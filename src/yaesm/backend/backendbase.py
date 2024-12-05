@@ -11,9 +11,9 @@ class BackendBase(abc.ABC):
     and BtrfsBackend. An actual backend class inherits from BackendBase, and
     implements the methods '_exec_backup_local_to_local()',
     '_exec_backup_local_to_remote()', '_exec_backup_remote_to_local()',
-    '_delete_backups_local()', and '_delete_backups_remote()' must be
-    implemented. Any code using a backend only needs to interact with the
-    'do_backup()' method, which is defined in this class.
+    '_delete_backups_local()', and '_delete_backups_remote()' . Any code using a
+    backend only needs to interact with the 'do_backup()' method, which is
+    defined in this class.
     """
 
     @final
