@@ -5,7 +5,7 @@ import re
 class Timeframe(abc.ABC):
     """Timeframe is an abstract base class for the different timeframe types.
     None of the Timeframe classes do validity checking on their initialization
-    arguments, however all the tools for checking their validity is provided
+    arguments, however all the tools for checking their validity are provided
     as static methods in the base Timeframe class.
 
     See the subclasses of Timeframe for more details.
