@@ -40,7 +40,7 @@ class Timeframe(abc.ABC):
         an int representing the minute. Note that this function expects to be
         given a valid timespec.
 
-        See 'Timeframe.valid_timespec() for more information."""
+        See Timeframe.valid_timespec() for more information."""
         timespec_re = re.compile("([0-9]{2}):([0-9]{2})")
         re_result = timespec_re.match(timespec)
         hour = int(re_result.group(1))
