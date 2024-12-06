@@ -43,24 +43,24 @@ class BackendBase(abc.ABC):
     @abc.abstractmethod
     def _exec_backup_local_to_local(self, src_dir:Path, dst_dir:Path):
         """Execute a single local to local backup of 'src_dir' and place it in
-        'dst_dir'. Places that backup in 'dst_dir' literally. Does not perform
-        any cleanup.
+        'dst_dir', which should represent an existing directory on the local
+        system. Does not perform any cleanup.
         """
         ...
 
     @abc.abstractmethod
     def _exec_backup_local_to_remote(self, src_dir:Path, dst_dir:SSHTarget):
         """Execute a single local to remote backup of 'src_dir' and place it in
-        the SSHTarget 'dst_dir'. Places that backup in the remote 'dst_dir.path'
-        literally. Does not perform any cleanup.
+        the SSHTarget 'dst_dir', which should have a .path representing an
+        existing directory on the remote server. Does not perform any cleanup.
         """
         ...
 
     @abc.abstractmethod
     def _exec_backup_remote_to_local(self, src_dir:SSHTarget, dst_dir:Path):
         """Execute a single remote to local backup of the SSHTarget 'src_dir' and
-        place it in 'dst_dir'. Places that backup in 'dst_dir' literally. Does
-        not perform any cleanup.
+        place it in 'dst_dir', which should represent an existing directory on
+        the local system. Does not perform any cleanup.
         """
         ...
 
