@@ -150,6 +150,13 @@ def test_tframe_types():
     assert Timeframe.tframe_types() == [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe]
     assert Timeframe.tframe_types(names=True) == ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]
 
+def test_valid_keep():
+    assert Timeframe.valid_keep(0)
+    assert Timeframe.valid_keep(1)
+    assert Timeframe.valid_keep(100)
+    assert not Timeframe.valid_keep(-1)
+    assert not Timeframe.valid_keep(0.5)
+
 def test_valid_weekday():
     assert Timeframe.valid_weekday("tuesday")
     assert not Timeframe.valid_weekday("foo")
@@ -160,6 +167,7 @@ def test_valid_monthday():
     assert Timeframe.valid_monthday(31)
     assert not Timeframe.valid_monthday(0)
     assert not Timeframe.valid_monthday(32)
+    assert not Timeframe.valid_monthday(10.5)
 
 def test_valid_yearday():
     assert Timeframe.valid_yearday(1)
@@ -169,6 +177,7 @@ def test_valid_yearday():
     assert not Timeframe.valid_yearday(0)
     assert not Timeframe.valid_yearday(366)
     assert not Timeframe.valid_yearday(367, leap=True)
+    assert not Timeframe.valid_yearday(10.5)
 
 def test_valid_timespec():
     assert Timeframe.valid_timespec("23:59")
@@ -181,6 +190,22 @@ def test_valid_timespec():
     assert not Timeframe.valid_timespec("00:1")
     assert not Timeframe.valid_timespec("-01:12")
     assert not Timeframe.valid_timespec("01:-12")
+
+def test_valid_minute():
+    assert Timeframe.valid_minute(0)
+    assert Timeframe.valid_minute(59)
+    assert Timeframe.valid_minute(10)
+    assert not Timeframe.valid_minute(60)
+    assert not Timeframe.valid_minute(-1)
+    assert not Timeframe.valid_minute(10.5)
+
+def test_valid_hour():
+    assert Timeframe.valid_hour(0)
+    assert Timeframe.valid_hour(23)
+    assert Timeframe.valid_hour(10)
+    assert not Timeframe.valid_hour(24)
+    assert not Timeframe.valid_hour(-1)
+    assert not Timeframe.valid_hour(10.5)
 
 def test_timespec_to_time():
     assert (1, 2) == Timeframe.timespec_to_time("01:02")

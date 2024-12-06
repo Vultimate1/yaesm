@@ -50,6 +50,12 @@ class Timeframe(abc.ABC):
 
     @final
     @staticmethod
+    def valid_keep(keep):
+        """Return True if 'keep' is a valid value for a timeframes 'keep' variable."""
+        return isinstance(keep, int) and keep >= 0
+
+    @final
+    @staticmethod
     def valid_weekday(weekday):
         """Return True if 'weekday' is a valid weekday, and return False otherwise."""
         return weekday in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -58,7 +64,7 @@ class Timeframe(abc.ABC):
     @staticmethod
     def valid_monthday(monthday):
         """Return True if 'monthday' is a valid monthday, and return False otherwise."""
-        return monthday >= 1 and monthday <= 31
+        return isinstance(monthday, int) and monthday >= 1 and monthday <= 31
 
     @final
     @staticmethod
@@ -69,19 +75,19 @@ class Timeframe(abc.ABC):
         False otherwise.
         """
         max_yearday = 366 if leap else 365
-        return yearday >= 1 and yearday <= max_yearday
+        return isinstance(yearday, int) and yearday >= 1 and yearday <= max_yearday
 
     @final
     @staticmethod
     def valid_minute(minute):
         """Return True if 'minute' is a valid minute and return False otherwise."""
-        return minute >= 0 and minute <= 59
+        return isinstance(minute, int) and minute >= 0 and minute <= 59
 
     @final
     @staticmethod
     def valid_hour(hour):
         """Return True if 'hour' is a valid hour and return False otherwise."""
-        return hour >= 0 and hour <= 23
+        return isinstance(hour, int) and hour >= 0 and hour <= 23
 
     @final
     @staticmethod
@@ -108,6 +114,10 @@ class Timeframe(abc.ABC):
         return valid_hour(time[0]) and valid_minute(time[1])
 
 class FiveMinuteTimeframe(Timeframe):
+    """The 5minute timeframe represents backups to be taken every 5 minutes.
+    The 'keep' instance variable is a whole number that represents the maximum
+    number of backups to keep for this timeframe before deleting old ones.
+    """
     def __init__(self, keep):
         self.name = "5minute"
         self.keep = keep
@@ -117,6 +127,12 @@ class FiveMinuteTimeframe(Timeframe):
         return ["5minute_keep"]
 
 class HourlyTimeframe(Timeframe):
+    """The hourly timeframe represents backups to be taken every hour at some set
+    of minutes. The 'minutes' instance variable is a list of ints with values in
+    range of 0-59. The 'keep' instance variable is a whole number that represents
+    the maximum number of backups to keep for this timeframe before deleting old
+    ones.
+    """
     def __init__(self, keep, minutes):
         self.name = "hourly"
         self.keep = keep
@@ -127,6 +143,14 @@ class HourlyTimeframe(Timeframe):
         return ["hourly_keep", "hourly_minutes"]
 
 class DailyTimeframe(Timeframe):
+    """The daily timeframe represents backups to be taken every day at some set
+    of times in the day. The 'times' instance variable represents the times in
+    the day to perform backups. The 'times' instance variable is a list of pairs
+    of hours and minutes, where the hour is an int with a value in range 0-23,
+    and the minute is an int in range 0-59. The 'keep' instance variable is a
+    whole number that represents the maximum number of backups to keep for this
+    timeframe before deleting old ones.
+    """
     def __init__(self, keep, times):
         self.name = "daily"
         self.keep = keep
@@ -137,6 +161,16 @@ class DailyTimeframe(Timeframe):
         return ["daily_keep", "daily_times"]
 
 class WeeklyTimeframe(Timeframe):
+    """The weekly timeframe represents backups to be taken every week at some
+    set of days in the week, at some set of times in those days. The 'weekdays'
+    instance variable is a set of strings denoting the weekdays to perform
+    backups (i.e. monday, thursday, etc). The 'times' instance variable represents
+    the times in the day to perform backups. The 'times' instance variable is a
+    list of pairs of hours and minutes where the hour is an int with a value in
+    range 0-23, and the minute is an int in range 0-59. The 'keep' instance
+    variable is a whole number that represents the maximum number of backups to
+    keep for this timeframe before deleting old ones.
+    """
     def __init__(self, keep, times, weekdays):
         self.name = "weekly"
         self.keep = keep
@@ -148,6 +182,16 @@ class WeeklyTimeframe(Timeframe):
         return ["weekly_keep", "weekly_times", "weekly_days"]
 
 class MonthlyTimeframe(Timeframe):
+    """The monthly timeframe represents backups to be taken every month at some
+    set of days in the month, and at some set of times in those days. The
+    'monthdays' instance variable is a set of ints denoting the days in the
+    month to perform backups (starting at 1). The 'times' instance variable
+    represents the times in the day to perform backups. The 'times' instance
+    variable is a list of pairs of hours and minutes where the hour is an int
+    with a value in range 0-23, and the minute is an int in range 0-59. The
+    'keep' instance variable is a whole number that represents the maximum
+    number of backups to keep for this timeframe before deleting old ones.
+    """
     def __init__(self, keep, times, monthdays):
         self.name = "monthly"
         self.keep = keep
@@ -159,6 +203,16 @@ class MonthlyTimeframe(Timeframe):
         return ["monthly_keep", "monthly_times", "monthly_days"]
 
 class YearlyTimeframe(Timeframe):
+    """The yearly timeframe represents backups to be taken every year at some
+    set of days in the year, and at some set of times in those days. The
+    'yeardays' instance variable is a set of ints denoting the days in the year
+    to perform backups (starting at 1). The 'times' instance variable represents
+    the times in the day to perform backups. The 'times' instance variable is a
+    list of pairs of hours and minutes where the hour is an int with a value in
+    range 0-23, and the minute is an int in range 0-59. The 'keep' instance
+    variable is a whole number that represents the maximum number of backups to
+    keep for this timeframe before deleting old ones.
+    """
     def __init__(self, keep, times, yeardays):
         self.name = "yearly"
         self.keep = keep
