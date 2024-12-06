@@ -127,19 +127,24 @@ def _btrfs_bootstrap_snapshot_basename():
     """Return the basename of a btrfs bootstrap snapshot."""
     return ".yaesm-btrfs-bootstrap-snapshot"
 
-def _btrs_bootstrap_local_to_local(src_dir:Path, dst_dir:Path):
+def _btrfs_bootstrap_local_to_local(src_dir:Path, dst_dir:Path):
     """TODO"""
     src_bootstrap = src_dir.joinpath(_btrfs_bootstrap_snapshot_basename())
     dst_bootstrap = dst_dir.joinpath(_btrfs_bootstrap_snapshot_basename())
     src_bootstrap_exists = src_bootstrap.is_dir()
     dst_bootstrap_exists = dst_bootstrap.is_dir()
-    if not src_bootstrap_exists or not dst_bootstrap_exists:
-        if src_bootstrap_exists:
-            _btrfs_delete_subvolumes_local(src_bootstrap)
-        if dst_bootstrap_exists:
-            _btrfs_delete_subvolumes_local(dst_bootstrap)
+    if not src_bootstrap_exists and not dst_bootstrap_exists:
         _btrfs_take_snapshot_local(src_dir, src_bootstrap)
         _btrfs_send_receive_local_to_local(src_bootstrap, dst_dir)
+    elif src_bootstrap_exists and not dst_bootstrap_exists:
+        _btrfs_send_receive_local_to_local(src_bootstrap, dst_dir)
+    elif not src_bootstrap_exists and dst_bootstrap_exists:
+        # TODO: should log here, something weird is going on
+        _btrfs_delete_subvolumes_local(dst_bootstrap)
+        _btrfs_take_snapshot_local(src_dir, src_bootstrap)
+        _btrfs_send_receive_local_to_local(src_bootstrap, dst_dir)
+    else:
+        pass # already bootstrapped
     return src_bootstrap
 
 def _btrfs_bootstrap_local_to_remote(src_dir:Path, dst_dir:SSHTarget):
@@ -147,27 +152,37 @@ def _btrfs_bootstrap_local_to_remote(src_dir:Path, dst_dir:SSHTarget):
     src_bootstrap = src_dir.joinpath(_btrfs_bootstrap_snapshot_basename())
     dst_bootstrap = dst_dir.with_path(dst_dir.path.joinpath(_btrfs_bootstrap_snapshot_basename()))
     src_bootstrap_exists = src_bootstrap.is_dir()
-    dst_bootstrap_exists = 0 == subprocess.run(dst_bootstrap.openssh_cmd(f"exit [ -d '{dst_bootstrap.path}' ]"), shell=True).returncode
-    if not src_bootstrap_exists or not dst_bootstrap_exists:
-        if src_bootstrap_exists:
-            _btrfs_delete_subvolumes_local(src_bootstrap)
-        if dst_bootstrap_exists:
-            _btrfs_delete_subvolumes_remote(dst_bootstrap)
+    dst_bootstrap_exists = 0 == subprocess.run(dst_bootstrap.openssh_cmd(f"[ -d '{dst_bootstrap.path}' ]; exit $?"), shell=True).returncode
+    if not src_bootstrap_exists and not dst_bootstrap_exists:
         _btrfs_take_snapshot_local(src_dir, src_bootstrap)
         _btrfs_send_receive_local_to_remote(src_bootstrap, dst_dir)
+    elif src_bootstrap_exists and not dst_bootstrap_exists:
+        _btrfs_send_receive_local_to_remote(src_bootstrap, dst_dir)
+    elif not src_bootstrap_exists and dst_bootstrap_exists:
+        # TODO: should log here, something weird is going on
+        _btrfs_delete_subvolumes_remote(dst_bootstrap)
+        _btrfs_take_snapshot_local(src_dir, src_bootstrap)
+        _btrfs_send_receive_local_to_remote(src_bootstrap, dst_dir)
+    else:
+        pass # already bootstrapped
     return src_bootstrap
 
 def _btrfs_bootstrap_remote_to_local(src_dir:SSHTarget, dst_dir:Path):
     """TODO"""
     src_bootstrap = src_dir.with_path(src_dir.path.joinpath(_btrfs_bootstrap_snapshot_basename()))
     dst_bootstrap = dst_dir.joinpath(_btrfs_bootstrap_snapshot_basename())
-    src_bootstrap_exists = 0 == subprocess.run(src_bootstrap.openssh_cmd(f"exit [ -d '{src_bootstrap.path}' ]"), shell=True).returncode
+    src_bootstrap_exists = 0 == subprocess.run(src_bootstrap.openssh_cmd(f"[ -d '{src_bootstrap.path}' ]; exit $?"), shell=True).returncode
     dst_bootstrap_exists = dst_bootstrap.is_dir()
-    if not src_bootstrap_exists or not dst_bootstrap_exists:
-        if src_bootstrap_exists:
-            _btrfs_delete_subvolumes_remote(src_bootstrap)
-        if dst_bootstrap_exists:
-            _btrfs_delete_subvolumes_local(dst_bootstrap)
+    if not src_bootstrap_exists and not dst_bootstrap_exists:
         _btrfs_take_snapshot_remote(src_dir, src_bootstrap)
         _btrfs_send_receive_remote_to_local(src_bootstrap, dst_dir)
+    elif src_bootstrap_exists and not dst_bootstrap_exists:
+        _btrfs_send_receive_remote_to_local(src_bootstrap, dst_dir)
+    elif not src_bootstrap_exists and dst_bootstrap_exists:
+        # TODO: should log here, something weird is going on
+        _btrfs_delete_subvolumes_local(dst_bootstrap)
+        _btrfs_take_snapshot_remote(src_dir, src_bootstrap)
+        _btrfs_send_receive_remote_to_local(src_bootstrap, dst_dir)
+    else:
+        pass # already bootstrapped
     return src_bootstrap
