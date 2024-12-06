@@ -54,21 +54,13 @@ class Scheduler:
 
     def _hourly_init(self, base, obj, **kwargs):
         # Assuming kwargs is handled outside of the class, this should NEVER throw a KeyError.
-        minutes = kwargs["minutes"]
-
-        for m in minutes:
-            if type(m) != int:
-                raise TypeError("All values in 'hourly_minutes' must be integers.")
-
-        minutes = ",".join(minutes)
+        minutes = ",".join(kwargs["minutes"])
         # At every minute in of every hour...
         time_iter = croniter("{0} * * * *".format(minutes), base)
         heapq.heappush(self.timeframe_iters, (time_iter.get_next(datetime), time_iter, obj))
 
     def _daily_init(self, base, obj, **kwargs):
         hours, minutes = get_hours_and_minutes(kwargs["times"])
-        if hours == -1:
-            raise TypeError("All values in 'daily_times' must be timestamps.")
 
         # Every day at each hour:minute...
         time_iters = list(
@@ -79,17 +71,13 @@ class Scheduler:
 
     def _weekly_init(self, base, obj, **kwargs):
         hours, minutes = get_hours_and_minutes(kwargs["times"])
-        if hours == -1:
-            raise TypeError("All values in 'weekly_times' must be timestamps.")
 
         days = kwargs["days"]
         for i in range(len(days)):
-            if type(days[i]) != str or days[i] not in self.VALID_DAYS:
-                raise TypeError("All values in 'weekly_days' must be valid days of the week.")
             # croniter only needs the first 3 chars of the day.
             days[i] = days[i][0:3]
-
         days = ",".join(days)
+
         # Every specified day of the week at each hour:minute...
         time_iters = list(
             map(lambda m, h: croniter("{0} {1} * * {2}".format(m, h, days), base), minutes, hours)
@@ -99,15 +87,7 @@ class Scheduler:
 
     def _monthly_init(self, base, obj, **kwargs):
         hours, minutes = get_hours_and_minutes(kwargs["times"])
-        if hours == -1:
-            raise TypeError("All values in 'monthly_times' must be timestamps.")
-
-        days = kwargs["days"]
-        for i in range(len(days)):
-            if type(days[i]) != int or days[i] < 1 or days[i] > 31:
-                raise TypeError("All values in 'monthly_days' must be integers in range [1, 31].")
-
-        days = ",".join(days)
+        days = ",".join(kwargs["days"])
         # Every month on each specified day at each hour:minute...
         time_iters = list(
             map(lambda m, h: croniter("{0} {1} {2} * *".format(m, h, days), base), minutes, hours)
@@ -117,17 +97,9 @@ class Scheduler:
 
     def _yearly_init(self, base, obj, **kwargs):
         hours, minutes = get_hours_and_minutes(kwargs["times"])
-        if hours == -1:
-            raise TypeError("All values in 'yearly_times' must be timestamps.")
-
         days = kwargs["days"]
         months = []
         for i in range(len(days)):
-            # TODO: Do we want to account for leap years? (366 days instead of 365)
-            if type(days[i]) != int or days[i] < 1 or days[i] > 365:
-                raise TypeError(
-                    "All values in 'yearly_days' must be integers in range [1, 365]."
-                )
             month = 1
             for m in self.DAYS_IN_MONTH_NO_LEAP_YEAR:
                 if days[i] > self.DAYS_IN_MONTH_NO_LEAP_YEAR[m]:
