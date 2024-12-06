@@ -42,10 +42,10 @@ class Scheduler:
         base = datetime.now()
         for timeframe in timeframes:
             try:
-                type_init_pairings[timeframe.frame_type](base, timeframe, timeframe.kwargs)
+                type_init_pairings[timeframe.name](base, timeframe, timeframe.kwargs)
             except KeyError:
                 # TODO: What to do other than just re-raise?
-                raise KeyError("'{0}' is not a valid timeframe type.".format(timeframe.frame_type))
+                raise KeyError("'{0}' is not a valid timeframe type.".format(timeframe.name))
 
     def _five_minute_init(self, base, obj, **kwargs):
         # Every 5 minutes...
