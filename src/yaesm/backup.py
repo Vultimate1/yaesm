@@ -31,7 +31,7 @@ def backup_basename_re():
     return re.compile("^yaesm-backup@[0-9]{4}_[0-9]{2}_[0-9]{2}_[0-9]{2}:[0-9]{2}$")
 
 def backup_basename_now():
-    "Return the basename of a yaesm backup for the current time."
+    """Return the basename of a yaesm backup for the current time."""
     datetime_now = datetime.now()
     name = datetime_now.strftime("yaesm-backup@%Y_%m_%d_%H:%M")
     return name
