@@ -1,7 +1,6 @@
 import pytest
 import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
-from test_sshtarget import sshtarget, sshtarget_generator
 
 # TODO: Need to be able to generate Timeframes first
 # @pytest.fixture

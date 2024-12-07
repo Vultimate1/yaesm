@@ -6,54 +6,6 @@ from pathlib import Path
 
 import yaesm.backend.btrfsbackend as btrfs
 import yaesm.backup as bckp
-from test_yaesm.test_sshtarget import sshtarget, sshtarget_generator
-
-@pytest.fixture(scope="module")
-def btrfsbackend():
-    """Fixture to provide a BtrfsBackend object."""
-    btrfsbackend = BtrfsBackend()
-    return btrfsbackend
-
-@pytest.fixture
-def btrfs_fs_generator(path_generator, loopback_generator):
-    """Fixture to generate a btrfs filesystem on a loopback device."""
-    def generator():
-        mountpoint = path_generator("test-yaesm-btrfs-mountpoint", base_dir="/mnt", mkdir=True)
-        loop = loopback_generator()
-        subprocess.run(["mkfs", "-t", "btrfs", loop], check=True)
-        subprocess.run(["mount", loop, mountpoint], check=True)
-        subprocess.run(["btrfs", "subvolume", "create", f"{mountpoint}/@"], check=True)
-        subprocess.run(["umount", mountpoint], check=True)
-        subprocess.run(["mount", loop, "-o", "rw,noatime,subvol=@", mountpoint], check=True)
-        return mountpoint
-    return generator
-
-@pytest.fixture
-def btrfs_fs(btrfs_fs_generator):
-    """Fixture to provide a single btrfs filesystem on a loopback device. See
-    the 'btrfs_fs_generator' fixture for more details.
-    """
-    return btrfs_fs_generator()
-
-@pytest.fixture
-def btrfs_sudo_access(yaesm_test_users_group, tmp_path_factory):
-    """Fixture to give users in the 'yaesm_test_users_group' group passwordless
-    sudo access to the 'btrfs' executable. Users created with the 'tmp_user_generator'
-    fixture are always assigned membership to this group.
-    """
-    btrfs = shutil.which("btrfs")
-    sudoers_rules = [
-        f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {btrfs} subvolume snapshot -r *",
-        f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {btrfs} subvolume delete *",
-        f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {btrfs} send *",
-        f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {btrfs} receive *"
-    ]
-    sudo_rule_file = Path("/etc/sudoers.d/yaesm-test-btrfs-sudo-rule")
-    if not sudo_rule_file.is_file():
-        with open(sudo_rule_file, "w") as f:
-            for rule in sudoers_rules:
-                f.write(rule + "\n")
-    return True
 
 def test_btrfs_take_and_delete_snapshot_local(btrfs_fs, path_generator):
     dst_dir1 = path_generator("test-snapshot", base_dir=btrfs_fs, mkdir=True)
