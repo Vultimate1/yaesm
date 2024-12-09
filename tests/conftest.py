@@ -158,6 +158,39 @@ def path_generator(random_string_generator):
             shutil.rmtree(path)
 
 @pytest.fixture
+def random_backup_generator(random_timeframes_generator, sshtarget, path_generator, random_string_generator):
+    """Fixture for generating random Backups."""
+    names = []
+    def generator(src_dir_base="/tmp", dst_dir_base="/tmp", num_timeframes=3):
+        name = None
+        src_dir = path_generator(f"yaesm-test-backup-src-dir-{name}-", base_dir=src_dir_base, mkdir=True)
+        dst_dir = path_generator(f"yaesm-test-backup-dst-dir-{name}-", base_dir=dst_dir_base, mkdir=True)
+        while name is None or name in names:
+            name = "test-backup-" + random_string_generator()
+        names.append(random_name)
+        backup_type = random.choice("local_to_local", "local_to_remote", "remote_to_local")
+        timeframes = random_timeframes_generator(num=num_timeframes)
+        if backup_type == "local_to_local":
+            return bckp.Backup(name, src_dir, dst_dir, timeframes)
+        elif backup_type == "local_to_remote":
+            return bckp.Backup(name, src_dir, sshtarget.with_path(dst_dir), timeframes)
+        else: # remote_to_local
+            return bckp.Backup(name, sshtarget.with_path(src_dir), dst_dir, timeframes)
+    return generator
+
+@pytest.fixture
+def random_backups_generator(random_backup_generator):
+    """Fixture for generating a list of random Backups. See 'random_backup_generator'
+    for more information.
+    """
+    def generator(num=3, src_dir_base="/tmp", dst_dir_base="/tmp", num_timeframes=3):
+        backups = []
+        for _ in range(num):
+            backups.append(random_backup_generator, src_dir_base=src_dir_base, dst_dir_base=dst_dir_base, num_timeframes=num_timeframes)
+        return backups
+    return generator
+
+@pytest.fixture
 def sshtarget_generator(localhost_server_generator):
     """Fixture for generating SSHTargets for mock localhost ssh servers. Note
     that the target path is the home directory of the localhost ssh server user.
