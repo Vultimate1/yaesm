@@ -22,7 +22,6 @@ class Scheduler:
     for each expired timeframe. If none have expired, this object
     will sleep until the next timeframe expires."""
 
-    VALID_DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
     DAYS_IN_MONTH_NO_LEAP_YEAR = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
 
     def __init__(self, timeframes):
