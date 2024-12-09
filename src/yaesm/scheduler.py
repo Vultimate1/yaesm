@@ -20,7 +20,7 @@ def get_hours_and_minutes(times) -> tuple:
 class Scheduler:
     """Takes a list of `Timeframe`s as input, and creates a backup
     for each expired timeframe. If none have expired, this object
-    will sleep (block) until the next timeframe expires."""
+    will sleep until the next timeframe expires."""
 
     VALID_DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
     DAYS_IN_MONTH_NO_LEAP_YEAR = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
@@ -28,7 +28,7 @@ class Scheduler:
     def __init__(self, timeframes):
         # This is a priority queue (`heapq`), containing tuples with elements:
         # 1st: The time since epoch (for sorting the queue + checking if expired)
-        # 2nd: The croniter object of the timeframe
+        # 2nd: The croniter object
         # 3rd: The timeframe object
         self.timeframe_iters = []
         type_init_pairings = {
@@ -116,7 +116,7 @@ class Scheduler:
         (TODO: takes a backup if any have done so),
         then sleeps until the earliest timeframe expires.
 
-        Warning: This function blocks the thread. Run it in a separete"""
+        Warning: This function blocks the thread. Spin it off into its own."""
         present = datetime.now()
         while (len(self.timeframe_iters) >= 1 and self.timeframe_iters[0][0] <= present):
             # TODO Make a backup here!
