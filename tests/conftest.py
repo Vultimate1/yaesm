@@ -7,10 +7,12 @@ import os
 import pwd
 import grp
 import shutil
+import random
 from random import choice
 from string import ascii_lowercase
 from pathlib import Path
 
+import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
 
@@ -161,14 +163,13 @@ def path_generator(random_string_generator):
 def random_backup_generator(random_timeframes_generator, sshtarget, path_generator, random_string_generator):
     """Fixture for generating random Backups."""
     names = []
-    def generator(src_dir_base="/tmp", dst_dir_base="/tmp", num_timeframes=3):
+    def generator(src_dir, dst_dir_base="/tmp", backup_type=None, num_timeframes=3):
         name = None
-        src_dir = path_generator(f"yaesm-test-backup-src-dir-{name}-", base_dir=src_dir_base, mkdir=True)
         dst_dir = path_generator(f"yaesm-test-backup-dst-dir-{name}-", base_dir=dst_dir_base, mkdir=True)
         while name is None or name in names:
             name = "test-backup-" + random_string_generator()
-        names.append(random_name)
-        backup_type = random.choice("local_to_local", "local_to_remote", "remote_to_local")
+        names.append(name)
+        backup_type = backup_type if backup_type is not None else random.choice(["local_to_local", "local_to_remote", "remote_to_local"])
         timeframes = random_timeframes_generator(num=num_timeframes)
         if backup_type == "local_to_local":
             return bckp.Backup(name, src_dir, dst_dir, timeframes)
@@ -242,7 +243,7 @@ def random_timeframes_generator(random_timeframe_generator):
     random_timeframe_generator for more details."""
     def generator(num=3, **kwargs):
         timeframes = []
-        tframe_types = random.sample(Timframe.valid_tframe_types, k=num)
+        tframe_types = random.sample(Timeframe.tframe_types(), k=num)
         for tframe_type in tframe_types:
             timeframes.append(random_timeframe_generator(tframe_type=tframe_type, **kwargs))
         return timeframes
@@ -257,7 +258,7 @@ def random_timeframe_minutes_generator():
             minute = None
             while minute is None or minute in minutes:
                 minute = random.randint(0,59)
-            minutes.append(time)
+            minutes.append(minute)
         return minutes
     return generator
 
@@ -265,7 +266,7 @@ def random_timeframe_minutes_generator():
 def random_timeframe_timespecs_generator():
     """Fixture to generate a list of random timeframe timespecs."""
     def generator(num=3):
-        timepsecs = []
+        timespecs = []
         for _ in range(num):
             timespec = None
             while timespec is None or timespec in timespecs:
