@@ -94,8 +94,12 @@ def yaesm_test_users_group():
     object for the created group.
     """
     group_name = "yaesm-test-users"
-    subprocess.run(["groupadd", "--force", group_name], check=True)
-    return grp.getgrnam(group_name)
+    try:
+        group = grp.getgrnam(group_name)
+    except:
+        subprocess.run(["groupadd", group_name], check=True)
+        group = grp.getgrnam(group_name)
+    return group
 
 @pytest.fixture
 def tmp_user_generator(yaesm_test_users_group, random_string_generator):
