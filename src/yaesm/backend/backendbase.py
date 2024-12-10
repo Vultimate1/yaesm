@@ -14,6 +14,9 @@ class BackendBase(abc.ABC):
     '_delete_backups_local()', and '_delete_backups_remote()' . Any code using a
     backend only needs to interact with the 'do_backup()' method, which is
     defined in this class.
+
+    It is important to note that it is expected that backup.dst_dir is an existing
+    directory (regardless of if it is a Path or SSHTarget).
     """
 
     @final
@@ -21,21 +24,23 @@ class BackendBase(abc.ABC):
         """Perform a backup of 'backup' for the Timeframe 'timeframe'."""
         src_dir = backup.src_dir
         if isinstance(backup.dst_dir, SSHTarget):
-            dst_dir = backup.dst_dir.with_path(dst_dir.path.joinpath(timeframe.name))
+            dst_dir = backup.dst_dir.with_path(backup.dst_dir.path.joinpath(timeframe.name))
+            dst_dir.mkdir() # note that parents are not created
         else:
-            dst_dir = dst_dir.joinpath(timeframe.name)
+            dst_dir = backup.dst_dir.joinpath(timeframe.name)
+            dst_dir.mkdir(exist_ok=True) # note that parents are not created
         if backup.backup_type == "local_to_local":
             self._exec_backup_local_to_local(src_dir, dst_dir)
         elif backup.backup_type == "local_to_remote":
             self._exec_backup_local_to_remote(src_dir, dst_dir)
         else: # remote_to_local
-            self._exec_backup_remote_to_local(timeframe)
+            self._exec_backup_remote_to_local(src_dir, dst_dir)
         backups = bckp.backups_collect(dst_dir) # sorted newest to oldest
         to_delete = []
         while len(backups) > timeframe.keep:
             to_delete.append(backups.pop())
         if to_delete:
-            if (isinstance(dst_dir, SSHTarget)):
+            if isinstance(dst_dir, SSHTarget):
                 self._delete_backups_remote(*to_delete)
             else:
                 self._delete_backups_local(*to_delete)

@@ -3,9 +3,58 @@ import shutil
 import subprocess
 import os
 from pathlib import Path
+from datetime import datetime, timedelta
+from freezegun import freeze_time
 
 import yaesm.backend.btrfsbackend as btrfs
 import yaesm.backup as bckp
+from yaesm.sshtarget import SSHTarget
+
+@pytest.fixture(scope="session")
+def btrfs_backend():
+    return btrfs.BtrfsBackend()
+
+def test_do_backup(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_access, path_generator):
+    for backup_type in ["local_to_local", "local_to_remote,", "remote_to_local"]:
+        backup = random_backup_generator(btrfs_fs, backup_type=backup_type, dst_dir_base=btrfs_fs)
+        timeframe = backup.timeframes[0]
+        timeframe.keep = 3
+        now = datetime.now()
+        expected_backup_basenames = []
+        for i in range(timeframe.keep+2):
+            with freeze_time(now + timedelta(hours=i)):
+                expected_backup_basenames.insert(0, bckp.backup_basename_now())
+                btrfs_backend.do_backup(backup, timeframe)
+        if isinstance(backup.dst_dir, SSHTarget):
+            dst_dir = backup.dst_dir.path.joinpath(timeframe.name)
+        else:
+            dst_dir = backup.dst_dir.joinpath(timeframe.name)
+        backups = bckp.backups_collect(dst_dir)
+        backup_basenames = list(map(lambda x: x.path.name if isinstance(x, SSHTarget) else x.name, backups))
+        assert len(backups) == timeframe.keep
+        assert expected_backup_basenames[0:timeframe.keep] == backup_basenames
+
+def test_exec_backup_local_to_local(btrfs_backend, btrfs_fs, path_generator):
+    dst_dir = path_generator("test-dst-dir", base_dir=btrfs_fs, mkdir=True)
+    backup = dst_dir.joinpath(bckp.backup_basename_now())
+    assert not backup.is_dir()
+    btrfs_backend._exec_backup_local_to_local(btrfs_fs, dst_dir)
+    assert backup.is_dir()
+
+def test_exec_backup_local_to_remote(btrfs_backend, sshtarget, btrfs_fs, btrfs_sudo_access, path_generator):
+    dst_dir = sshtarget.with_path(path_generator("test-dst-dir", base_dir=btrfs_fs, mkdir=True))
+    backup = dst_dir.path.joinpath(bckp.backup_basename_now())
+    assert not backup.is_dir()
+    btrfs_backend._exec_backup_local_to_remote(btrfs_fs, dst_dir)
+    assert backup.is_dir()
+
+def test_exec_backup_remote_to_local(btrfs_backend, sshtarget, btrfs_fs, btrfs_sudo_access, path_generator):
+    src_dir = sshtarget.with_path(btrfs_fs)
+    dst_dir = path_generator("test-dst-dir", base_dir=btrfs_fs, mkdir=True)
+    backup = dst_dir.joinpath(bckp.backup_basename_now())
+    assert not backup.is_dir()
+    btrfs_backend._exec_backup_remote_to_local(src_dir, dst_dir)
+    assert backup.is_dir()
 
 def test_btrfs_take_and_delete_snapshot_local(btrfs_fs, path_generator):
     dst_dir1 = path_generator("test-snapshot", base_dir=btrfs_fs, mkdir=True)

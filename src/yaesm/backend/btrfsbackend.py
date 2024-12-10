@@ -32,7 +32,7 @@ class BtrfsBackend(BackendBase):
         bootstrap_snapshot = _btrfs_bootstrap_local_to_remote(src_dir, dst_dir)
         _, tmp_snapshot = _btrfs_take_snapshot_local(src_dir, src_dir, add_backup_basename_now=True)
         _btrfs_send_receive_local_to_remote(tmp_snapshot, dst_dir, parent=bootstrap_snapshot)
-        _delete_btrfs_subvolumes_local(tmp_snapshot)
+        _btrfs_delete_subvolumes_local(tmp_snapshot)
 
     def _exec_backup_remote_to_local(self, src_dir:SSHTarget, dst_dir:Path):
         bootstrap_snapshot = _btrfs_bootstrap_remote_to_local(src_dir, dst_dir)
@@ -41,10 +41,10 @@ class BtrfsBackend(BackendBase):
         _btrfs_delete_subvolumes_remote(tmp_snapshot)
 
     def _delete_backups_local(self, *backups):
-        _delete_btrfs_subvolumes_local(*backups)
+        _btrfs_delete_subvolumes_local(*backups)
 
     def _delete_backups_remote(self, *backups):
-        _delete_btrfs_subvolumes_remote(*backups)
+        _btrfs_delete_subvolumes_remote(*backups)
 
 def _btrfs_take_snapshot_local(src_dir:Path, dst_dir:Path, add_backup_basename_now=False, check=True):
     """Take a readonly local btrfs snapshot of 'src_dir', and place it in
@@ -178,7 +178,7 @@ def _btrfs_bootstrap_local_to_remote(src_dir:Path, dst_dir:SSHTarget):
     src_bootstrap = src_dir.joinpath(_btrfs_bootstrap_snapshot_basename())
     dst_bootstrap = dst_dir.with_path(dst_dir.path.joinpath(_btrfs_bootstrap_snapshot_basename()))
     src_bootstrap_exists = src_bootstrap.is_dir()
-    dst_bootstrap_exists = 0 == subprocess.run(dst_bootstrap.openssh_cmd(f"[ -d '{dst_bootstrap.path}' ]; exit $?"), shell=True).returncode
+    dst_bootstrap_exists = dst_bootstrap.is_dir()
     if not src_bootstrap_exists and not dst_bootstrap_exists:
         _btrfs_take_snapshot_local(src_dir, src_bootstrap)
         _btrfs_send_receive_local_to_remote(src_bootstrap, dst_dir)
@@ -200,7 +200,7 @@ def _btrfs_bootstrap_remote_to_local(src_dir:SSHTarget, dst_dir:Path):
     """
     src_bootstrap = src_dir.with_path(src_dir.path.joinpath(_btrfs_bootstrap_snapshot_basename()))
     dst_bootstrap = dst_dir.joinpath(_btrfs_bootstrap_snapshot_basename())
-    src_bootstrap_exists = 0 == subprocess.run(src_bootstrap.openssh_cmd(f"[ -d '{src_bootstrap.path}' ]; exit $?"), shell=True).returncode
+    src_bootstrap_exists = src_bootstrap.is_dir()
     dst_bootstrap_exists = dst_bootstrap.is_dir()
     if not src_bootstrap_exists and not dst_bootstrap_exists:
         _btrfs_take_snapshot_remote(src_dir, src_bootstrap)

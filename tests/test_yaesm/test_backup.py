@@ -2,11 +2,6 @@ import pytest
 import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
 
-# TODO: Need to be able to generate Timeframes first
-# @pytest.fixture
-# def backup_generator():
-#    ...
-
 def test_backup_to_datetime():
     dt = bckp.backup_to_datetime("yaesm-backup@1999_05_13_10:30")
     dt.year == 1999
