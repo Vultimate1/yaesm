@@ -61,3 +61,55 @@ def test_with_path(sshtarget):
     assert new_sshtarget.user == sshtarget.user
     assert new_sshtarget.host == sshtarget.host
     assert new_sshtarget.key == sshtarget.key
+
+def test_is_dir(sshtarget, path_generator):
+    path1 = path_generator("foo")
+    path2 = path_generator("bar")
+    target1 = sshtarget.with_path(path1)
+    target2 = sshtarget.with_path(path2)
+    assert not target1.is_dir()
+    assert not target2.is_dir()
+    path1.mkdir()
+    path2.touch()
+    assert target1.is_dir()
+    assert not target2.is_dir()
+    assert target2.is_dir(path1)
+
+def test_is_file(sshtarget, path_generator):
+    path1 = path_generator("foo", cleanup=True)
+    path2 = path_generator("bar", cleanup=True)
+    target1 = sshtarget.with_path(path1)
+    target2 = sshtarget.with_path(path2)
+    assert not target1.is_file()
+    assert not target2.is_file()
+    path1.mkdir()
+    path2.touch()
+    assert not target1.is_file()
+    assert target2.is_file()
+    assert target1.is_file(path2)
+
+def test_mkdir(sshtarget, path_generator):
+    path = path_generator("foo", cleanup=True)
+    assert sshtarget.mkdir(d=path)
+    assert path.is_dir()
+    path = path_generator("foo", cleanup=True)
+    path = path.joinpath("bar").joinpath("baz")
+    assert not sshtarget.mkdir(d=path, check=False)
+    assert not path.is_dir()
+    assert sshtarget.mkdir(d=path, parents=True)
+    assert path.is_dir()
+    path = path_generator("foo", cleanup=True)
+    newtarget = sshtarget.with_path(path)
+    assert not path.is_dir()
+    newtarget.mkdir()
+    assert path.is_dir()
+
+def test_touch(sshtarget, path_generator):
+    path = path_generator("foo", cleanup=True)
+    assert sshtarget.touch(f=path)
+    assert sshtarget.is_file(f=path)
+    path = path_generator("foo", cleanup=True)
+    newsshtarget = sshtarget.with_path(path)
+    assert not path.is_file()
+    assert newsshtarget.touch()
+    assert path.is_file()
