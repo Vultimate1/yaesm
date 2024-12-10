@@ -318,7 +318,7 @@ def btrfsbackend():
     return btrfsbackend
 
 @pytest.fixture
-def btrfs_fs_generator(path_generator, loopback_generator):
+def btrfs_fs_generator(path_generator, loopback_generator, yaesm_test_users_group):
     """Fixture to generate a btrfs filesystem on a loopback device."""
     def generator():
         mountpoint = path_generator("test-yaesm-btrfs-mountpoint", base_dir="/mnt", mkdir=True)
@@ -328,6 +328,7 @@ def btrfs_fs_generator(path_generator, loopback_generator):
         subprocess.run(["btrfs", "subvolume", "create", f"{mountpoint}/@"], check=True)
         subprocess.run(["umount", mountpoint], check=True)
         subprocess.run(["mount", loop, "-o", "rw,noatime,subvol=@", mountpoint], check=True)
+        subprocess.run(["chown", f"root:{yaesm_test_users_group.gr_name}", mountpoint], check=True)
         return mountpoint
     return generator
 
