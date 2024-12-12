@@ -36,25 +36,29 @@ def backup_basename_now():
     name = datetime_now.strftime("yaesm-backup@%Y_%m_%d_%H:%M")
     return name
 
-def backup_to_datetime(backup_path_or_basename):
+def backup_to_datetime(backup):
     """Construct and return a datetime object based on the basename of a yaesm backup.
-    This function accepts either a full path to a backup or just the basename.
+    This function accepts either a Path to a backup, the basename of a backup,
+    or an SSHTarget for a backup.
     """
-    backup_basename = os.path.basename(backup_path_or_basename)
+    if isinstance(backup, SSHTarget):
+        backup_basename = os.path.basename(backup.path)
+    else:
+        backup_basename = os.path.basename(backup)
     dt = datetime.strptime(backup_basename, "yaesm-backup@%Y_%m_%d_%H:%M")
     return dt
 
 def backups_sorted(backups):
-    """Returns list of backups (paths or basenames) sorted from newest to oldest."""
+    """Returns list of backups (paths, basenames, or SSHTargets) sorted from newest to oldest."""
     backups_sorted = sorted(backups, key=backup_to_datetime, reverse=True)
     return backups_sorted
 
 def backups_collect(target):
-    """This function collects all the yaesm backups at 'target', which can either
-    be an SSHTarget, or a Path. If 'target' is a Path then return a list of all
-    the yaesm backups on the local system at path 'target'. If 'target' is a
-    SSHTarget, then return a list of all the yaesm backups at the the SSHTarget
-    server at the path denoted by the SSHTargets 'path' instance variable.
+    """This function collects all the yaesm backups at 'target', which can
+    either be an SSHTarget or a Path. If 'target' is a Path then return a list
+    of Paths of all the yaesm backups on the local system at path 'target'. If
+    'target' is a SSHTarget, then return a list of all the yaesm backups as
+    SSHTargets at the remote 'target.path'.
     """
     backups = []
     if isinstance(target, SSHTarget):
@@ -63,7 +67,7 @@ def backups_collect(target):
         for backup in p.stdout.splitlines():
             backup = Path(backup)
             if backup_basename_re().match(backup.name):
-                backups.append(backup)
+                backups.append(target.with_path(backup))
     else: # target is a Path
         for path in target.iterdir():
             basename = path.name
