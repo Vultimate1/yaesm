@@ -218,9 +218,9 @@ def sshtarget(sshtarget_generator):
 
 @pytest.fixture
 def random_timeframe_generator(random_timeframe_times_generator, random_timeframe_minutes_generator, random_timeframe_weekdays_generator, random_timeframe_monthdays_generator, random_timeframe_yeardays_generator):
-    """Fixture for generating a random Timeframe."""
+    """Fixture for generating random Timeframes."""
     def generator(tframe_type=None, keep=None, minutes=None, times=None, weekdays=None, monthdays=None, yeardays=None) -> Timeframe:
-        tframe_type = random.choice(Timeframe.valid_tframe_types()) if tframe_type is None else tframe_type
+        tframe_type = random.choice(Timeframe.tframe_types()) if tframe_type is None else tframe_type
         keep        = random.randint(0,10) if keep is None else keep
         minutes     = random_timeframe_minutes_generator(random.randint(0,5)) if minutes is None else minutes
         times       = random_timeframe_times_generator(random.randint(0,5)) if times is None else times
@@ -240,6 +240,13 @@ def random_timeframe_generator(random_timeframe_times_generator, random_timefram
         elif tframe_type == YearlyTimeframe:
             return YearlyTimeframe(keep, times, yeardays)
     return generator
+
+@pytest.fixture
+def random_timeframe(random_timeframe_generator):
+    """Fixture for generating a single random timeframe. See the fixture
+    'random_timeframe_generator' for more information.
+    """
+    return random_timeframe_generator()
 
 @pytest.fixture
 def random_timeframes_generator(random_timeframe_generator):

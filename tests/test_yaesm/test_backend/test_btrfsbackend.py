@@ -23,48 +23,43 @@ def test_do_backup(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_
         expected_backup_basenames = []
         for i in range(timeframe.keep+2):
             with freeze_time(now + timedelta(hours=i)):
-                expected_backup_basenames.insert(0, bckp.backup_basename_now())
+                expected_backup_basenames.insert(0, bckp.backup_basename_now(backup, timeframe))
                 btrfs_backend.do_backup(backup, timeframe)
-        if isinstance(backup.dst_dir, SSHTarget):
-            dst_dir = backup.dst_dir.path.joinpath(timeframe.name)
-        else:
-            dst_dir = backup.dst_dir.joinpath(timeframe.name)
-        backups = bckp.backups_collect(dst_dir)
+        backups = bckp.backups_collect(backup.dst_dir)
         backup_basenames = list(map(lambda x: x.path.name if isinstance(x, SSHTarget) else x.name, backups))
         assert len(backups) == timeframe.keep
         assert expected_backup_basenames[0:timeframe.keep] == backup_basenames
 
 def test_exec_backup_local_to_local(btrfs_backend, btrfs_fs, path_generator):
     dst_dir = path_generator("test-dst-dir", base_dir=btrfs_fs, mkdir=True)
-    backup = dst_dir.joinpath(bckp.backup_basename_now())
-    assert not backup.is_dir()
-    btrfs_backend._exec_backup_local_to_local(btrfs_fs, dst_dir)
-    assert backup.is_dir()
+    backup_path = dst_dir.joinpath("yaesm-foo-backup-hourly@1999_05_13_23:59")
+    assert not backup_path.is_dir()
+    btrfs_backend._exec_backup_local_to_local(btrfs_fs, backup_path)
+    assert backup_path.is_dir()
 
 def test_exec_backup_local_to_remote(btrfs_backend, sshtarget, btrfs_fs, btrfs_sudo_access, path_generator):
-    dst_dir = sshtarget.with_path(path_generator("test-dst-dir", base_dir=btrfs_fs, mkdir=True))
-    backup = dst_dir.path.joinpath(bckp.backup_basename_now())
-    assert not backup.is_dir()
-    btrfs_backend._exec_backup_local_to_remote(btrfs_fs, dst_dir)
-    assert backup.is_dir()
+    backup_path = sshtarget.with_path(path_generator("test-dst-dir", base_dir=btrfs_fs, mkdir=True).joinpath("yaesm-foo-backup-hourly@1999_05_13_23:59"))
+    assert not backup_path.path.is_dir()
+    btrfs_backend._exec_backup_local_to_remote(btrfs_fs, backup_path)
+    assert backup_path.path.is_dir()
 
 def test_exec_backup_remote_to_local(btrfs_backend, sshtarget, btrfs_fs, btrfs_sudo_access, path_generator):
     src_dir = sshtarget.with_path(btrfs_fs)
-    dst_dir = path_generator("test-dst-dir", base_dir=btrfs_fs, mkdir=True)
-    backup = dst_dir.joinpath(bckp.backup_basename_now())
-    assert not backup.is_dir()
-    btrfs_backend._exec_backup_remote_to_local(src_dir, dst_dir)
-    assert backup.is_dir()
+    backup_path = path_generator("test-dst-dir", base_dir=btrfs_fs, mkdir=True).joinpath("yaesm-foo-backup@1999_05_13_23:59")
+    assert not backup_path.is_dir()
+    btrfs_backend._exec_backup_remote_to_local(src_dir, backup_path)
+    assert backup_path.is_dir()
 
 def test_btrfs_take_and_delete_snapshot_local(btrfs_fs, path_generator):
     dst_dir1 = path_generator("test-snapshot", base_dir=btrfs_fs, mkdir=True)
     dst_dir2 = path_generator("test-snapshot", base_dir=btrfs_fs, mkdir=True)
-    returncode1, snapshot1 = btrfs._btrfs_take_snapshot_local(btrfs_fs, dst_dir1, add_backup_basename_now=True)
-    returncode2, snapshot2 = btrfs._btrfs_take_snapshot_local(btrfs_fs, dst_dir2, add_backup_basename_now=True)
+    backup_basename = "yaesm-foo-backup-hourly@1999_05_13_23:59"
+    snapshot1 = dst_dir1.joinpath(backup_basename)
+    snapshot2 = dst_dir2.joinpath(backup_basename)
+    returncode1, snapshot1 = btrfs._btrfs_take_snapshot_local(btrfs_fs, snapshot1)
+    returncode2, snapshot2 = btrfs._btrfs_take_snapshot_local(btrfs_fs, snapshot2)
     assert 0 == returncode1
     assert 0 == returncode2
-    assert bckp.backup_basename_re().match(snapshot1.name)
-    assert bckp.backup_basename_re().match(snapshot2.name)
     assert 1 == len(os.listdir(dst_dir1))
     assert 1 == len(os.listdir(dst_dir2))
     returncode, deleted = btrfs._btrfs_delete_subvolumes_local(snapshot1, snapshot2)
@@ -87,8 +82,11 @@ def test_btrfs_take_and_delete_snapshot_remote(btrfs_fs, btrfs_sudo_access, ssht
     src_dir = sshtarget.with_path(btrfs_fs)
     dst_dir1 = sshtarget.with_path(path_generator("test-snapshot", base_dir=btrfs_fs, mkdir=True))
     dst_dir2 = sshtarget.with_path(path_generator("test-snapshot", base_dir=btrfs_fs, mkdir=True))
-    returncode1, snapshot1 = btrfs._btrfs_take_snapshot_remote(src_dir, dst_dir1, add_backup_basename_now=True)
-    returncode2, snapshot2 = btrfs._btrfs_take_snapshot_remote(src_dir, dst_dir2, add_backup_basename_now=True)
+    backup_basename = "yaesm-foo-backup-hourly@1999_05_13_23:59"
+    snapshot1 = dst_dir1.with_path(dst_dir1.path.joinpath(backup_basename))
+    snapshot2 = dst_dir2.with_path(dst_dir2.path.joinpath(backup_basename))
+    returncode1, snapshot1 = btrfs._btrfs_take_snapshot_remote(src_dir, snapshot1)
+    returncode2, snapshot2 = btrfs._btrfs_take_snapshot_remote(src_dir, snapshot2)
     assert 0 == returncode1
     assert 0 == returncode2
     assert bckp.backup_basename_re().match(snapshot1.path.name)
@@ -100,8 +98,8 @@ def test_btrfs_take_and_delete_snapshot_remote(btrfs_fs, btrfs_sudo_access, ssht
     assert [snapshot1, snapshot2] == deleted
     assert 0 == len(os.listdir(dst_dir1.path))
     assert 0 == len(os.listdir(dst_dir2.path))
-    dst_dir = sshtarget.with_path(path_generator("test-snapshot", base_dir=btrfs_fs, mkdir=True).joinpath("foo"))
-    returncode, snapshot = btrfs._btrfs_take_snapshot_remote(src_dir, dst_dir)
+    snapshot = sshtarget.with_path(path_generator("test-snapshot", base_dir=btrfs_fs, mkdir=True).joinpath("foo"))
+    returncode, snapshot = btrfs._btrfs_take_snapshot_remote(src_dir, snapshot)
     assert 0 == returncode
     assert snapshot.path.is_dir()
     assert snapshot.path.name == "foo"
@@ -109,7 +107,7 @@ def test_btrfs_take_and_delete_snapshot_remote(btrfs_fs, btrfs_sudo_access, ssht
     assert 0 == returncode
     assert [snapshot] == deleted
     assert not snapshot.path.is_dir()
-    assert 0 == len(os.listdir(dst_dir.path.parent))
+    assert 0 == len(os.listdir(snapshot.path.parent))
 
 def test_btrfs_send_receive_local_to_local(btrfs_fs, path_generator):
     _, parent_snapshot = btrfs._btrfs_take_snapshot_local(btrfs_fs, path_generator("test-parent-snapshot", base_dir=btrfs_fs))

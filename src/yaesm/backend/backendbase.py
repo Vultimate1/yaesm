@@ -18,54 +18,53 @@ class BackendBase(abc.ABC):
     It is important to note that it is expected that backup.dst_dir is an existing
     directory (regardless of if it is a Path or SSHTarget).
     """
-
     @final
     def do_backup(self, backup:bckp.Backup, timeframe:Timeframe):
-        """Perform a backup of 'backup' for the Timeframe 'timeframe'."""
-        src_dir = backup.src_dir
-        if isinstance(backup.dst_dir, SSHTarget):
-            dst_dir = backup.dst_dir.with_path(backup.dst_dir.path.joinpath(timeframe.name))
-            dst_dir.mkdir() # note that parents are not created
-        else:
-            dst_dir = backup.dst_dir.joinpath(timeframe.name)
-            dst_dir.mkdir(exist_ok=True) # note that parents are not created
+        """Perform a backup of 'backup' for the Timeframe 'timeframe'. Note that
+        this function also cleans up old backups.
+        """
+        backup_basename = bckp.backup_basename_now(backup, timeframe)
         if backup.backup_type == "local_to_local":
-            self._exec_backup_local_to_local(src_dir, dst_dir)
+            self._exec_backup_local_to_local(backup.src_dir, backup.dst_dir.joinpath(backup_basename))
         elif backup.backup_type == "local_to_remote":
-            self._exec_backup_local_to_remote(src_dir, dst_dir)
+            backup_path = backup.dst_dir.with_path(backup.dst_dir.path.joinpath(backup_basename))
+            self._exec_backup_local_to_remote(backup.src_dir, backup_path)
         else: # remote_to_local
-            self._exec_backup_remote_to_local(src_dir, dst_dir)
-        backups = bckp.backups_collect(dst_dir) # sorted newest to oldest
+            self._exec_backup_remote_to_local(backup.src_dir, backup.dst_dir.joinpath(backup_basename))
+        backups = bckp.backups_collect(backup.dst_dir) # sorted newest to oldest
         to_delete = []
         while len(backups) > timeframe.keep:
             to_delete.append(backups.pop())
         if to_delete:
-            if isinstance(dst_dir, SSHTarget):
+            if isinstance(backup.dst_dir, SSHTarget):
                 self._delete_backups_remote(*to_delete)
             else:
                 self._delete_backups_local(*to_delete)
 
     @abc.abstractmethod
-    def _exec_backup_local_to_local(self, src_dir:Path, dst_dir:Path):
-        """Execute a single local to local backup of 'src_dir' and place it in
-        'dst_dir', which should represent an existing directory on the local
-        system. Does not perform any cleanup.
+    def _exec_backup_local_to_local(self, src_dir:Path, backup_path:Path):
+        """Execute a single local to local backup of 'src_dir' and place it at
+        'backup_path', whos parent dir should be an existing directory on the
+        local system, and whos basename will be the backup name. Does not
+        perform any cleanup.
         """
         ...
 
     @abc.abstractmethod
-    def _exec_backup_local_to_remote(self, src_dir:Path, dst_dir:SSHTarget):
-        """Execute a single local to remote backup of 'src_dir' and place it in
-        the SSHTarget 'dst_dir', which should have a .path representing an
-        existing directory on the remote server. Does not perform any cleanup.
+    def _exec_backup_local_to_remote(self, src_dir:Path, backup_path:SSHTarget):
+        """Execute a single local to remote backup of 'src_dir' and place it at
+        the SSHTarget 'backup_path', which should have a .path whos parent should
+        be an existing directory on the remote server, and whos basename will
+        be the backup name. Does not perform any cleanup.
         """
         ...
 
     @abc.abstractmethod
-    def _exec_backup_remote_to_local(self, src_dir:SSHTarget, dst_dir:Path):
-        """Execute a single remote to local backup of the SSHTarget 'src_dir' and
-        place it in 'dst_dir', which should represent an existing directory on
-        the local system. Does not perform any cleanup.
+    def _exec_backup_remote_to_local(self, src_dir:SSHTarget, backup_path:Path):
+        """Execute a single remote to local backup of the SSHTarget 'src_dir'
+        and place it at the local 'backup_path', whos parent dir should be an
+        existing directory on the local system, and whos basename will be the
+        backup name. Does not perform any cleanup.
         """
         ...
 
