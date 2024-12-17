@@ -1,4 +1,6 @@
 import pytest
+from freezegun import freeze_time
+
 import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
 
@@ -46,6 +48,31 @@ def test_backups_sorted():
         "/path/to/backup/yaesm-backup@1999_05_13_09:30",
         "yaesm-backup@1999_05_13_08:30"
     ]
+
+def test_backup_basename_re():
+    backup_basename_re = bckp.backup_basename_re()
+    assert backup_basename_re.match("yaesm-foo-backup@1999_05_13_23:59")
+    assert backup_basename_re.match("yaesm-foobackup@1999_05_13_23:59")
+    assert not backup_basename_re.match("foo-backup@1999_05_13_23:59")
+    assert not backup_basename_re.match("yaesm-foo-backup@1999_05_13_23:5")
+    re_result = backup_basename_re.match("yaesm-foo-backup@1999_05_13_23:59")
+    assert re_result.group(1) == "yaesm-foo-backup"
+    assert re_result.group(2) == "1999_05_13_23:59"
+
+def test_backup_basename_now(random_backup_generator, random_timeframe):
+    random_backup = random_backup_generator("/tmp")
+    with freeze_time("1999-05-13 23:59"):
+        assert bckp.backup_basename_now(random_backup, random_timeframe) == f"yaesm-{random_backup.name}-{random_timeframe.name}@1999_05_13_23:59"
+
+def test_backup_basename_update_time(random_backup_generator, random_timeframe):
+    random_backup = random_backup_generator("/tmp")
+    backup_basename = ""
+    with freeze_time("1999-05-13 23:59"):
+        backup_basename = bckp.backup_basename_now(random_backup, random_timeframe)
+        assert backup_basename == f"yaesm-{random_backup.name}-{random_timeframe.name}@1999_05_13_23:59"
+        with freeze_time("1999-12-25 23:59"):
+            backup_basename = bckp.backup_basename_update_time(backup_basename)
+            assert backup_basename == f"yaesm-{random_backup.name}-{random_timeframe.name}@1999_12_25_23:59"
 
 def test_backups_collect(path_generator, sshtarget):
     backup_basenames = [

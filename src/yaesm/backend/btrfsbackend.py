@@ -19,25 +19,24 @@ class BtrfsBackend(BackendBase):
     commands 'btrfs subvolume snapshot', 'btrfs subvolume delete', 'btrfs send',
     and 'btrfs receive'.
     """
-
-    def _exec_backup_local_to_local(self, src_dir:Path, dst_dir:Path):
-        returncode, _ = _btrfs_take_snapshot_local(src_dir, dst_dir, add_backup_basename_now=True, check=False)
+    def _exec_backup_local_to_local(self, src_dir:Path, backup_path:Path):
+        returncode, _ = _btrfs_take_snapshot_local(src_dir, backup_path, check=False)
         if 0 != returncode:
-            bootstrap_snapshot = _btrfs_bootstrap_local_to_local(src_dir, dst_dir)
-            _, tmp_snapshot = _btrfs_take_snapshot_local(src_dir, src_dir, add_backup_basename_now=True)
-            _btrfs_send_receive_local_to_local(tmp_snapshot, dst_dir, parent=bootstrap_snapshot)
+            bootstrap_snapshot = _btrfs_bootstrap_local_to_local(src_dir, backup_path.parent)
+            _, tmp_snapshot = _btrfs_take_snapshot_local(src_dir, src_dir.joinpath(backup_basename))
+            _btrfs_send_receive_local_to_local(tmp_snapshot, backup_path.parent, parent=bootstrap_snapshot)
             _btrfs_delete_subvolumes_local(tmp_snapshot)
 
-    def _exec_backup_local_to_remote(self, src_dir:Path, dst_dir:SSHTarget):
-        bootstrap_snapshot = _btrfs_bootstrap_local_to_remote(src_dir, dst_dir)
-        _, tmp_snapshot = _btrfs_take_snapshot_local(src_dir, src_dir, add_backup_basename_now=True)
-        _btrfs_send_receive_local_to_remote(tmp_snapshot, dst_dir, parent=bootstrap_snapshot)
+    def _exec_backup_local_to_remote(self, src_dir:Path, backup_path:SSHTarget):
+        bootstrap_snapshot = _btrfs_bootstrap_local_to_remote(src_dir, backup_path.with_path(backup_path.path.parent))
+        _, tmp_snapshot = _btrfs_take_snapshot_local(src_dir, src_dir.joinpath(backup_path.path.name))
+        _btrfs_send_receive_local_to_remote(tmp_snapshot, backup_path.with_path(backup_path.path.parent), parent=bootstrap_snapshot)
         _btrfs_delete_subvolumes_local(tmp_snapshot)
 
-    def _exec_backup_remote_to_local(self, src_dir:SSHTarget, dst_dir:Path):
-        bootstrap_snapshot = _btrfs_bootstrap_remote_to_local(src_dir, dst_dir)
-        _, tmp_snapshot = _btrfs_take_snapshot_remote(src_dir, src_dir, add_backup_basename_now=True)
-        _btrfs_send_receive_remote_to_local(tmp_snapshot, dst_dir, parent=bootstrap_snapshot)
+    def _exec_backup_remote_to_local(self, src_dir:SSHTarget, backup_path:Path):
+        bootstrap_snapshot = _btrfs_bootstrap_remote_to_local(src_dir, backup_path.parent)
+        _, tmp_snapshot = _btrfs_take_snapshot_remote(src_dir, src_dir.with_path(src_dir.path.joinpath(backup_path.name)))
+        _btrfs_send_receive_remote_to_local(tmp_snapshot, backup_path.parent, parent=bootstrap_snapshot)
         _btrfs_delete_subvolumes_remote(tmp_snapshot)
 
     def _delete_backups_local(self, *backups):
@@ -46,39 +45,28 @@ class BtrfsBackend(BackendBase):
     def _delete_backups_remote(self, *backups):
         _btrfs_delete_subvolumes_remote(*backups)
 
-def _btrfs_take_snapshot_local(src_dir:Path, dst_dir:Path, add_backup_basename_now=False, check=True):
-    """Take a readonly local btrfs snapshot of 'src_dir', and place it in
-    'dst_dir'. The naming of the snapshot follows the same semantics as a
-    'btrfs subvolume snapshot' command. If 'add_backup_basename_now' is True then
-    set the snapshot basename to the output of 'bckp.backup_basename_now()'.
+def _btrfs_take_snapshot_local(src_dir:Path, snapshot:Path, check=True):
+    """Take a readonly local btrfs snapshot of 'src_dir', and place it at
+    'snapshot'. The name of the created snapshot will be exactly 'snapshot'.
     Passes 'check' along to subprocess.run(). Returns a pair containing the
     btrfs subvolume snapshot command returncode, and the name of the created (or
     attempted to create) snapshot.
     """
-    if add_backup_basename_now:
-        snapshot = dst_dir.joinpath(bckp.backup_basename_now())
-    else:
-        snapshot = dst_dir
     p = subprocess.run(["btrfs", "subvolume", "snapshot", "-r", src_dir, snapshot], check=check)
     return p.returncode, snapshot
 
-def _btrfs_take_snapshot_remote(src_dir:SSHTarget, dst_dir:SSHTarget, add_backup_basename_now=False, check=True):
-    """Take a readonly btrfs snapshot of the remote 'src_dir', and place it in
-    the remote 'dst_dir'. The naming of the snapshot follows the same semantics as
-    a 'btrfs subvolume snapshot' command. If 'add_backup_basename_now' is True then
-    set the snapshot basename to the output of 'bckp.backup_basename_now()'.
-    Passes 'check' along to subprocess.run(). Returns a pair containing the
-    btrfs subvolume snapshot command returncode, and an SSHTarget with its .path
-    pointing to the created (or attempted to create) snapshot.
+def _btrfs_take_snapshot_remote(src_dir:SSHTarget, snapshot:SSHTarget,check=True):
+    """Take a readonly btrfs snapshot of the remote 'src_dir' and place it at
+    'snapshot'. The name of the created snapshot will be exactly
+    'snapshot.path'. Passes 'check' along to subprocess.run(). Returns a pair
+    containing the btrfs subvolume snapshot command returncode, and an SSHTarget
+    with its .path pointing to the created (or attempted to create) snapshot.
 
-    Note that it is assumed that 'src_dir' and 'dst_dir' refer to the same SSH
-    server. Also note that the btrfs command is executed with sudo, so the remote
-    user must have passwordless sudo access to execute 'btrfs subvolume snapshot'.
+    Note that it is assumed that 'src_dir' and 'snapshot' refer to the same SSH
+    server. Also note that the 'btrfs subvolume snapshot' command is executed
+    with sudo, so the remote user must have passwordless sudo access to execute
+    'btrfs subvolume snapshot'.
     """
-    if add_backup_basename_now:
-        snapshot = dst_dir.with_path(dst_dir.path.joinpath(bckp.backup_basename_now()))
-    else:
-        snapshot = dst_dir.with_path(dst_dir.path)
     p = subprocess.run(src_dir.openssh_cmd(f"sudo -n btrfs subvolume snapshot -r '{src_dir.path}' '{snapshot.path}'"), shell=True, check=check)
     return p.returncode, snapshot
 

@@ -3,7 +3,9 @@ import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
+
 from yaesm.sshtarget import SSHTarget
+from yaesm.timeframe import Timeframe
 
 class BackupError(Exception):
     ...
@@ -28,12 +30,19 @@ class Backup:
 
 def backup_basename_re():
     """Returns a re compiled regex to match a yaesm backup basename."""
-    return re.compile("^yaesm-backup@[0-9]{4}_[0-9]{2}_[0-9]{2}_[0-9]{2}:[0-9]{2}$")
+    return re.compile("^(yaesm-.+)@([0-9]{4}_[0-9]{2}_[0-9]{2}_[0-9]{2}:[0-9]{2})$")
 
-def backup_basename_now():
-    """Return the basename of a yaesm backup for the current time."""
+def backup_basename_update_time(backup_basename):
+    re_result = backup_basename_re().match(backup_basename)
+    prefix = re_result.group(1)
     datetime_now = datetime.now()
-    name = datetime_now.strftime("yaesm-backup@%Y_%m_%d_%H:%M")
+    name = datetime_now.strftime(f"{prefix}@%Y_%m_%d_%H:%M")
+    return name
+
+def backup_basename_now(backup:Backup, timeframe:Timeframe):
+    """Return the basename of a yaesm backup for the current time"""
+    datetime_now = datetime.now()
+    name = datetime_now.strftime(f"yaesm-{backup.name}-{timeframe.name}@%Y_%m_%d_%H:%M")
     return name
 
 def backup_to_datetime(backup):
@@ -45,7 +54,8 @@ def backup_to_datetime(backup):
         backup_basename = os.path.basename(backup.path)
     else:
         backup_basename = os.path.basename(backup)
-    dt = datetime.strptime(backup_basename, "yaesm-backup@%Y_%m_%d_%H:%M")
+    backup_basename_time = backup_basename_re().match(backup_basename).group(2)
+    dt = datetime.strptime(backup_basename_time, "%Y_%m_%d_%H:%M")
     return dt
 
 def backups_sorted(backups):
