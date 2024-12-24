@@ -107,24 +107,28 @@ def _ext4_bootstrap_snapshot_basename(self):
 
 def make_partition(block_dev):
         cmdout = subprocess.run(["sudo", "parted", block_dev], capture_output=True)
-        cmdout = subprocess.run(["sudo", "mkpart primary ext4 1MiB 100GiB", block_dev], capture_output=True)
-        cmdout = subprocess.run(["sudo", "mkfs.ext4", block_dev+"1"], capture_output=True)
-        out = cmdout.stdout.decode('utf-8').split("\n")
-        sizes = re.findall("\\d+", out[1])
-        num_blocks = sizes[0]
-        num_inodes = sizes[1]
-        block_size = out[1].split()[3]
-        uuid = out[2].split()[len(out[2] - 1)]
-        return num_blocks, num_inodes, block_size, uuid
+        cmdout = subprocess.run(["sudo", "mkpart", "primary", "ext4", "1MiB", "100GiB", block_dev], capture_output=True)
+        cmdout = subprocess.run(["sudo", "mkfs.ext4", block_dev+"1", "-v"], capture_output=True)
+        out = cmdout.stdout.decode('utf-8').split('\n')
+        print(out)
+        #sizes = re.findall("\\d+", out[0])
+        cmdout = subprocess.run(["sudo", "file", "-sL", block_dev+"1"], capture_output=True).stdout.split()
+        type = out[4]
+        uuid = out[7].split('=')[1]
+        num_blocks = out[8].split()[0] #sizes[0]
+        num_inodes = out[9].split()[0]
+        block_size = out[0].split()[4]
+        journal_size = out[7].split()[2].split('(')[1]
+        return num_blocks, num_inodes, block_size, uuid, journal_size
 
 def get_fs_details(src_dir):
         #details = subprocess.run(["sudo", "mount | grep", self.src_dir])
         details = subprocess.run(["sudo", "df", "-T", src_dir],  capture_output=True).stdout.decode('utf-8').split('\n')
         print(details)
         block_size = details[0].split()
-        block_size = block_size[3].split('-')
+        block_size = block_size[2].split('-')
         block_size = block_size[0]
-        details = details[1].split('\t')
+        details = details[1].split()
         #fs_type = details.decode('utf-8').stdout.split(' ')[4]
         #block_dev = details.decode('utf-8').stdout.split(' ')[0]
         fs_type = details[1]

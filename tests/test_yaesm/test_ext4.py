@@ -22,12 +22,16 @@ def test_get_fs_details():
     assert int(num_blocks)>10000
 
 def test_make_ext4():
-    num_blocks, num_inodes, block_size, uuid = ext4backend.make_partition("/dev/sdc")
+    num_blocks, num_inodes, block_size, uuid, journal_size = ext4backend.make_partition("/dev/sdc")
     assert float(num_blocks) > 0
     assert float(num_inodes) > 0
     assert block_size == "1k" or block_size == "4k"
-    assert uuid > 0
+    assert len(uuid)>=36
+    cmdout = subprocess.run(["sudo", "lsblk"], capture_output=True).stdout
+    type = cmdout.split('\n')[1].split()[0]
+    assert type=='ext4'
     dev_items = []
+    devs = subprocess.run(["sudo", "lsblk"]).stdout.split('\n').split()
     i = 0
     for dev in devs:
         items = dev.split()
