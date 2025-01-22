@@ -6,7 +6,7 @@ A backup tool for multiple file systems!
 
 Please do not hesitate to open an [issue](https://github.com/Vultimate1/yaesm/issues/new) or [pull request](https://github.com/Vultimate1/yaesm/pulls)!
 
-To run the test suite use the `docker-pytest.sh` script:
+To run the test suite execute the `docker-pytest.sh` script from the root of the yaesm source tree:
 
 ```
 $ ./docker-pytest.sh -H ### print docker-pytest.sh help message
