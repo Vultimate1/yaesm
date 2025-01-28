@@ -1,20 +1,19 @@
 from datetime import datetime
 import heapq
 import time
-import croniter
+from croniter import croniter
 
-def get_hours_and_minutes(times) -> tuple:
-    """Returns a tuple of the list of hours and the list of minutes respectively.
-    These lists a parallel.
 
-    On failure (where a time is not of type `datetime.datetime`), both entries = `-1`."""
-    minutes, hours = []
-    for t in times:
-        if type(t) != datetime:
-            return (-1, -1)
-        minutes.append(t.minute)
-        hours.append(t.hour)
-    return (hours, minutes)
+class TimeframeIter:
+    def __init__(self, expiration, base, timeframe, func):
+        self.expiration = expiration
+        self.base = base
+        self.timeframe = timeframe
+        self.func = func
+
+    # This is to ensure that heapq only compares by expiration and nothing else.
+    def __lt__(self, other):
+        return self.expiration < other.expiration
 
 
 class Scheduler:
@@ -36,7 +35,7 @@ class Scheduler:
         }
 
     def add_timeframe(self, timeframe, func):
-        # This is a priority queue (`heapq`), containing tuples with elements:
+        # This is a priority queue (`heapq`), containing `TimeframeIter`'s with elements:
         # 1st: The time since epoch (for sorting the queue + checking if expired)
         # 2nd: The croniter object
         # 3rd: The timeframe object
@@ -49,19 +48,22 @@ class Scheduler:
         time_iter = croniter("*/5 * * * *", base)
         heapq.heappush(
             self.timeframe_iters,
-            (time_iter.get_next(datetime), time_iter, obj, func)
+            TimeframeIter(time_iter.get_next(datetime), time_iter, obj, func)
         )
 
     def _hourly_init(self, base, obj, func):
         # At every minute in of every hour...
-        time_iter = croniter("{0} * * * *".format(obj.minutes), base)
-        heapq.heappush(
-            self.timeframe_iters,
-            (time_iter.get_next(datetime), time_iter, obj, func)
+        time_iters = list(
+            map(lambda m: croniter("{0} * * * *".format(m), base), obj.minutes)
         )
+        for time_iter in time_iters:
+            heapq.heappush(
+                self.timeframe_iters,
+                TimeframeIter(time_iter.get_next(datetime), time_iter, obj, func)
+            )
 
     def _daily_init(self, base, obj, func):
-        hours, minutes = get_hours_and_minutes(obj.times)
+        hours, minutes = zip(*obj.times)
 
         # Every day at each hour:minute...
         time_iters = list(
@@ -70,11 +72,11 @@ class Scheduler:
         for time_iter in time_iters:
             heapq.heappush(
                 self.timeframe_iters,
-                (time_iter.get_next(datetime), time_iter, obj, func)
+                TimeframeIter(time_iter.get_next(datetime), time_iter, obj, func)
             )
 
     def _weekly_init(self, base, obj, func):
-        hours, minutes = get_hours_and_minutes(obj.times)
+        hours, minutes = zip(*obj.times)
 
         days = obj.weekdays
         for i in range(len(days)):
@@ -89,11 +91,11 @@ class Scheduler:
         for time_iter in time_iters:
             heapq.heappush(
                 self.timeframe_iters,
-                (time_iter.get_next(datetime), time_iter, obj, func)
+                TimeframeIter(time_iter.get_next(datetime), time_iter, obj, func)
             )
 
     def _monthly_init(self, base, obj, func):
-        hours, minutes = get_hours_and_minutes(obj.times)
+        hours, minutes = zip(*obj.times)
         days = ",".join(obj.monthdays)
         # Every month on each specified day at each hour:minute...
         time_iters = list(
@@ -102,11 +104,11 @@ class Scheduler:
         for time_iter in time_iters:
             heapq.heappush(
                 self.timeframe_iters,
-                (time_iter.get_next(datetime), time_iter, obj, func)
+                TimeframeIter(time_iter.get_next(datetime), time_iter, obj, func)
             )
 
     def _yearly_init(self, base, obj, func):
-        hours, minutes = get_hours_and_minutes(obj.times)
+        hours, minutes = zip(*obj.times)
         days = obj.yeardays
         months = []
         for i in range(len(days)):
@@ -127,7 +129,7 @@ class Scheduler:
         for time_iter in time_iters:
             heapq.heappush(
                 self.timeframe_iters,
-                (time_iter.get_next(datetime), time_iter, obj, func)
+                TimeframeIter(time_iter.get_next(datetime), time_iter, obj, func)
             )
 
     def check_and_sleep(self):
@@ -136,10 +138,13 @@ class Scheduler:
 
         Warning: This function blocks the thread. Spin it off into its own."""
         present = datetime.now()
-        while (len(self.timeframe_iters) >= 1 and self.timeframe_iters[0][0] <= present):
+        while (len(self.timeframe_iters) >= 1 and self.timeframe_iters[0].expiration <= present):
             expired = heapq.heappop(self.timeframe_iters)
-            expired[3]()
-            next_time = expired[1].get_next(datetime)
-            heapq.heappush(self.timeframe_iters, (next_time, expired[1], expired[2]))
+            expired.func()
+            next_time = expired.base.get_next(datetime)
+            heapq.heappush(
+                self.timeframe_iters,
+                TimeframeIter(next_time, expired.base, expired.timeframe, expired.func)
+            )
             present = datetime.now()
-        time.sleep(self.timeframe_iters[0][1].get_current(float))
+        time.sleep(self.timeframe_iters[0].base.get_current(float))

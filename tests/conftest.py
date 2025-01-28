@@ -368,3 +368,12 @@ def btrfs_sudo_access(yaesm_test_users_group, tmp_path_factory):
             for rule in sudoers_rules:
                 f.write(rule + "\n")
     return True
+
+@pytest.fixture
+def dummy_functions_generator():
+    """Fixture to generate a list of dummy functions that print a unique output to
+    stdout when called. The `pytest.capsys` fixture is recommended for capturing
+    the outputs."""
+    def generator(num):
+        return [lambda i=i: print(i) for i in range(num)]
+    return generator
