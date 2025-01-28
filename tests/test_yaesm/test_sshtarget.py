@@ -3,27 +3,6 @@ from yaesm.sshtarget import SSHTarget, SSHTargetException
 import subprocess
 from pathlib import Path
 
-@pytest.fixture
-def sshtarget_generator(localhost_server_generator):
-    """Fixture for generating SSHTargets for mock localhost ssh servers. Note
-    that the target path is the home directory of the localhost ssh server user.
-    """
-    def generator():
-        localhost_server = localhost_server_generator()
-        user = localhost_server["user"]
-        key = localhost_server["key"]
-        target_spec = f"ssh://p22:{user.pw_name}@localhost:{user.pw_dir}"
-        sshtarget = SSHTarget(target_spec, key)
-        return sshtarget
-    return generator
-
-@pytest.fixture
-def sshtarget(sshtarget_generator):
-    """Fixture for generating a single SSHTarget on a mock localhost ssh server.
-    See the sshtarget_generator fixture for more information.
-    """
-    return sshtarget_generator()
-
 def test_sshtarget_constructor():
     key = Path("/a/path/to/a/key")
 
@@ -75,3 +54,62 @@ def test_openssh_cmd(sshtarget):
     assert returncode == 42
     assert stdout == "bar\nbaz\n"
     assert stderr == "quux\n"
+
+def test_with_path(sshtarget):
+    new_sshtarget = sshtarget.with_path(Path("/foo"))
+    assert new_sshtarget.path == Path("/foo")
+    assert new_sshtarget.user == sshtarget.user
+    assert new_sshtarget.host == sshtarget.host
+    assert new_sshtarget.key == sshtarget.key
+
+def test_is_dir(sshtarget, path_generator):
+    path1 = path_generator("foo")
+    path2 = path_generator("bar")
+    target1 = sshtarget.with_path(path1)
+    target2 = sshtarget.with_path(path2)
+    assert not target1.is_dir()
+    assert not target2.is_dir()
+    path1.mkdir()
+    path2.touch()
+    assert target1.is_dir()
+    assert not target2.is_dir()
+    assert target2.is_dir(path1)
+
+def test_is_file(sshtarget, path_generator):
+    path1 = path_generator("foo", cleanup=True)
+    path2 = path_generator("bar", cleanup=True)
+    target1 = sshtarget.with_path(path1)
+    target2 = sshtarget.with_path(path2)
+    assert not target1.is_file()
+    assert not target2.is_file()
+    path1.mkdir()
+    path2.touch()
+    assert not target1.is_file()
+    assert target2.is_file()
+    assert target1.is_file(path2)
+
+def test_mkdir(sshtarget, path_generator):
+    path = path_generator("foo", cleanup=True)
+    assert sshtarget.mkdir(d=path)
+    assert path.is_dir()
+    path = path_generator("foo", cleanup=True)
+    path = path.joinpath("bar").joinpath("baz")
+    assert not sshtarget.mkdir(d=path, check=False)
+    assert not path.is_dir()
+    assert sshtarget.mkdir(d=path, parents=True)
+    assert path.is_dir()
+    path = path_generator("foo", cleanup=True)
+    newtarget = sshtarget.with_path(path)
+    assert not path.is_dir()
+    newtarget.mkdir()
+    assert path.is_dir()
+
+def test_touch(sshtarget, path_generator):
+    path = path_generator("foo", cleanup=True)
+    assert sshtarget.touch(f=path)
+    assert sshtarget.is_file(f=path)
+    path = path_generator("foo", cleanup=True)
+    newsshtarget = sshtarget.with_path(path)
+    assert not path.is_file()
+    assert newsshtarget.touch()
+    assert path.is_file()

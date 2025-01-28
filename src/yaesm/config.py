@@ -42,6 +42,7 @@ class Config:
       src_dir: /home/fred
       dst_dir: fred@192.168.1.73:/yaesm/fred_laptop_backups # backup to a remote server with SSH!
       ssh_key: /home/fred/.ssh/id_rsa
+      ssh_config: /etc/ssh/some_other_config
       timeframes: [daily]
       daily_times: [23:59]
       daily_keep: 365
