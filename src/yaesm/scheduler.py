@@ -1,5 +1,6 @@
 from datetime import datetime
 import heapq
+from threading import Thread
 import time
 from croniter import croniter
 
@@ -132,19 +133,37 @@ class Scheduler:
                 TimeframeIter(time_iter.get_next(datetime), time_iter, obj, func)
             )
 
+    def _join_dead_threads(self, threads):
+        dead_threads = []
+        for thread in threads:
+            if not thread.is_alive():
+                threads.join()
+                dead_threads.append(thread)
+        return filter(lambda t: t not in dead_threads, threads)
+
     def check_and_sleep(self):
         """Checks if any timeframe has expired, then sleeps until
         the earliest timeframe expires.
 
         Warning: This function blocks the thread. Spin it off into its own."""
         present = datetime.now()
-        while (len(self.timeframe_iters) >= 1 and self.timeframe_iters[0].expiration <= present):
+        threads = []
+        while len(self.timeframe_iters) >= 1 and self.timeframe_iters[0].expiration <= present:
             expired = heapq.heappop(self.timeframe_iters)
-            expired.func()
+
+            threads.append(Thread(target=expired.func))
+            threads[-1].start()
+
             next_time = expired.base.get_next(datetime)
             heapq.heappush(
                 self.timeframe_iters,
                 TimeframeIter(next_time, expired.base, expired.timeframe, expired.func)
             )
             present = datetime.now()
+
+            self._join_dead_threads(threads)
+
+        while len(threads) > 0:
+            self._join_dead_threads(threads)
+
         time.sleep(self.timeframe_iters[0].base.get_current(float))
