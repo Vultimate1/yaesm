@@ -137,15 +137,14 @@ class Scheduler:
         dead_threads = []
         for thread in threads:
             if not thread.is_alive():
-                threads.join()
+                thread.join()
                 dead_threads.append(thread)
-        return filter(lambda t: t not in dead_threads, threads)
+        return list(filter(lambda t: t not in dead_threads, threads))
 
-    def check_and_sleep(self):
-        """Checks if any timeframe has expired, then sleeps until
-        the earliest timeframe expires.
+    def check_for_expired(self):
+        """Checks if any timeframe has expired.
 
-        Warning: This function blocks the thread. Spin it off into its own."""
+        Warning: This function may block forever. Spin it off into its own thread."""
         present = datetime.now()
         threads = []
         while len(self.timeframe_iters) >= 1 and self.timeframe_iters[0].expiration <= present:
@@ -160,10 +159,13 @@ class Scheduler:
                 TimeframeIter(next_time, expired.base, expired.timeframe, expired.func)
             )
             present = datetime.now()
-
-            self._join_dead_threads(threads)
+            threads = self._join_dead_threads(threads)
 
         while len(threads) > 0:
-            self._join_dead_threads(threads)
+            threads = self._join_dead_threads(threads)
 
+    def sleep_until_next_timeframe(self):
+        """Sleeps until the earliest timeframe expires.
+
+        It's recommended to spin this function off into its own thread."""
         time.sleep(self.timeframe_iters[0].base.get_current(float))
