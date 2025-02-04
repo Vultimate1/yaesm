@@ -34,6 +34,7 @@ class Scheduler:
             "monthly" : self._monthly_init,
             "yearly" : self._yearly_init
         }
+        self.worker_threads = []
 
     def add_timeframe(self, timeframe, func):
         # This is a priority queue (`heapq`), containing `TimeframeIter`'s with elements:
@@ -133,25 +134,28 @@ class Scheduler:
                 TimeframeIter(time_iter.get_next(datetime), time_iter, obj, func)
             )
 
-    def _join_dead_threads(self, threads):
+    def _join_dead_threads(self):
         dead_threads = []
-        for thread in threads:
+        for thread in self.worker_threads:
             if not thread.is_alive():
                 thread.join()
                 dead_threads.append(thread)
-        return list(filter(lambda t: t not in dead_threads, threads))
+        self.worker_threads = list(filter(lambda t: t not in dead_threads, self.worker_threads))
+    
+    # def kill_worker_threads(self):
+    #     """Joins any worker threads remaining, regardless of whether the thread
+    #     is still alive. """
 
     def check_for_expired(self):
         """Checks if any timeframe has expired.
 
         Warning: This function may block forever. Spin it off into its own thread."""
         present = datetime.now()
-        threads = []
         while len(self.timeframe_iters) >= 1 and self.timeframe_iters[0].expiration <= present:
             expired = heapq.heappop(self.timeframe_iters)
 
-            threads.append(Thread(target=expired.func))
-            threads[-1].start()
+            self.worker_threads.append(Thread(target=expired.func, daemon=True))
+            self.worker_threads[-1].start()
 
             next_time = expired.base.get_next(datetime)
             heapq.heappush(
@@ -159,10 +163,10 @@ class Scheduler:
                 TimeframeIter(next_time, expired.base, expired.timeframe, expired.func)
             )
             present = datetime.now()
-            threads = self._join_dead_threads(threads)
+            self._join_dead_threads()
 
-        while len(threads) > 0:
-            threads = self._join_dead_threads(threads)
+        while len(self.worker_threads) > 0:
+            self._join_dead_threads()
 
     def sleep_until_next_timeframe(self):
         """Sleeps until the earliest timeframe expires.
