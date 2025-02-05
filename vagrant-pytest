@@ -23,7 +23,7 @@ Options:
   -D            Run this program in debug mode (set -x)
   -H            Print this help message and exit 0
   -P            Update yaesm's python dependencies in the VM
-  -R            Keep the virtual machine running
+  -R            Keep the virtual machine running after this program exits
   -S            Create a snapshot of the virtual machine after executing pytest
   -V            Run this program in verbose mode
 
