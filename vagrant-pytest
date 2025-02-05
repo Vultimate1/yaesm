@@ -1,93 +1,101 @@
-#!/bin/sh
+#!/bin/bash
 
-CWD=$(pwd)
+set +e
 
-HELP_MSG=$(cat <<END_HELP_MSG
-TODO
-END_HELP_MSG
-)
+_run() {
+    set -e
+    "$@"
+    set +e
+    return 0
+}
 
-die() {
-    if [ -n "$1" ]; then
-        format=$1
-        shift
-        1>&2 printf "./vagrant-pytest.sh: error: $format\n" $@
-    fi
+_die() {
+    local msg=$1
+    1>&2 printf './vagrant-pytest.sh: fatal error: %s\n' "$msg"
     exit 1
 }
 
-assert_env() {
-    which vagrant    >/dev/null 2>&1 || die 'vagrant not in $PATH'
-    which virtualbox >/dev/null 2>&1 || die 'virtualbox not in $PATH'
-    which rsync      >/dev/null 2>&1 || die 'rsync not in $PATH'
-    if [ $(basename $CWD) != "yaesm" -o ! -f Vagrantfile -o ! -d src -o ! -d tests ]; then
-        die "not in yaesm root directory"
-    fi
-}
+trap '1>&2 printf "./vagrant-pytest.sh: fatal command failure: %s\n" "$BASH_COMMAND"' ERR
 
-PYTEST_OPTS=''
-VM_REBUILD=1
-VM_KEEP_RUNNING=1
-VM_SAVE_MACHINE_STATE=1
-parse_opts() {
-    # This script uses single capital letter opts to not clash with pytest opts.
-    while [ -n "$1" ]; do
-        case "$1" in
-            -B)
-              VM_REBUILD=0
-              shift
-              ;;
-            -D)
-              PS4="./vagrant-pytest.sh: DEBUG: "
-              set -x
-              shift
-              ;;
-            -H)
-              printf '%s\n' "$HELP_MSG"
-              exit 0
-              ;;
-            -K)
-              VM_KEEP_RUNNING=0
-              shift
-              ;;
-            -S)
-              VM_SAVE_MACHINE_STATE=0
-              shift
-              ;;
-            *)
-              PYTEST_OPTS="$PYTEST_OPTS $1"
-              shift
-              ;;
-        esac
-    done
-}
+OPTS_PYTEST=''
+OPT_DEBUG=1
+OPT_VM_FORCE_BUILD=1
+OPT_VM_KEEP_RUNNING=1
+OPT_VM_SAVE_SNAPSHOT=1
+while [ -n "$1" ]; do # This script uses single capital letter opts to not clash with pytest opts.
+    case "$1" in
+        -B)
+          OPT_VM_FORCE_BUILD=0
+          shift
+          ;;
+        -D)
+          set -x
+          PS4='./vagrant-pytest.sh: line $LINENO: DEBUG: '
+          shift
+          ;;
+        -H)
+          print_help_msg
+          exit 0
+          ;;
+        -K)
+          OPT_VM_KEEP_RUNNING=0
+          shift
+          ;;
+        -S)
+          OPT_VM_SAVE_SNAPSHOT=0
+          shift
+          ;;
+        *)
+          OPTS_PYTEST="$OPTS_PYTEST $1"
+          shift
+          ;;
+    esac
+done
 
-default_snapshot() {
-    # if default snapshot doesn't exist then create it
-    snapshot_list=$(vagrant snapshot list --machine-readable yaesm-pytest)
-    vagrant snapshot list yaesm-pytest --machine-readable | grep yaesm-pytest-snapshot-pure
-    snapshot_pure_exists=$?
-}
+which vagrant    >/dev/null 2>&1 || _die 'vagrant not in $PATH'
+which virtualbox >/dev/null 2>&1 || _die 'virtualbox not in $PATH'
+which rsync      >/dev/null 2>&1 || _die 'rsync not in $PATH'
+lsmod | grep -q vboxdrv          || _die 'vboxdrv kernel module not loaded'
+if [ "$(basename $(pwd))" != yaesm -o ! -f Vagrantfile_pytest -o ! -d src -o ! -d tests ]; then
+    _die 'not in yaesm root directory'
+fi
 
-STATUS=$(vagrant status yaesm-pytest --machine-readable | grep ',state,')
+export VAGRANT_VAGRANTFILE=Vagrantfile_pytest
+
+VM_STATE=$(_run vagrant status yaesm-pytest --machine-readable | grep ',yaesm-pytest,state,' | rev | cut -d',' -f1 | rev | grep -v 'not_created')
 VM_BUILT=$?
-
-if [ $VM_REBUILD -eq 0 ] && [ $VM_BUILT -eq 0 ]; then
-    echo 'HERE: vagrant destroy -f yaesm-pytest'
-    # vagrant destroy -f yaesm-pytest
+if [ running == $VM_STATE ]; then
+    _run vagrant halt yaesm-pytest
+    # TODO: update VM_STATE
 fi
 
-printf '%s\n' "$STATUS" | grep ',state,running$' >/dev/null
-VM_RUNNING=$?
-
-if [ $VM_RUNNING -ne 0 ]; then
-    vagrant up yaesm-pytest --provider virtualbox
+if [ 0 -eq $OPT_VM_FORCE_BUILD ] && [ 0 -eq $VM_BUILT ]; then
+    _run vagrant destroy -f yaesm-pytest
+    _run vagrant global-status --prune
+    VM_STATE='not_created'
+    VM_BUILT=1
 fi
 
-vagrant snapshot save yaesm-pytest-
-vagrant ssh yaesm-pytest -c "cd /yaesm && pytest $PYTEST_OPTS"
-vagrant snapshot pop yaesm-pytest
-
-if [ $VM_KEEP_RUNNING -ne 0 ]; then
-    vagrant halt yaesm-pytest
+if [ 0 -ne $VM_BUILT ]; then
+    _run vagrant up --provider virtualbox --no-install-provider yaesm-pytest
+    _run vagrant halt yaesm-pytest
+    _run vagrant snapshot save -f yaesm-pytest yaesm-pytest-postbuild-snapshot
+    VM_BUILT=1
 fi
+
+# vagrant snapshot restore starts the VM
+_run vagrant snapshot restore yaesm-pytest yaesm-pytest-postbuild-snapshot
+
+vagrant ssh -c "sudo bash -c 'cd /home/vagrant/yaesm && . /home/vagrant/yaesm-venv/bin/activate && pytest $OPTS_PYTEST'"
+PYTEST_STATUS=$?
+
+if [ 0 -ne $OPT_VM_KEEP_RUNNING ]; then
+    _run vagrant halt yaesm-pytest
+fi
+
+if [ 0 -eq $OPT_VM_SAVE_SNAPSHOT ]; then
+    snapshot_name="yaesm-pytest-$(date +%Y_%m_%d_%H:%M)"
+    _run vagrant snapshot save yaesm-pytest "$snapshot_name"
+fi
+
+exit $PYTEST_STATUS
