@@ -14,6 +14,6 @@ $ ./vagrant-pytest ./tests
 $ ./vagrant-pytest $PYTEST_ARGS
 ```
 
-All tests assume they are running in a virtual machine environment. It is NOT SAFE to run the test suite without the use of `vagrant-pytest`! For more information see the files `vagrant-pytest`, `Vagrantfile_pytest`, and `tests/README`.
+All tests assume they are running in a virtual machine environment. It is NOT SAFE to run the test suite without the use of `vagrant-pytest`! For more information see the files `vagrant-pytest`, `Vagrantfile_pytest`, and `tests/README.md`.
 
 Note that to run the test suite you will need to install [Vagrant](https://www.vagrantup.com/) and [VirtualBox](https://www.virtualbox.org/) on your system.
