@@ -1,11 +1,39 @@
 #!/bin/bash
 
-set +e
+_print_help_msg() {
+    cat <<'END_HELP_MSG'
+Usage: ./vagrant-pytest [-B] [-D] [-H] [-K] [-S] <pytest_args..>
 
-_run() {
+vagrant-pytest is a wrapper around pytest, running it inside a Ubuntu Linux
+virtualbox virtual machine that is created and managed using vagrant, making the
+VM reproducible for all yaesm developers. This program expects to be run from
+the root of the yaesm source tree. Note that this script will leave behind
+vagrant artifacts in a directory named '.vagrant' at the root of the yaesm
+source tree. Refer to the official vagrant documentation for more information
+about vagrant. See the file 'Vagrantfile_pytest' for more information about the
+virtual machine environment.
+
+Options:
+  -B            Force rebuild of the virtual machine
+  -D            Run this program in debug mode (set -x)
+  -H            Print this help message and exit 0
+  -S            Create a snapshot of the virtual machine after executing pytest
+
+Examples:
+  ./vagrant-pytest tests
+  ./vagrant-pytest -H
+  ./vagrant-pytest -B -S --show-capture=stdout --fixtures-per-test tests
+END_HELP_MSG
+}
+
+_run() { # _run() is a basic command running wrapper that crashes this script if the command fails
+    local e=''
+    if [[ $- == *e* ]]; then
+        e='set'
+    fi
     set -e
     "$@"
-    set +e
+    if [ -n "$e" ]; then set -e; else set +e; fi
     return 0
 }
 
@@ -15,7 +43,7 @@ _die() {
     exit 1
 }
 
-trap '1>&2 printf "./vagrant-pytest.sh: fatal command failure: %s\n" "$BASH_COMMAND"' ERR
+trap 'if [[ $- == *e* ]]; then 1>&2 printf "./vagrant-pytest.sh: fatal command failure: %s\n" "$BASH_COMMAND"; exit 1; fi' ERR
 
 OPTS_PYTEST=''
 OPT_DEBUG=1
@@ -34,12 +62,8 @@ while [ -n "$1" ]; do # This script uses single capital letter opts to not clash
           shift
           ;;
         -H)
-          print_help_msg
+          _print_help_msg
           exit 0
-          ;;
-        -K)
-          OPT_VM_KEEP_RUNNING=0
-          shift
           ;;
         -S)
           OPT_VM_SAVE_SNAPSHOT=0
@@ -62,17 +86,19 @@ fi
 
 export VAGRANT_VAGRANTFILE=Vagrantfile_pytest
 
-VM_STATE=$(_run vagrant status yaesm-pytest --machine-readable | grep ',yaesm-pytest,state,' | rev | cut -d',' -f1 | rev | grep -v 'not_created')
+VM_STATE=$(_run vagrant status yaesm-pytest --machine-readable | grep ',yaesm-pytest,state,' | awk -F',' '{ORS=""; print $NF}')
+[ $VM_STATE != not_created ]
 VM_BUILT=$?
+
 if [ running == $VM_STATE ]; then
     _run vagrant halt yaesm-pytest
-    # TODO: update VM_STATE
+     VM_STATE=poweroff
 fi
 
 if [ 0 -eq $OPT_VM_FORCE_BUILD ] && [ 0 -eq $VM_BUILT ]; then
     _run vagrant destroy -f yaesm-pytest
     _run vagrant global-status --prune
-    VM_STATE='not_created'
+    VM_STATE=not_created
     VM_BUILT=1
 fi
 
@@ -94,7 +120,7 @@ if [ 0 -ne $OPT_VM_KEEP_RUNNING ]; then
 fi
 
 if [ 0 -eq $OPT_VM_SAVE_SNAPSHOT ]; then
-    snapshot_name="yaesm-pytest-$(date +%Y_%m_%d_%H:%M)"
+    local snapshot_name="yaesm-pytest-$(date +%Y_%m_%d_%H:%M)"
     _run vagrant snapshot save yaesm-pytest "$snapshot_name"
 fi
 
