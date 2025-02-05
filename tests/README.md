@@ -1,7 +1,7 @@
 The yaesm test suite uses pytest.
 
-All tests can assume that they are running as root in a Debian Linux Docker container.
+All tests can assume that they are running as root in a Ubuntu Linux virtual machine.
 
-The yaesm test suite is assumed to be ran in a Docker container. For this reason tests don't have to worry about cleaning up state, which allows for easier debugging. It is very unwise to run the test suite outside of a Docker container as your system may get mangled. Always use docker-pytest.sh to run the test suite.
+For this reason tests don't have to worry about cleaning up state, which allows for easier debugging. It is very unwise to run the test suite outside of a Docker container as your system may get mangled. Always use `vagrant-pytest` to run the test suite.
 
-See docker-pytest.sh and Dockerfile_pytest for more information.
+See `vagrant-pytest` and Vagrantfile_pytest for more information.
