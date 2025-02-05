@@ -141,10 +141,6 @@ class Scheduler:
                 thread.join()
                 dead_threads.append(thread)
         self.worker_threads = list(filter(lambda t: t not in dead_threads, self.worker_threads))
-    
-    # def kill_worker_threads(self):
-    #     """Joins any worker threads remaining, regardless of whether the thread
-    #     is still alive. """
 
     def check_for_expired(self):
         """Checks if any timeframe has expired.
@@ -172,4 +168,7 @@ class Scheduler:
         """Sleeps until the earliest timeframe expires.
 
         It's recommended to spin this function off into its own thread."""
-        time.sleep(self.timeframe_iters[0].base.get_current(float))
+        # Frequently checking the datetime like this so that updates to
+        # `freeze_time` in tests go through.
+        while self.timeframe_iters[0].expiration > datetime.now():
+            time.sleep(1)
