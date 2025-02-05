@@ -5,7 +5,7 @@ _print_help_msg() {
 Usage: vagrant-pytest [-B] [-D] [-H] [-K] [-S] <pytest_args..>
 
 vagrant-pytest is a wrapper around pytest, running it inside a Ubuntu Linux
-VirtualBox virtual machine that is created and managed using vagrant. By using
+VirtualBox virtual machine that is created and managed using Vagrant. By using
 Vagrant and VirtualBox, the virtual machine is reproducible, can be snapshotted,
 and allows all pytest runs to start in a clean environment regardless of
 previous runs.
@@ -14,7 +14,7 @@ For more information about the virtual machine environment see the file
 Vagrantfile_pytest. For more information about Vagrant, VirtualBox, and pytest,
 refer to their respective documentation.
 
-This program should exit with the same status as the pytest run, however in the
+This program should exit with the same status as the pytest run, however, in the
 case of an unexpected failure or misconfigured environment it exits with status
 73.
 
@@ -30,7 +30,7 @@ Options:
 Examples:
   ./vagrant-pytest tests
   ./vagrant-pytest -H
-  ./vagrant-pytest -B -S --show-capture=stdout --fixtures-per-test tests
+  ./vagrant-pytest -B -V -S --show-capture=stdout --fixtures-per-test tests
 END_HELP_MSG
 }
 
