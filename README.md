@@ -6,12 +6,14 @@ A backup tool for multiple file systems!
 
 Please do not hesitate to open an [issue](https://github.com/Vultimate1/yaesm/issues/new) or [pull request](https://github.com/Vultimate1/yaesm/pulls)!
 
-To run the test suite execute the `docker-pytest.sh` script from the root of the yaesm source tree:
+To run the test suite execute the `vagrant-pytest` script from the root of the yaesm source tree:
 
 ```
-$ ./docker-pytest.sh -H ### print docker-pytest.sh help message
-$ ./docker-pytest.sh ./tests
-$ ./docker-pytest.sh $PYTEST_ARGS
+$ ./vagrant-pytest -H ### print help message
+$ ./vagrant-pytest ./tests
+$ ./vagrant-pytest $PYTEST_ARGS
 ```
 
-Note that all tests assume they are running in a containerized environment. It is NOT SAFE to run the test suite without the use of `docker-pytest.sh`. See `tests/README` for more information about the test suite.
+All tests assume they are running in a virtual machine environment. It is NOT SAFE to run the test suite without the use of `vagrant-pytest`! For more information see the files `vagrant-pytest`, `Vagrantfile_pytest`, and `tests/README.md`.
+
+Note that to run the test suite you will need to install [Vagrant](https://www.vagrantup.com/) and [VirtualBox](https://www.virtualbox.org/) on your system.
