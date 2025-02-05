@@ -14,9 +14,15 @@ For more information about the virtual machine environment see the file
 Vagrantfile_pytest. For more information about Vagrant, VirtualBox, and pytest,
 refer to their respective documentation.
 
+Note that because the Vagrantfile uses a non-standard name, Vagrantfile_pytest,
+if you wish to perform vagrant operations on virtual machine outside of this
+program you will need to set the environment variable
+VAGRANT_VAGRANTFILE=Vagrantfile_pytest.
+
 This program should exit with the same status as the pytest run, however, in the
 case of an unexpected failure or misconfigured environment it exits with status
-73.
+73. If things are unexpectedly going wrong try running this program with the -D
+and -V options.
 
 Options:
   -B            Force rebuild of the virtual machine (snapshots will be lost)
@@ -63,6 +69,11 @@ _die() {
 }
 
 trap 'if [[ $- == *e* ]]; then 1>&2 printf "vagrant-pytest: fatal command failure: %s\n" "$BASH_COMMAND"; exit 73; fi' ERR
+
+if [ -z "$1" ]; then
+    _print_help_msg
+    exit 0
+fi
 
 OPTS_PYTEST=''
 OPT_DEBUG=1
