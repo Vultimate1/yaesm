@@ -17,7 +17,7 @@ def test_check_for_expired(capsys):
             WeeklyTimeframe(1, [(0,1), (23,59)], ["thursday", "friday"]), lambda : print(4)
         )
         with freeze_time("1999-05-14 00:04"):
-            scheduler_thread = Thread(target=scheduler.check_for_expired)
+            scheduler_thread = Thread(target=scheduler.check_for_expired, daemon=True)
             scheduler_thread.start()
             while scheduler_thread.is_alive():
                 if not scheduler_thread.is_alive():
@@ -38,7 +38,7 @@ def test_sleep_until_next_timeframe():
         assert scheduler_thread.is_alive()
 
         frozen_datetime.tick(delta=timedelta(minutes=1))
-        time.sleep(1)
+        time.sleep(1.1)
         assert not scheduler_thread.is_alive()
         scheduler_thread.join()
 
@@ -47,3 +47,24 @@ def test_sleep_until_next_timeframe():
         time.sleep(0.1)
         assert not scheduler_thread.is_alive()
         scheduler_thread.join()
+
+def test_overlapping_func_execution(capsys):
+    def sleep_and_print():
+        time.sleep(1)
+        print(1)
+
+    scheduler = Scheduler()
+    with freeze_time("1999-05-13 23:58") as frozen_datetime:
+        scheduler.add_timeframe(HourlyTimeframe(1, [59]), lambda : sleep_and_print())
+        scheduler.add_timeframe(HourlyTimeframe(1, [0]), lambda : print(2))
+
+        frozen_datetime.tick(delta=timedelta(minutes=2))
+        scheduler_thread = Thread(target=scheduler.check_for_expired, daemon=True)
+        scheduler_thread.start()
+        while scheduler_thread.is_alive():
+            if not scheduler_thread.is_alive():
+                scheduler_thread.join()
+        
+        actual_out = capsys.readouterr().out.splitlines()
+        expected_out = ["2", "1"]
+        assert actual_out == expected_out
