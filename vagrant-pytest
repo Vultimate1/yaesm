@@ -39,11 +39,11 @@ _run() { # _run() is a basic command running wrapper that crashes this script if
 
 _die() {
     local msg=$1
-    1>&2 printf './vagrant-pytest.sh: fatal error: %s\n' "$msg"
+    1>&2 printf 'vagrant-pytest: fatal error: %s\n' "$msg"
     exit 1
 }
 
-trap 'if [[ $- == *e* ]]; then 1>&2 printf "./vagrant-pytest.sh: fatal command failure: %s\n" "$BASH_COMMAND"; exit 1; fi' ERR
+trap 'if [[ $- == *e* ]]; then 1>&2 printf "vagrant-pytest: fatal command failure: %s\n" "$BASH_COMMAND"; exit 1; fi' ERR
 
 OPTS_PYTEST=''
 OPT_DEBUG=1
@@ -58,7 +58,7 @@ while [ -n "$1" ]; do # This script uses single capital letter opts to not clash
           ;;
         -D)
           set -x
-          PS4='./vagrant-pytest.sh: line $LINENO: DEBUG: '
+          PS4='vagrant-pytest: line $LINENO: DEBUG: '
           shift
           ;;
         -H)
