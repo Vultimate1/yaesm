@@ -2,16 +2,21 @@
 
 _print_help_msg() {
     cat <<'END_HELP_MSG'
-Usage: ./vagrant-pytest [-B] [-D] [-H] [-K] [-S] <pytest_args..>
+Usage: vagrant-pytest [-B] [-D] [-H] [-K] [-S] <pytest_args..>
 
 vagrant-pytest is a wrapper around pytest, running it inside a Ubuntu Linux
-virtualbox virtual machine that is created and managed using vagrant, making the
-VM reproducible for all yaesm developers. This program expects to be run from
-the root of the yaesm source tree. Note that this script will leave behind
-vagrant artifacts in a directory named '.vagrant' at the root of the yaesm
-source tree. Refer to the official vagrant documentation for more information
-about vagrant. See the file 'Vagrantfile_pytest' for more information about the
-virtual machine environment.
+VirtualBox virtual machine that is created and managed using vagrant. By using
+Vagrant and VirtualBox, the virtual machine is reproducible, can be snapshotted,
+and allows all pytest runs to start in a clean environment regardless of
+previous runs.
+
+For more information about the virtual machine environment see the file
+Vagrantfile_pytest. For more information about Vagrant, VirtualBox, and pytest,
+refer to their respective documentation.
+
+This program should exit with the same status as the pytest run, however in the
+case of an unexpected failure or misconfigured environment it exits with status
+73.
 
 Options:
   -B            Force rebuild of the virtual machine
@@ -26,13 +31,15 @@ Examples:
 END_HELP_MSG
 }
 
-_run() { # _run() is a basic command running wrapper that crashes this script if the command fails
+set -E
+
+_run() {
     local e=''
     if [[ $- == *e* ]]; then
         e='set'
     fi
     set -e
-    "$@"
+    eval "$@"
     if [ -n "$e" ]; then set -e; else set +e; fi
     return 0
 }
@@ -40,10 +47,10 @@ _run() { # _run() is a basic command running wrapper that crashes this script if
 _die() {
     local msg=$1
     1>&2 printf 'vagrant-pytest: fatal error: %s\n' "$msg"
-    exit 1
+    exit 73
 }
 
-trap 'if [[ $- == *e* ]]; then 1>&2 printf "vagrant-pytest: fatal command failure: %s\n" "$BASH_COMMAND"; exit 1; fi' ERR
+trap 'if [[ $- == *e* ]]; then 1>&2 printf "vagrant-pytest: fatal command failure: %s\n" "$BASH_COMMAND"; exit 73; fi' ERR
 
 OPTS_PYTEST=''
 OPT_DEBUG=1
