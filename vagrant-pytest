@@ -69,11 +69,6 @@ _die() {
 
 trap 'if [[ $- == *e* ]]; then 1>&2 printf "vagrant-pytest: fatal command failure: %s\n" "$BASH_COMMAND"; exit 73; fi' ERR
 
-if [ -z "$1" ]; then
-    _print_help_msg
-    exit 0
-fi
-
 OPTS_PYTEST=''
 OPT_DEBUG=1
 OPT_VERBOSE=1
@@ -114,14 +109,10 @@ while [ -n "$1" ]; do # This script uses single capital letter opts to not clash
     esac
 done
 
-if [ 0 -eq $OPT_VM_KEEP_RUNNING ] && [ 0 -eq $OPT_VM_SAVE_SNAPSHOT ]; then
-    _die '-R and -O options are incompatible'
-fi
-
-which vagrant    >/dev/null 2>&1 || _die 'vagrant not in $PATH'
-which virtualbox >/dev/null 2>&1 || _die 'virtualbox not in $PATH'
-which rsync      >/dev/null 2>&1 || _die 'rsync not in $PATH'
-lsmod | grep -q vboxdrv          || _die 'vboxdrv kernel module not loaded'
+command -v vagrant    >/dev/null 2>&1 || _die 'vagrant not in $PATH'
+command -v VBoxManage >/dev/null 2>&1 || _die 'virtualbox not in $PATH'
+command -v rsync      >/dev/null 2>&1 || _die 'rsync not in $PATH'
+VBoxManage --version | grep -q 'vboxdrv kernel module is not loaded' && _die 'vboxdrv kernel module not loaded'
 if [ "$(basename $(pwd))" != yaesm -o ! -f Vagrantfile_pytest -o ! -d src -o ! -d tests ]; then
     _die 'not in yaesm root directory'
 fi
