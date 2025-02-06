@@ -25,13 +25,12 @@ case of an unexpected failure or misconfigured environment it exits with status
 and -V options.
 
 Options:
-  -B            Force rebuild of the virtual machine (snapshots will be lost)
   -D            Run this program in debug mode (set -x)
+  -V            Run this program in verbose mode
+  -B            Force rebuild of the virtual machine (snapshots will be lost)
   -H            Print this help message and exit 0
-  -P            Update yaesm's python dependencies in the VM
   -R            Keep the virtual machine running after this program exits
   -S            Create a snapshot of the virtual machine after executing pytest
-  -V            Run this program in verbose mode
 
 Examples:
   ./vagrant-pytest tests
@@ -77,11 +76,10 @@ fi
 
 OPTS_PYTEST=''
 OPT_DEBUG=1
+OPT_VERBOSE=1
 OPT_VM_FORCE_BUILD=1
 OPT_VM_KEEP_RUNNING=1
 OPT_VM_SAVE_SNAPSHOT=1
-OPT_UPDATE_PYTHON_DEPS=1
-OPT_VERBOSE=1
 while [ -n "$1" ]; do # This script uses single capital letter opts to not clash with pytest opts.
     case "$1" in
         -B)
@@ -96,10 +94,6 @@ while [ -n "$1" ]; do # This script uses single capital letter opts to not clash
         -H)
           _print_help_msg
           exit 0
-          ;;
-        -P)
-          OPT_UPDATE_PYTHON_DEPS=0
-          shift
           ;;
         -R)
           OPT_VM_KEEP_RUNNING=0
@@ -169,20 +163,10 @@ if [ 0 -ne $VM_BUILT ]; then
     VM_SNAPSHOT_EXISTS=0
 fi
 
-if [ 0 -eq $OPT_UPDATE_PYTHON_DEPS ]; then
-    _log 'updating yaesm python dependencies in the VM'
-    _r vagrant snapshot restore yaesm-pytest yaesm-pytest-postbuild-snapshot 
-    _r vagrant ssh -c '. /home/vagrant/yaesm-venv/bin/activate && pip3 install -r /home/vagrant/yaesm/requirements.txt -r /home/vagrant/yaesm/requirements_tests.txt'
-    _r vagrant halt yaesm-pytest
-    VM_STATE=poweroff
-    _log 'updating postbuild snapshot to reflect python dependency updates'
-    _r vagrant snapshot save -f yaesm-pytest yaesm-pytest-postbuild-snapshot
-fi
-
 # vagrant snapshot restore starts the VM
 _r vagrant snapshot restore yaesm-pytest yaesm-pytest-postbuild-snapshot
 VM_STATE=running
-vagrant ssh -c "sudo bash -c 'cd /home/vagrant/yaesm && . /home/vagrant/yaesm-venv/bin/activate && pytest $OPTS_PYTEST'"
+vagrant ssh yaesm-pytest -c "sudo bash -c 'cd /home/vagrant/yaesm && . /home/vagrant/yaesm-venv/bin/activate && pytest $OPTS_PYTEST'"
 PYTEST_STATUS=$?
 
 if [ 0 -ne $OPT_VM_KEEP_RUNNING ]; then
