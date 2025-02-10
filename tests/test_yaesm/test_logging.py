@@ -52,3 +52,10 @@ def test_syslog_logging():
                 found_log = True
                 break
     assert found_log
+
+def test_multi_dest_logging(capsys, path_generator):
+    logfile = path_generator("yaesm_test_logging")
+    init_logging(stderr=True, logfile=logfile)
+    logger().info("TEST LOG MULTI DEST")
+    assert re.match(".+INFO.+TEST LOG MULTI DEST$", capsys.readouterr().err)
+    assert re.match(".+INFO.+TEST LOG MULTI DEST$", logfile.read_text())
