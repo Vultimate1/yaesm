@@ -30,19 +30,20 @@ class Backup:
 
 def backup_basename_re():
     """Returns a re compiled regex to match a yaesm backup basename."""
-    return re.compile("^(yaesm-.+)@([0-9]{4}_[0-9]{2}_[0-9]{2}_[0-9]{2}:[0-9]{2})$")
+    return re.compile("^yaesm-(.+)-(.+)\\.([0-9]{4})_([0-9]{2})_([0-9]{2})_([0-9]{2}):([0-9]{2})$")
 
 def backup_basename_update_time(backup_basename):
     re_result = backup_basename_re().match(backup_basename)
-    prefix = re_result.group(1)
+    backup_name = re_result.group(1)
+    timeframe_name = re_result.group(2)
     datetime_now = datetime.now()
-    name = datetime_now.strftime(f"{prefix}@%Y_%m_%d_%H:%M")
+    name = datetime_now.strftime(f"yaesm-{backup_name}-{timeframe_name}.%Y_%m_%d_%H:%M")
     return name
 
 def backup_basename_now(backup:Backup, timeframe:Timeframe):
     """Return the basename of a yaesm backup for the current time"""
     datetime_now = datetime.now()
-    name = datetime_now.strftime(f"yaesm-{backup.name}-{timeframe.name}@%Y_%m_%d_%H:%M")
+    name = datetime_now.strftime(f"yaesm-{backup.name}-{timeframe.name}.%Y_%m_%d_%H:%M")
     return name
 
 def backup_to_datetime(backup):
@@ -54,8 +55,9 @@ def backup_to_datetime(backup):
         backup_basename = os.path.basename(backup.path)
     else:
         backup_basename = os.path.basename(backup)
-    backup_basename_time = backup_basename_re().match(backup_basename).group(2)
-    dt = datetime.strptime(backup_basename_time, "%Y_%m_%d_%H:%M")
+    backup_basename_re_match = backup_basename_re().match(backup_basename)
+    year, month, day, hour, minute = backup_basename_re_match.group(3, 4, 5, 6, 7)
+    dt = datetime.strptime(f"{year}_{month}_{day}_{hour}:{minute}", "%Y_%m_%d_%H:%M")
     return dt
 
 def backups_sorted(backups):
