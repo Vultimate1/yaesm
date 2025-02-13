@@ -441,3 +441,46 @@ def rm_sudo_access(yaesm_test_users_group):
     if not sudo_rule_file.is_file():
         with open(sudo_rule_file, "w") as f:
             f.write(rule + "\n")
+
+    return True
+
+@pytest.fixture
+def zfs_fs_generator(path_generator, loopback_generator, random_string_generator):
+    """Fixture to generate zfs filesystem on a loopback device."""
+    def generator():
+        mountpoint = path_generator("test-yaesm-zfs-mountpoint", base_dir="/mnt", mkdir=True)
+        loop = loopback_generator()
+        zpool_name = None
+        while zpool_name is None or 0 == subprocess.run(f"zpool list -H -o name | grep -q '^{zpool_name}$'", shell=True).returncode:
+            zpool_name = f"yaesm-test-zpool-{random_string_generator()}"
+        subprocess.run(["zpool", "create", zpool_name, loop], check=True)
+        dataset_name = f"{zpool_name}/yaesm-test-zfs-filesystem"
+        subprocess.run(["zfs", "create", dataset_name], check=True)
+        subprocess.run(["zfs", "set", f"mountpoint={mountpoint}", dataset_name], check=True)
+        snapshot_dir = mountpoint.joinpath(".zfs").joinpath("snapshot")
+        return mountpoint, dataset_name, snapshot_dir
+    return generator
+
+@pytest.fixture
+def zfs_fs(zfs_fs_generator):
+    """Fixture to provide a single zfs filesystem on a loopback device. See the
+    'zfs_fs_generator' fixture for more details.
+    """
+    return zfs_fs_generator()
+
+@pytest.fixture
+def zfs_sudo_access(yaesm_test_users_group):
+    """Fixture to give users in the 'yaesm_test_users_group' group passwordless
+    sudo access to the 'zfs' executable. Users created with the 'tmp_user_generator'
+    fixture are always assigned membership to this group.
+    """
+    zfs = shutil.which("zfs")
+    sudoers_rules = [
+        f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {zfs} snapshot *"
+    ]
+    sudo_rule_file = Path("/etc/sudoers.d/yaesm-test-zfs-sudo-rule")
+    if not sudo_rule_file.is_file():
+        with open(sudo_rule_file, "w") as f:
+            for rule in sudoers_rules:
+                f.write(rule + "\n")
+    return True
