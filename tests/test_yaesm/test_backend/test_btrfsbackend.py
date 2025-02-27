@@ -25,7 +25,7 @@ def test_do_backup(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_
             with freeze_time(now + timedelta(hours=i)):
                 expected_backup_basenames.insert(0, bckp.backup_basename_now(backup, timeframe))
                 btrfs_backend.do_backup(backup, timeframe)
-        backups = bckp.backups_collect(backup.dst_dir)
+        backups = bckp.backups_collect(backup, timeframe=timeframe)
         backup_basenames = list(map(lambda x: x.path.name if isinstance(x, SSHTarget) else x.name, backups))
         assert len(backups) == timeframe.keep
         assert expected_backup_basenames[0:timeframe.keep] == backup_basenames
