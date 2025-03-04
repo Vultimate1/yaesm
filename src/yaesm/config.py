@@ -22,44 +22,36 @@ def construct_timeframes(backup_spec, timeframe_type) -> list:
     
     2 = Bad specs (failure)"""
     result_code = 0
-    result = {0 : [], 1 : [], 2 : []}
+    result = []
+    validity_checks = {"keep" : Timeframe.valid_keep,
+                       "minutes" : Timeframe.valid_minute,
+                       "times" : Timeframe.valid_timespec,
+                       "weekly_days" : Timeframe.valid_weekday,
+                       "monthly_days" : Timeframe.valid_monthday,
+                       "yearly_days" : Timeframe.valid_yearday}
+
+    def check_validity(func, s):
+        for val in list(s):
+            if not func(s):
+                if result_code == 0:
+                    result_code = 2
+                    result.clear()
+                result.append([s, val])
+
     settings = timeframe_type.required_config_settings()
-    if append_missing_keys(result[1], backup_spec, settings) == 0:
+    if append_missing_keys(result, backup_spec, settings) == 0:
         for setting in settings:
             setting_type = setting[setting.rfind("_") + 1:]
-            match setting_type:
-                case "keep":
-                    if not Timeframe.valid_keep(backup_spec[setting]):
-                        result[2].append([backup_spec[setting], backup_spec[setting]])
-                case "minutes":
-                    for minute in backup_spec[setting]:
-                        if not Timeframe.valid_minute(minute):
-                            result[2].append([backup_spec[setting], minute])
-                case "times":
-                    for time in backup_spec[setting]:
-                        if not Timeframe.valid_timespec(time):
-                            result[2].append([backup_spec[setting], time])
-                case "days":
-                    match setting:
-                        case "weekly_days":
-                            for day in backup_spec[setting]:
-                                if not Timeframe.valid_weekday(day):
-                                    result[2].append([backup_spec[setting], day])
-                        case "monthly_days":
-                            for day in backup_spec[setting]:
-                                if not Timeframe.valid_monthday(day):
-                                    result[2].append([backup_spec[setting], day])
-                        case "yearly_days":
-                            for day in backup_spec[setting]:
-                                if not Timeframe.valid_yearday(day):
-                                    result[2].append([backup_spec[setting], day])
+            if (setting_type == "days"):
+                check_validity(validity_checks[setting], backup_spec[setting])
+            else:
+                check_validity(validity_checks[setting_type], backup_spec[setting])
+        if result_code == 0:
+            result.append(timeframe_type(*[backup_spec[s] for s in settings]))
     else:
         result_code = 1
 
-    if len(result[2]) != 0:
-        result_code = 2
-
-    return [result_code] + result[result_code]
+    return [result_code] + result
 
 def handle_timeframes(missing_specs, bad_specs, backup_spec) -> list:
     """Returns a list of all successfully instantiated timeframes."""
