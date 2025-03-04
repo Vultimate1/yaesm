@@ -12,11 +12,11 @@ def get_line(token):
     """Returns the PyYAML token's line in the loaded file."""
     return token.start_mark.line + 1
 
-def construct_timeframes(backup_spec, timeframe_type) -> list:
+def construct_timeframe(backup_spec, timeframe_type) -> list:
     """Returns a list beginning with a code signifying the content being
     returned, followed by the content itself:
 
-    0 = Instantiated timeframes (success)
+    0 = Instantiated timeframe (success)
     
     1 = Missing specs (failure)
     
