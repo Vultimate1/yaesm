@@ -30,25 +30,32 @@ def test_do_backup(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_
         assert len(backups) == timeframe.keep
         assert expected_backup_basenames[0:timeframe.keep] == backup_basenames
 
-def test_exec_backup_local_to_local(btrfs_backend, btrfs_fs, path_generator):
-    dst_dir = path_generator("test-dst-dir", base_dir=btrfs_fs, mkdir=True)
-    backup_path = dst_dir.joinpath("yaesm-foo-backup-hourly.1999_05_13_23:59")
-    assert not backup_path.is_dir()
-    btrfs_backend._exec_backup_local_to_local(btrfs_fs, backup_path)
-    assert backup_path.is_dir()
+def test_exec_backup_local_to_local(btrfs_backend, random_backup_generator, btrfs_fs):
+    backup = random_backup_generator(btrfs_fs, backup_type="local_to_local", dst_dir_base=btrfs_fs)
+    timeframe = backup.timeframes[0]
+    with freeze_time("1999-05-13 23:59"):
+        backup_path = backup.dst_dir.joinpath(f"yaesm-{backup.name}-{timeframe.name}.1999_05_13_23:59")
+        assert not backup_path.is_dir()
+        btrfs_backend._exec_backup_local_to_local(backup, timeframe)
+        assert backup_path.is_dir()
 
-def test_exec_backup_local_to_remote(btrfs_backend, sshtarget, btrfs_fs, btrfs_sudo_access, path_generator):
-    backup_path = sshtarget.with_path(path_generator("test-dst-dir", base_dir=btrfs_fs, mkdir=True).joinpath("yaesm-foo-backup-hourly.1999_05_13_23:59"))
-    assert not backup_path.path.is_dir()
-    btrfs_backend._exec_backup_local_to_remote(btrfs_fs, backup_path)
-    assert backup_path.path.is_dir()
+def test_exec_backup_local_to_remote(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_access):
+    backup = random_backup_generator(btrfs_fs, backup_type="local_to_remote", dst_dir_base=btrfs_fs)
+    timeframe = backup.timeframes[0]
+    with freeze_time("1999-05-13 23:59"):
+        backup_path = backup.dst_dir.path.joinpath(f"yaesm-{backup.name}-{timeframe.name}.1999_05_13_23:59")
+        assert not backup_path.is_dir()
+        btrfs_backend._exec_backup_local_to_remote(backup, timeframe)
+        assert backup_path.is_dir()
 
-def test_exec_backup_remote_to_local(btrfs_backend, sshtarget, btrfs_fs, btrfs_sudo_access, path_generator):
-    src_dir = sshtarget.with_path(btrfs_fs)
-    backup_path = path_generator("test-dst-dir", base_dir=btrfs_fs, mkdir=True).joinpath("yaesm-foo-backup.1999_05_13_23:59")
-    assert not backup_path.is_dir()
-    btrfs_backend._exec_backup_remote_to_local(src_dir, backup_path)
-    assert backup_path.is_dir()
+def test_exec_backup_remote_to_local(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_access):
+    backup = random_backup_generator(btrfs_fs, backup_type="remote_to_local", dst_dir_base=btrfs_fs)
+    timeframe = backup.timeframes[0]
+    with freeze_time("1999-05-13 23:59"):
+        backup_path = backup.dst_dir.joinpath(f"yaesm-{backup.name}-{timeframe.name}.1999_05_13_23:59")
+        assert not backup_path.is_dir()
+        btrfs_backend._exec_backup_remote_to_local(backup, timeframe)
+        assert backup_path.is_dir()
 
 def test_btrfs_take_and_delete_snapshot_local(btrfs_fs, path_generator):
     dst_dir1 = path_generator("test-snapshot", base_dir=btrfs_fs, mkdir=True)
