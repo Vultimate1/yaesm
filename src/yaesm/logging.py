@@ -1,5 +1,5 @@
-# This module is a wrapper over logging. All logging in yaesm should happen
-# through the functions defined in this module.
+# This module is a wrapper over pythons logging module. All logging in yaesm
+# should happen through the functions defined in this module.
 
 import logging
 import logging.handlers
