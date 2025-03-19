@@ -2,15 +2,18 @@ import yaml
 
 from yaesm.timeframe import *
 
+class SafeLineLoader(yaml.loader.SafeLoader):
+    """Prepends the line number of each corressponding entry."""
+    def construct_mapping(self, node, deep = False):
+        mapping = super().construct_mapping(node, deep)
+        mapping["__line__"] = node.start_mark.line + 1
+        return mapping
+
 def append_missing_keys(l, d, keys) -> int:
     """Modifies `l` by appending all `keys` missing in `d` to the collection.
 
     Returns the number of additions added to the list."""
     l.extend(filter(lambda k : k not in d, keys))
-
-def get_line(token):
-    """Returns the PyYAML token's line in the loaded file."""
-    return token.start_mark.line + 1
 
 def construct_timeframes(backup_spec, timeframe_type) -> list:
     """Returns a list beginning with a code signifying the content being
@@ -36,7 +39,7 @@ def construct_timeframes(backup_spec, timeframe_type) -> list:
                 if result_code == 0:
                     result_code = 2
                     result.clear()
-                result.append([s, val])
+                result.append([s["__line__"], val])
 
     settings = timeframe_type.required_config_settings()
     if append_missing_keys(result, backup_spec, settings) == 0:
@@ -69,9 +72,9 @@ def handle_timeframes(missing_specs, bad_specs, backup_spec) -> list:
                     case 2:
                         bad_specs["timeframes"].extend(result[1:])
             except KeyError:
-                bad_specs["timeframes"].append([get_line(backup_spec["timeframes"]), timeframe])
+                bad_specs["timeframes"].append([backup_spec["timeframes"]["__line__"], timeframe])
     else:
-        bad_specs["timeframes"] = [get_line(backup_spec), None]
+        bad_specs["timeframes"] = [backup_spec["__line__"], None]
 
     return timeframes
 
@@ -85,7 +88,7 @@ def parse_file(config_path):
     All missing or invalid lines should be logged (also TODO)"""
     invalid_input_info = {}
     with open(config_path, "r") as f:
-        data = yaml.safe_load(f)
+        data = yaml.safe_load(f, Loader=SafeLineLoader)
         for backup_name, backup_spec in data.items():
             missing_specs = []
             bad_specs = {}
@@ -105,7 +108,7 @@ def parse_file(config_path):
                 case "zfs":
                     pass
                 case _:
-                    bad_specs["backend"] = [get_line(backup_spec), backup_spec["backend"]]
+                    bad_specs["backend"] = [backup_spec["__line__"], backup_spec["backend"]]
 
             if len(missing_specs) != 0 or len(bad_specs.keys()) != 0:
                 invalid_input_info[backup_name] = [missing_specs, bad_specs]
