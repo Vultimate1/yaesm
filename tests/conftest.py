@@ -428,18 +428,16 @@ def btrfs_sudo_access(yaesm_test_users_group):
         with open(sudo_rule_file, "w") as f:
             for rule in sudoers_rules:
                 f.write(rule + "\n")
-    return True
 
 @pytest.fixture
-def rsync_sudo_access(yaesm_test_users_group):
+def rm_sudo_access(yaesm_test_users_group):
     """Fixture to give users in the 'yaesm_test_users_group' group passwordless
-    sudo access to the 'rsync' executable. Users created with the 'tmp_user_generator'
+    sudo access to the 'rm' executable. Users created with the 'tmp_user_generator'
     fixture are always assigned membership to this group.
     """
-    rsync = shutil.which("rsync")
-    sudo_rule = f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {rsync}"
-    sudo_rule_file = Path("/etc/sudoers.d/yaesm-test-rsync-sudo-rule")
+    rm = shutil.which("rm")
+    rule = f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {rm} -r -f *yaesm*" # This is not actually safe sudoer rule and should never be in actual use. Sudo version 1.9.10 added regular expression support for sudoer rules that can be used to craft a safe rule. Unfortunately the OS we test on (Ubuntu Jammy) only uses sudo version 1.9.9.
+    sudo_rule_file = Path("/etc/sudoers.d/yaesm-test-rm-sudo-rule")
     if not sudo_rule_file.is_file():
         with open(sudo_rule_file, "w") as f:
-                f.write(sudo_rule + "\n")
-    return True
+            f.write(rule + "\n")

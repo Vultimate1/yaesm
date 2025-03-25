@@ -12,7 +12,7 @@ from yaesm.sshtarget import SSHTarget
 def rsync_backend():
     return rsync.RsyncBackend()
 
-def test_exec_backup(rsync_backend, path_generator, random_backup_generator, rsync_sudo_access, random_filesystem_modifier):
+def test_exec_backup(rsync_backend, path_generator, random_backup_generator, yaesm_test_users_group, random_filesystem_modifier):
     src_dir = path_generator("rsync_src_dir", mkdir=True)
     for backup_type in ["local_to_local", "local_to_remote,", "remote_to_local"]:
         backup = random_backup_generator(src_dir, backup_type=backup_type, dst_dir_base="/tmp")
@@ -21,6 +21,8 @@ def test_exec_backup(rsync_backend, path_generator, random_backup_generator, rsy
             src_dir = backup.src_dir.path
         else:
             src_dir = backup.src_dir
+        if backup_type == "local_to_remote":
+            src_dir.chmod(0o777)
         now = datetime.now()
         assert 0 == len(bckp.backups_collect(backup, timeframe))
         backups = []
@@ -60,3 +62,28 @@ def test_exec_backup(rsync_backend, path_generator, random_backup_generator, rsy
             assert all(isinstance(x, SSHTarget) for x in backups)
         else:
             assert all(isinstance(x, Path) for x in backups)
+
+def test_delete_backups_local(rsync_backend, path_generator):
+    dst_dir = path_generator("rsync_test_dst_dir", mkdir=True)
+    backups = []
+    for i in range(5):
+        backup = dst_dir.joinpath(f"yaesm-test-backup-5minute.1999_05_13_1999_0{i}:30")
+        backup.mkdir()
+        backups.append(backup)
+    assert all(x.is_dir() for x in backups)
+    rsync_backend._delete_backups_local(*backups)
+    assert all(not(x.is_dir()) for x in backups)
+
+def test_delete_backups_remote(rsync_backend, sshtarget, path_generator, rm_sudo_access):
+    dst_dir = path_generator("rsync_test_dst_dir", mkdir=True)
+    backups = []
+    for i in range(6):
+        backup = dst_dir.joinpath(f"yaesm-test-backup-5minute.1999_05_13_1999_0{i}:30")
+        backup.mkdir()
+        backups.append(sshtarget.with_path(backup))
+    saved_backup = backups[0]
+    backups = backups[1:]
+    assert all(x.is_dir() for x in backups)
+    rsync_backend._delete_backups_remote(*backups)
+    assert all(not(x.is_dir()) for x in backups)
+    assert saved_backup.is_dir()
