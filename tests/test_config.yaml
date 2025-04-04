@@ -3,6 +3,8 @@ root_backup:
   backend: rsync
   src_dir: /
   dst_dir: /mnt/backupdrive/yaesm/root_backup
+  exclude: [~/.cache]  # Optional
+  exclude-from: somefile.txt  # Optional
 
   # This backup uses every timeframe category
   timeframes: [5minute, hourly, daily, weekly, monthly, yearly]
@@ -39,8 +41,8 @@ home_backup:
 
 database_snapshot:
   backend: zfs
-  src_dir: /important-database
-  dst_dir: /.snapshots/yaesm/important-database
+  src_dataset: /important-database
+  dst_dataset: /.snapshots/yaesm/important-database
   timeframes: [hourly]
   hourly_keep: 10000000000 # forever ... until we run out of disk space
   hourly_minutes: [0]
