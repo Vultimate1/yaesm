@@ -38,11 +38,11 @@ class SSHTarget:
             raise SSHTargetException(f"invalid SSHTarget spec: {target_spec}")
 
     @staticmethod
-    def is_sshtarget(target) -> (re.Match[str] | False):
+    def is_sshtarget(target) -> (re.Match[str] | None):
         """Check if `target` is a valid ssh target spec."""
         target_re = re.compile("^ssh://(p[0-9]+:)?([^:]+):(.+)$")
         result = target_re.match(target)
-        return False if result is None else result;
+        return result;
 
     def with_path(self, path:Path):
         """Returns a copy of 'self' (via copy.deepcopy()) but with path 'path'."""
