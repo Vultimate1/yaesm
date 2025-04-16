@@ -5,23 +5,23 @@ from yaesm.sshtarget import *
 from yaesm.timeframe import *
 
 
-class SafeLineLoader(yaml.loader.SafeLoader):
-    """Prepends the line number of each corressponding entry."""
-    def construct_mapping(self, node, deep = False):
-        mapping = super().construct_mapping(node, deep)
-        mapping["__line__"] = node.start_mark.line + 1
-        return mapping
-
-
 class ConfigException(Exception):
     pass
+
+
+class BadSpec():
+    def __init__(self, where, what):
+        self.where = where
+        self.what = what
 
 
 def append_missing_keys(l, d, keys) -> int:
     """Modifies `l` by appending all `keys` missing in `d` to the collection.
 
     Returns the number of additions added to the list."""
-    l.extend(filter(lambda k : k not in d, keys))
+    missing = [k for k in keys if k not in d]
+    l.extend(missing)
+    return len(missing)
 
 def construct_timeframes(backup_spec, timeframe_type) -> dict:
     """Returns a dictionary with 3 keys: `"timeframes"`, `"bad_specs"`, and
@@ -35,9 +35,11 @@ def construct_timeframes(backup_spec, timeframe_type) -> dict:
                        "yearly_days" : Timeframe.valid_yearday}
 
     def check_validity(func, s):
-        for val in list(s):
-            if not func(s):
-                result["bad_specs"].append([s["__line__"], val])
+        s = s if isinstance(s, list) else [s]
+        for val in s:
+            print(val)
+            if not func(val):
+                result["bad_specs"].append(BadSpec(setting, val))
 
     settings = timeframe_type.required_config_settings()
     if append_missing_keys(result["missing_specs"], backup_spec, settings) == 0:
@@ -57,7 +59,7 @@ def handle_timeframes(backup_spec) -> list:
     timeframes = []
     bad_specs = []
     missing_specs = []
-    if backup_spec["timeframes"] is list:
+    if type(backup_spec["timeframes"]) is list:
         timeframe_dict = dict(zip(Timeframe.tframe_types(names=True), Timeframe.tframe_types()))
         for timeframe in backup_spec["timeframes"]:
             try:
@@ -66,9 +68,9 @@ def handle_timeframes(backup_spec) -> list:
                 missing_specs.extend(result["missing_specs"])
                 bad_specs.extend(result["bad_specs"])
             except KeyError:
-                bad_specs.append([backup_spec["timeframes"]["__line__"], timeframe])
+                bad_specs.append(BadSpec("timeframes", timeframe))
     else:
-        bad_specs = [backup_spec["__line__"], None]
+        bad_specs.append(BadSpec("timeframes", type(backup_spec["timeframes"])))
 
     return timeframes, missing_specs, bad_specs
 
@@ -88,13 +90,15 @@ def construct_backup(backup_name, backup_spec, timeframes):
 
     # Handle required specs
     result = []
-    src = None, dst = None;
+    src = None
+    dst = None
     if append_missing_keys(result, backup_spec, target_setting_names) == 0:
         src = backup_spec[target_setting_names[0]]
         dst = backup_spec[target_setting_names[1]]
-        src_is_ssh = SSHTarget.is_sshtarget(src), dst_is_ssh = SSHTarget.is_sshtarget(dst)
+        src_is_ssh = SSHTarget.is_sshtarget(src)
+        dst_is_ssh = SSHTarget.is_sshtarget(dst)
         if src_is_ssh and dst_is_ssh:
-            result.append([backup_spec[target_setting_names[0]]["__line__"], src_is_ssh])
+            result.append(BadSpec(target_setting_names[0], src_is_ssh))
         elif src_is_ssh or dst_is_ssh:
             if append_missing_keys(result, backup_spec, ["ssh_key"]) == 0:
                 ssh_key = backup_spec["ssh_key"]
@@ -110,18 +114,21 @@ def construct_backup(backup_name, backup_spec, timeframes):
 
     # Construct backup & handle optional specs
     if backup_spec["backend"] == "rsync":
-        if exclude := backup_spec.get("exclude", False) and exclude is not list:
-            result.append([backup_spec["exclude"]["__line__"], type(exclude)])
-        if exclude_from := backup_spec.get("exclude_from", False) and exclude_from is not str:
-            result.append([backup_spec["exclude"]["__line__"], type(exclude)])
+        if (exclude := backup_spec.get("exclude", False)) and type(exclude) is not list:
+            result.append(BadSpec("exclude", type(exclude)))
+        if (exclude_from := backup_spec.get("exclude_from", False)) \
+            and type(exclude_from) is not str:
+            result.append(BadSpec("exclude_from", type(exclude_from)))
         if len(result) == 0:
-            return 0, Backup(backup_name, src, dst, timeframes, exclude=exclude,
-                          exclude_from=exclude_from)
+            return 0, Backup(backup_name, src, dst, timeframes)
+            # TODO:
+            # return 0, Backup(backup_name, src, dst, timeframes, exclude=exclude,
+            #                  exclude_from=exclude_from)
     elif backup_spec["backend"] == "btrfs" or backup_spec["backend"] == "zfs":
         if len(result) == 0:
             return 0, Backup(backup_name, src, dst, timeframes)
     else:
-        result = [backup_spec["__line__"], backup_spec["backend"]]
+        result.append(BadSpec("backend", backup_spec["backend"]))
 
     return 2, result
 
@@ -133,19 +140,19 @@ def parse_file(config_path) -> list:
     `yaml.YAMLError` if the file is malformed, and
     `yaesm.ConfigException` on invalid input.
 
-    All missing or invalid lines should be logged (also TODO)"""
+    All missing or invalid specs should be logged (also TODO)"""
     backups = []
     invalid_input_info = {}
     with open(config_path, "r") as f:
-        data = yaml.safe_load(f, Loader=SafeLineLoader)
+        data = yaml.safe_load(f)
         for backup_name, backup_spec in data.items():
             missing_specs = []
-            bad_specs = {}
-            if "backend" not in backup_spec or "timeframes" not in backup_spec:
-                append_missing_keys(missing_specs, backup_spec, ["backend", "timeframes"])
+            bad_specs = []
+            if append_missing_keys(missing_specs, backup_spec, ["backend", "timeframes"]) > 0:
+                invalid_input_info[backup_name] = [missing_specs, bad_specs]
                 continue
 
-            timeframes, temp, bad_specs["timeframes"] = handle_timeframes(backup_spec)
+            timeframes, temp, bad_specs = handle_timeframes(backup_spec)
             missing_specs.extend(temp)
             code, result = construct_backup(backup_name, backup_spec, timeframes)
             match code:
@@ -154,13 +161,19 @@ def parse_file(config_path) -> list:
                 case 1:
                     missing_specs.extend(result)
                 case 2:
-                    bad_specs["backend"] = result
+                    bad_specs.extend(result)
 
-            if len(missing_specs) != 0 or len(bad_specs.keys()) != 0:
+            if len(missing_specs) > 0 or len(bad_specs) > 0:
                 invalid_input_info[backup_name] = [missing_specs, bad_specs]
 
-    if len(invalid_input_info) != 0:
-        # TODO: Do the logging here.
+    if len(invalid_input_info) > 0:
+        # TEMP
+        for name, info in invalid_input_info.items():
+            for missing in info[0]:
+                print(name + ": " + missing)
+            for bad in info[1]:
+                print(name + ": " + bad.where + ", " + str(bad.what))
+
         raise ConfigException
 
     return backups

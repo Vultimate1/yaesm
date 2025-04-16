@@ -14,20 +14,20 @@ root_backup:
   hourly_minutes: [0, 30]
   hourly_keep: 48
 
-  daily_times: [23:59, 11:59]
+  daily_times: ["23:59", "11:59"]
   daily_keep: 720 # can go back an entire year!
 
   weekly_keep: 21
   weekly_days: [monday, friday, sunday]
-  weekly_times: [23:59, 05:30]
+  weekly_times: ["23:59", "05:30"]
 
   monthly_keep: 100
   monthly_days: [1, 7, 30]
-  monthly_times: [23:59]
+  monthly_times: ["23:59"]
 
   yearly_keep: 5
   yearly_days: [1, 129]
-  yearly_times: [23:59]
+  yearly_times: ["23:59"]
 
 home_backup:
   backend: btrfs
@@ -36,7 +36,7 @@ home_backup:
   ssh_key: /home/fred/.ssh/id_rsa
   ssh_config: /etc/ssh/some_other_config
   timeframes: [daily]
-  daily_times: [23:59]
+  daily_times: ["23:59"]
   daily_keep: 365
 
 database_snapshot:
