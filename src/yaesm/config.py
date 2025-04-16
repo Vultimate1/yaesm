@@ -131,7 +131,7 @@ def parse_file(config_path) -> list:
 
     Throws `OSError` if unable to open `config_path`,
     `yaml.YAMLError` if the file is malformed, and
-    [TODO: exception] on invalid input.
+    `yaesm.ConfigException` on invalid input.
 
     All missing or invalid lines should be logged (also TODO)"""
     backups = []
