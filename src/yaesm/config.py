@@ -159,15 +159,3 @@ def parse_file(config_path) -> list:
         pass
 
     return backups
-
-
-class Config:
-    """Basic overview of Config class:
-      config = Config(path_to_config_file)
-      config.backups = [list of Backup objects]
-
-    See tests/test_config.yaml for an example configuration file.
-    """
-
-    def __init__(self, config_path):
-        pass
