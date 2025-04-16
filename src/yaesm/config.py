@@ -4,12 +4,18 @@ from yaesm.backup import *
 from yaesm.sshtarget import *
 from yaesm.timeframe import *
 
+
 class SafeLineLoader(yaml.loader.SafeLoader):
     """Prepends the line number of each corressponding entry."""
     def construct_mapping(self, node, deep = False):
         mapping = super().construct_mapping(node, deep)
         mapping["__line__"] = node.start_mark.line + 1
         return mapping
+
+
+class ConfigException(Exception):
+    pass
+
 
 def append_missing_keys(l, d, keys) -> int:
     """Modifies `l` by appending all `keys` missing in `d` to the collection.
@@ -155,7 +161,6 @@ def parse_file(config_path) -> list:
 
     if len(invalid_input_info) != 0:
         # TODO: Do the logging here.
-        # TODO: What to raise?
-        pass
+        raise ConfigException
 
     return backups
