@@ -37,7 +37,6 @@ def construct_timeframes(backup_spec, timeframe_type) -> dict:
     def check_validity(func, s):
         s = s if isinstance(s, list) else [s]
         for val in s:
-            print(val)
             if not func(val):
                 result["bad_specs"].append(BadSpec(setting, val))
 
@@ -167,13 +166,7 @@ def parse_file(config_path) -> list:
                 invalid_input_info[backup_name] = [missing_specs, bad_specs]
 
     if len(invalid_input_info) > 0:
-        # TEMP
-        for name, info in invalid_input_info.items():
-            for missing in info[0]:
-                print(name + ": " + missing)
-            for bad in info[1]:
-                print(name + ": " + bad.where + ", " + str(bad.what))
-
+        # TODO: Do logging here
         raise ConfigException
 
     return backups
