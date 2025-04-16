@@ -92,7 +92,7 @@ def construct_backup(backup_name, backup_spec, timeframes):
     if append_missing_keys(result, backup_spec, target_setting_names) == 0:
         src = backup_spec[target_setting_names[0]]
         dst = backup_spec[target_setting_names[1]]
-        src_is_ssh = is_sshtarget(src), dst_is_ssh = is_sshtarget(dst)
+        src_is_ssh = SSHTarget.is_sshtarget(src), dst_is_ssh = SSHTarget.is_sshtarget(dst)
         if src_is_ssh and dst_is_ssh:
             result.append([backup_spec[target_setting_names[0]]["__line__"], src_is_ssh])
         elif src_is_ssh or dst_is_ssh:
@@ -100,9 +100,9 @@ def construct_backup(backup_name, backup_spec, timeframes):
                 ssh_key = backup_spec["ssh_key"]
                 ssh_config = backup_spec.get("ssh_config")
                 if src_is_ssh:
-                    src = SSHTarget(src, ssh_key, sshconfig=ssh_config)
+                    src = SSHTarget(src_is_ssh, ssh_key, sshconfig=ssh_config)
                 if dst_is_ssh:
-                    dst = SSHTarget(dst, ssh_key, sshconfig=ssh_config)
+                    dst = SSHTarget(dst_is_ssh, ssh_key, sshconfig=ssh_config)
             else:
                 return 1, result
     else:
