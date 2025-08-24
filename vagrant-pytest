@@ -5,23 +5,22 @@ _print_help_msg() {
 Usage: vagrant-pytest [-B] [-D] [-H] [-K] [-S] <pytest_args..>
 
 vagrant-pytest is a wrapper around pytest, running it inside a Ubuntu Linux
-VirtualBox virtual machine that is created and managed using Vagrant. By using
-Vagrant and VirtualBox, the virtual machine is reproducible, can be snapshotted,
-and allows all pytest runs to start in a clean environment regardless of
-previous runs.
+libvirt virtual machine that is created and managed using Vagrant. By using
+Vagrant, the virtual machine is reproducible, can be snapshotted, and allows
+all pytest runs to start in a clean environment regardless of previous runs.
 
 For more information about the virtual machine environment see the file
-Vagrantfile_pytest. For more information about Vagrant, VirtualBox, and pytest,
+Vagrantfile_pytest. For more information about Vagrant, libvirt, and pytest,
 refer to their respective documentation.
 
 Note that because the Vagrantfile uses a non-standard name, Vagrantfile_pytest,
-if you wish to perform vagrant operations on virtual machine outside of this
+if you wish to perform vagrant operations on the virtual machine outside of this
 program you will need to set the environment variable
 VAGRANT_VAGRANTFILE=Vagrantfile_pytest.
 
 This program should exit with the same status as the pytest run, however, in the
 case of an unexpected failure or misconfigured environment it exits with status
-73. If things are unexpectedly going wrong try running this program with the -D
+99. If things are unexpectedly going wrong try running this program with the -D
 and -V options.
 
 Options:
@@ -42,17 +41,13 @@ END_HELP_MSG
 set -E
 
 _r() { # runs command but bails out if the command exits non-zero 
-    local e=''
-    if [[ $- == *e* ]]; then
-        e='set'
-    fi
     set -e
     if [ 0 -eq $OPT_VERBOSE ]; then
         eval "$@"
     else
-        eval "$@" >/dev/null 2>&1
+        eval "$@" &>/dev/null
     fi
-    if [ -n "$e" ]; then set -e; else set +e; fi
+    set +e
     return 0
 }
 
@@ -64,10 +59,10 @@ _log() {
 _die() {
     local msg=$1
     1>&2 printf 'vagrant-pytest: fatal error: %s\n' "$msg"
-    exit 73
+    exit 99
 }
 
-trap 'if [[ $- == *e* ]]; then 1>&2 printf "vagrant-pytest: fatal command failure: %s\n" "$BASH_COMMAND"; exit 73; fi' ERR
+trap 'if [[ $- == *e* ]]; then 1>&2 printf "vagrant-pytest: fatal command failure: %s\n" "$BASH_COMMAND"; exit 99; fi' ERR
 
 OPTS_PYTEST=''
 OPT_DEBUG=1
@@ -83,7 +78,7 @@ while [ -n "$1" ]; do # This script uses single capital letter opts to not clash
           ;;
         -D)
           set -x
-          PS4='vagrant-pytest: line $LINENO: DEBUG: '
+          PS4='vagrant-pytest: DEBUG: line $LINENO: '
           shift
           ;;
         -H)
@@ -109,32 +104,32 @@ while [ -n "$1" ]; do # This script uses single capital letter opts to not clash
     esac
 done
 
-command -v vagrant    >/dev/null 2>&1 || _die 'vagrant not in $PATH'
-command -v VBoxManage >/dev/null 2>&1 || _die 'virtualbox not in $PATH'
-command -v rsync      >/dev/null 2>&1 || _die 'rsync not in $PATH'
-VBoxManage --version | grep -q 'vboxdrv kernel module is not loaded' && _die 'vboxdrv kernel module not loaded'
-if [ "$(basename $(pwd))" != yaesm -o ! -f Vagrantfile_pytest -o ! -d src -o ! -d tests ]; then
+command -v vagrant    &>/dev/null || _die 'vagrant not in $PATH'
+command -v virsh      &>/dev/null || _die 'virsh not in $PATH (libvirt not installed?)'
+command -v rsync      &>/dev/null || _die 'rsync not in $PATH'
+if [[ $(basename $(pwd)) != yaesm || ! -f Vagrantfile_pytest || ! -d src || ! -d tests ]]; then
     _die 'not in yaesm root directory'
 fi
 
 export VAGRANT_VAGRANTFILE=Vagrantfile_pytest
+export FOG_LOG_LEVEL=ERROR
 
-VM_STATE=$(vagrant status --machine-readable yaesm-pytest | grep ',yaesm-pytest,state,' | awk -F',' '{ORS=""; print $NF}')
-[ $VM_STATE != not_created ]
+VM_STATE=$(vagrant status --machine-readable yaesm-pytest 2>/dev/null | grep ',yaesm-pytest,state,' | awk -F',' '{ORS=""; print $NF}')
+[[ -n $VM_STATE && $VM_STATE != not_created ]]
 VM_BUILT=$?
-vagrant snapshot list --machine-readable yaesm-pytest | grep -q ',yaesm-pytest-postbuild-snapshot'
+vagrant snapshot list --machine-readable yaesm-pytest 2>/dev/null | grep -q ',yaesm-pytest-postbuild-snapshot'
 VM_SNAPSHOT_EXISTS=$?
 
-if [ 0 -eq $VM_BUILT ] && [ 0 -ne $VM_SNAPSHOT_EXISTS ]; then
+if [[ 0 -eq $VM_BUILT ]] && [[ 0 -ne $VM_SNAPSHOT_EXISTS ]]; then
     _die 'yaesm-pytest VM exists but its post-build snapshot does not exist'
 fi
 
-if [ running == $VM_STATE ]; then
+if [[ running == $VM_STATE ]]; then
     _r vagrant halt yaesm-pytest
      VM_STATE=poweroff
 fi
 
-if [ 0 -eq $OPT_VM_FORCE_BUILD ] && [ 0 -eq $VM_BUILT ]; then
+if [[ 0 -eq $OPT_VM_FORCE_BUILD ]] && [[ 0 -eq $VM_BUILT ]]; then
     _log 'destroying yaesm-pytest VM'
     _r vagrant destroy -f yaesm-pytest
     VM_STATE=not_created
@@ -143,9 +138,12 @@ if [ 0 -eq $OPT_VM_FORCE_BUILD ] && [ 0 -eq $VM_BUILT ]; then
     _r vagrant global-status --prune
 fi
 
-if [ 0 -ne $VM_BUILT ]; then
+if [[ 0 -ne $VM_BUILT ]]; then
     _log 'building yaesm-pytest VM'
-    _r vagrant up --provider virtualbox --no-install-provider yaesm-pytest
+    if ! grep -q '^vagrant-libvirt' <(vagrant plugin list); then
+        _r vagrant plugin install vagrant-libvirt
+    fi
+    _r vagrant up --provider libvirt --no-install-provider yaesm-pytest
     VM_BUILT=1
     _r vagrant halt yaesm-pytest
      VM_STATE=poweroff
@@ -154,18 +152,18 @@ if [ 0 -ne $VM_BUILT ]; then
     VM_SNAPSHOT_EXISTS=0
 fi
 
-# vagrant snapshot restore starts the VM
-_r vagrant snapshot restore yaesm-pytest yaesm-pytest-postbuild-snapshot
+_r vagrant snapshot restore --no-start yaesm-pytest yaesm-pytest-postbuild-snapshot
+_r vagrant up yaesm-pytest --provider libvirt
 VM_STATE=running
-vagrant ssh yaesm-pytest -c "sudo bash -c 'cd /home/vagrant/yaesm && . /home/vagrant/yaesm-venv/bin/activate && pytest $OPTS_PYTEST'"
+vagrant ssh yaesm-pytest -c "sudo bash -c 'cd /home/vagrant/yaesm && . /home/vagrant/yaesm-venv/bin/activate && pytest $OPTS_PYTEST'" 2> >(grep -v '^\[fog\]\[WARNING\]' 1>&2) # for information on [fog][WARNING] see https://github.com/vagrant-libvirt/vagrant-libvirt/issues/1831#issuecomment-2471728475
 PYTEST_STATUS=$?
 
-if [ 0 -ne $OPT_VM_KEEP_RUNNING ]; then
+if [[ 0 -ne $OPT_VM_KEEP_RUNNING ]]; then
     _r vagrant halt yaesm-pytest
     VM_STATE=poweroff
 fi
 
-if [ 0 -eq $OPT_VM_SAVE_SNAPSHOT ]; then
+if [[ 0 -eq $OPT_VM_SAVE_SNAPSHOT ]]; then
     local snapshot_name="yaesm-pytest-$(date +%Y_%m_%d_%H:%M)"
     _r vagrant snapshot save yaesm-pytest "$snapshot_name"
     _log "created snapshot of yaesm-pytest VM named $snapshot-name"
