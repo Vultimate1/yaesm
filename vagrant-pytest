@@ -38,6 +38,9 @@ Examples:
 END_HELP_MSG
 }
 
+# We hack around this stupid warning: [fog][WARNING] Unrecognized arguments: libvirt_ip_command
+#
+
 set -E
 
 _r() { # runs command but bails out if the command exits non-zero 
