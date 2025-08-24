@@ -4,11 +4,7 @@
 Vagrant.configure("2") do |config|
   config.vm.define "yaesm-pytest" do |config| 
     
-    config.vm.box = "ubuntu/jammy64"
-
-    config.vm.provider "virtualbox" do |vb|
-      vb.gui = false
-    end
+    config.vm.box = "alvistack/ubuntu-24.04" # supports libvirt, and 24.04 is lts
 
     # rsync is one-way, so modifications on guest don't affect host
     config.vm.synced_folder ".", "/home/vagrant/yaesm", type: "rsync",
