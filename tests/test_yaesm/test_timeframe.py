@@ -108,6 +108,13 @@ def test_valid_hour():
     assert not Timeframe.valid_hour(-1)
     assert not Timeframe.valid_hour(10.5)
 
+def test_valid_time():
+    assert Timeframe.valid_time((0,0))
+    assert Timeframe.valid_time((23,59))
+    assert Timeframe.valid_time((12,30))
+    assert not Timeframe.valid_hour((-1,0))
+    assert not Timeframe.valid_hour((0,60))
+
 def test_timespec_to_time():
     assert (1, 2) == Timeframe.timespec_to_time("01:02")
     assert (0, 0) == Timeframe.timespec_to_time("00:00")

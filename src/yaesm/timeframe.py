@@ -111,7 +111,7 @@ class Timeframe(abc.ABC):
         valid hour and its second element represents a valid minute. Return
         False otherwise.
         """
-        return valid_hour(time[0]) and valid_minute(time[1])
+        return Timeframe.valid_hour(time[0]) and Timeframe.valid_minute(time[1])
 
 class FiveMinuteTimeframe(Timeframe):
     """The 5minute timeframe represents backups to be taken every 5 minutes.
