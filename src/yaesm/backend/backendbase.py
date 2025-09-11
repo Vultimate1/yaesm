@@ -81,5 +81,5 @@ class BackendBase(abc.ABC):
 
     @abc.abstractmethod
     def _configuration_schema(self) -> vlp.Schema:
-        """Returns a voluptuous schema for this backends specific configuration"""
+        """Returns a voluptuous schema for this backends specific configuration."""
         ...
