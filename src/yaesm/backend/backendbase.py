@@ -5,6 +5,7 @@ from pathlib import Path
 import yaesm.backup as bckp
 from yaesm.timeframe import Timeframe
 from yaesm.sshtarget import SSHTarget
+import voluptuous as vlp
 
 class BackendBase(abc.ABC):
     """Abstract base class for execution backend classes such as RsyncBackend
@@ -76,4 +77,9 @@ class BackendBase(abc.ABC):
     @abc.abstractmethod
     def _delete_backups_remote(self, *backups):
         """Delete all the remote backups in '*backups' (SSHTargets)."""
+        ...
+
+    @abc.abstractmethod
+    def _configuration_schema(self) -> vlp.Schema:
+        """Returns a voluptuous schema for this backends specific configuration."""
         ...
