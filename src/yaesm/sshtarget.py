@@ -24,7 +24,8 @@ class SSHTarget:
         self.key = Path(key)
         self.sshconfig = sshconfig
         user_host_re = re.compile("^([^@]+)@(.+)$")
-        if target_spec_re_result := self.is_sshtarget(target_spec):
+        if target_spec_re_result := self.is_sshtarget_spec(target_spec):
+            self.spec = target_spec
             port = target_spec_re_result.group(1)
             self.port = None if port is None else int(port[1:-1]) # strip off leading 'p' and trailing ':' from 'port'
             self.host = target_spec_re_result.group(2)
@@ -38,11 +39,13 @@ class SSHTarget:
             raise SSHTargetException(f"invalid SSHTarget spec: {target_spec}")
 
     @staticmethod
-    def is_sshtarget(target) -> (re.Match[str] | None):
-        """Check if `target` is a valid ssh target spec."""
+    def is_sshtarget_spec(spec:str) -> (re.Match[str] | None):
+        """Check if `spec` is a valid ssh target spec."""
+        if not isinstance(spec, str):
+            return None
         target_re = re.compile("^ssh://(p[0-9]+:)?([^:]+):(.+)$")
-        result = target_re.match(target)
-        return result;
+        result = target_re.match(spec)
+        return result
 
     def with_path(self, path:Path):
         """Returns a copy of 'self' (via copy.deepcopy()) but with path 'path'."""

@@ -1,9 +1,33 @@
-"""src/yaesm/config.py"""
 import yaml
+import voluptuous as vlp
 
 from yaesm.backup import Backup
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
+
+def path_or_sshtarget_validator():
+    """A voluptuous validator accepting either a string representing an existing
+    directory or an SSHTarget spec.
+    """
+    def sshtarget_spec(spec):
+        if SSHTarget.is_sshtarget_spec(spec):
+            return spec
+        raise vlp.Invalid('not an SSH target spec')
+    return vlp.Any(sshtarget_spec, vlp.IsDir())
+
+def src_dir_dst_dir_schema(required=True):
+    """Schema to validate src_dir and dst_dir settings, ensuring they aren't
+    both sshtarget specs, and if they are local directories that they exist.
+    """
+    def not_both_ssh_target_specs_validator(dirs):
+        if SSHTarget.is_sshtarget_spec(dirs["src_dir"]) and SSHTarget.is_sshtarget_spec(dirs["dst_dir"]):
+            raise vlp.Invalid("src_dir and dst_dir cannot both be SSH targets")
+        return dirs
+
+    return vlp.Schema(vlp.All({
+        "src_dir": path_or_sshtarget_validator(),
+        "dst_dir": path_or_sshtarget_validator()
+    }, not_both_ssh_target_specs_validator), required=required)
 
 def construct_timeframes(backup_spec, timeframe_type) -> list:
     """Returns a number of timeframes of `timeframe_type`."""
@@ -40,8 +64,8 @@ def get_directories(backup_spec, target_setting_names) -> tuple[str | SSHTarget,
     Additionally checks if either is an SSH target,"""
     src = backup_spec[target_setting_names[0]]
     dst = backup_spec[target_setting_names[1]]
-    src_is_ssh = SSHTarget.is_sshtarget(src)
-    dst_is_ssh = SSHTarget.is_sshtarget(dst)
+    src_is_ssh = SSHTarget.is_sshtarget_spec(src)
+    dst_is_ssh = SSHTarget.is_sshtarget_spec(dst)
     if src_is_ssh and dst_is_ssh:
         pass
     elif src_is_ssh or dst_is_ssh:

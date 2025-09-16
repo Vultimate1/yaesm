@@ -1,11 +1,11 @@
 import abc
 from typing import final
 from pathlib import Path
+import voluptuous as vlp
 
 import yaesm.backup as bckp
 from yaesm.timeframe import Timeframe
 from yaesm.sshtarget import SSHTarget
-import voluptuous as vlp
 
 class BackendBase(abc.ABC):
     """Abstract base class for execution backend classes such as RsyncBackend

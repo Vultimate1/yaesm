@@ -4,6 +4,7 @@ import subprocess
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
+import voluptuous as vlp
 from freezegun import freeze_time
 
 import yaesm.backend.btrfsbackend as btrfs
@@ -13,6 +14,16 @@ from yaesm.sshtarget import SSHTarget
 @pytest.fixture(scope="session")
 def btrfs_backend():
     return btrfs.BtrfsBackend()
+
+def test_configuration_schema(btrfs_backend, path_generator, sshtarget):
+    schema = btrfs_backend._configuration_schema()
+    assert schema({"src_dir": path_generator("yaesm-testing-",mkdir=True), "dst_dir": path_generator("yaesm-testing-",mkdir=True)})
+    assert schema({"src_dir": sshtarget.spec, "dst_dir": path_generator("yaesm-testing",mkdir=True)})
+    assert schema({"src_dir": path_generator("yaesm-testing",mkdir=True), "dst_dir": sshtarget.spec})
+    with pytest.raises(vlp.Invalid):
+        schema({"src_dir": sshtarget.spec, "dst_dir": sshtarget.spec})
+    with pytest.raises(vlp.Invalid):
+        schema({"src_dir": path_generator("yaesm-testing-",mkdir=False), "dst_dir": sshtarget.spec})
 
 def test_do_backup(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_access, path_generator):
     for backup_type in ["local_to_local", "local_to_remote,", "remote_to_local"]:
