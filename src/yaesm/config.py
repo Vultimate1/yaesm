@@ -19,15 +19,23 @@ def src_dir_dst_dir_schema(required=True):
     """Schema to validate src_dir and dst_dir settings, ensuring they aren't
     both sshtarget specs, and if they are local directories that they exist.
     """
-    def not_both_ssh_target_specs_validator(dirs):
-        if SSHTarget.is_sshtarget_spec(dirs["src_dir"]) and SSHTarget.is_sshtarget_spec(dirs["dst_dir"]):
-            raise vlp.Invalid("src_dir and dst_dir cannot both be SSH targets")
-        return dirs
+    def not_both_ssh_target_specs(opts):
+        if SSHTarget.is_sshtarget_spec(opts["src_dir"]) and SSHTarget.is_sshtarget_spec(opts["dst_dir"]):
+            raise vlp.Invalid("'src_dir' and 'dst_dir' cannot both be SSH target specs")
+        return opts
+
+    def maybe_require_sshkey(opts):
+        has_ssh_target = SSHTarget.is_sshtarget_spec(opts["src_dir"]) or SSHTarget.is_sshtarget_spec(opts["dst_dir"])
+        if has_ssh_target and "ssh_key" not in opts:
+            raise vlp.Invalid("'ssh_key' is required when using an SSH target spec")
+
+        return opts
 
     return vlp.Schema(vlp.All({
         "src_dir": path_or_sshtarget_validator(),
-        "dst_dir": path_or_sshtarget_validator()
-    }, not_both_ssh_target_specs_validator), required=required)
+        "dst_dir": path_or_sshtarget_validator(),
+        "ssh_key": vlp.Optional(vlp.IsFile())
+    }, not_both_ssh_target_specs, maybe_require_sshkey), required=required)
 
 def construct_timeframes(backup_spec, timeframe_type) -> list:
     """Returns a number of timeframes of `timeframe_type`."""

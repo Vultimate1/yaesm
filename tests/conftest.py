@@ -143,7 +143,7 @@ def path_generator(random_string_generator):
     removed during cleanup.
     """
     tmp_paths_to_cleanup = []
-    def generator(name_prefix, base_dir="/tmp", suffix_length=5, mkdir=False, cleanup=False):
+    def generator(name_prefix, base_dir="/tmp", suffix_length=5, mkdir=False, touch=False, cleanup=False):
         base_dir = Path(base_dir)
         tmp_path = None
         while tmp_path is None or tmp_path.exists():
@@ -151,6 +151,8 @@ def path_generator(random_string_generator):
             tmp_path = base_dir.joinpath(basename)
         if mkdir:
             tmp_path.mkdir(parents=True)
+        elif touch:
+            tmp_path.touch(exist_ok=False)
         if cleanup:
             tmp_paths_to_cleanup.append(tmp_path)
         return tmp_path

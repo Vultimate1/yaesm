@@ -17,13 +17,18 @@ def btrfs_backend():
 
 def test_configuration_schema(btrfs_backend, path_generator, sshtarget):
     schema = btrfs_backend._configuration_schema()
-    assert schema({"src_dir": path_generator("yaesm-testing-",mkdir=True), "dst_dir": path_generator("yaesm-testing-",mkdir=True)})
-    assert schema({"src_dir": sshtarget.spec, "dst_dir": path_generator("yaesm-testing",mkdir=True)})
-    assert schema({"src_dir": path_generator("yaesm-testing",mkdir=True), "dst_dir": sshtarget.spec})
+    src_dir = path_generator("yaesm-btrfs-testing-src-dir",mkdir=True)
+    dst_dir = path_generator("yaesm-btrfs-testing-dst-dir",mkdir=True)
+    ssh_key = path_generator("yaesm-btrfs-testing-ssh-key",touch=True)
+    assert schema({"src_dir": src_dir, "dst_dir": dst_dir})
+    assert schema({"src_dir": sshtarget.spec, "dst_dir": dst_dir, "ssh_key": ssh_key})
+    assert schema({"src_dir": src_dir, "dst_dir": sshtarget.spec, "ssh_key": ssh_key})
+    with pytest.raises(vlp.Invalid):
+        schema({"src_dir": src_dir, "dst_dir": sshtarget.spec})
+    with pytest.raises(vlp.Invalid):
+        schema({"src_dir": sshtarget.spec, "dst_dir": sshtarget.spec, "ssh_key": ssh_key})
     with pytest.raises(vlp.Invalid):
         schema({"src_dir": sshtarget.spec, "dst_dir": sshtarget.spec})
-    with pytest.raises(vlp.Invalid):
-        schema({"src_dir": path_generator("yaesm-testing-",mkdir=False), "dst_dir": sshtarget.spec})
 
 def test_do_backup(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_access, path_generator):
     for backup_type in ["local_to_local", "local_to_remote,", "remote_to_local"]:
