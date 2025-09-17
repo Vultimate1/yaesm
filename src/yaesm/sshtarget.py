@@ -14,11 +14,13 @@ class SSHTarget:
     .ssh/config file, or can be a host specification of the form $USER@$HOST.
     The p$PORT: token is optional. To initialize a SSHTarget you must pass the
     constructor both a target spec, and the path to a private key that will be
-    used for authentication to the server.
+    used for authentication to the server. Optionally, you can also pass an
+    sshconfig which points to an existing file that will be passed to all ssh
+    commands via the ssh '-F' flag.
 
     Example::
         sshtarget = SSHTarget("ssh://p22:fred@fredserver:/backups", Path("/home/larry/.ssh/id_rsa"))
-        sshtarget = SSHTarget("ssh://fredhost:/backups, Path("/home/larry/.ssh/id_rsa"))
+        sshtarget = SSHTarget("ssh://fredhost:/backups, Path("/home/larry/.ssh/id_rsa"), sshconfig=Path("/home/larry/.ssh/larrys_ssh_config"))
     """
     def __init__(self, target_spec, key:Path, sshconfig=None):
         self.key = Path(key)

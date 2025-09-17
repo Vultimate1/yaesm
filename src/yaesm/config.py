@@ -24,7 +24,7 @@ def src_dir_dst_dir_schema(required=True):
             raise vlp.Invalid("'src_dir' and 'dst_dir' cannot both be SSH target specs")
         return opts
 
-    def maybe_require_sshkey(opts):
+    def require_ssh_key_if_using_ssh_target(opts):
         has_ssh_target = SSHTarget.is_sshtarget_spec(opts["src_dir"]) or SSHTarget.is_sshtarget_spec(opts["dst_dir"])
         if has_ssh_target and "ssh_key" not in opts:
             raise vlp.Invalid("'ssh_key' is required when using an SSH target spec")
@@ -34,8 +34,10 @@ def src_dir_dst_dir_schema(required=True):
     return vlp.Schema(vlp.All({
         "src_dir": path_or_sshtarget_validator(),
         "dst_dir": path_or_sshtarget_validator(),
-        "ssh_key": vlp.Optional(vlp.IsFile())
-    }, not_both_ssh_target_specs, maybe_require_sshkey), required=required)
+        "ssh_key": vlp.Optional(vlp.IsFile()),
+        "ssh_config": vlp.Optional(vlp.IsFile())
+    }, not_both_ssh_target_specs, require_ssh_key_if_using_ssh_target),
+    required=required)
 
 def construct_timeframes(backup_spec, timeframe_type) -> list:
     """Returns a number of timeframes of `timeframe_type`."""
