@@ -9,107 +9,107 @@ from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, \
     WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
 
-def test_schema_is_file(path_generator):
+def test_SrcDirDstDirSchema_is_file(path_generator):
     tmpfile_str = str(path_generator("tmpfile", touch=True))
-    assert config.Schema.is_file(tmpfile_str) == Path(tmpfile_str)
-    assert config.Schema.is_file(Path(tmpfile_str)) == Path(tmpfile_str)
+    assert config.SrcDirDstDirSchema.is_file(tmpfile_str) == Path(tmpfile_str)
+    assert config.SrcDirDstDirSchema.is_file(Path(tmpfile_str)) == Path(tmpfile_str)
 
     Path(tmpfile_str).unlink()
     with pytest.raises(vlp.Invalid) as exc:
-        config.Schema.is_file(tmpfile_str)
-    assert str(exc.value) == config.Schema.ErrMsg.LOCAL_FILE_INVALID
+        config.SrcDirDstDirSchema.is_file(tmpfile_str)
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.LOCAL_FILE_INVALID
 
     with pytest.raises(vlp.Invalid) as exc:
         tmpfile_relative = path_generator("tmpfile", base_dir=".", touch=True)
         tmpfile_relative_str = "./" + tmpfile_relative.name
         assert Path(tmpfile_relative_str).is_file()
-        config.Schema.is_file(tmpfile_relative_str)
-    assert str(exc.value) == config.Schema.ErrMsg.LOCAL_FILE_INVALID
+        config.SrcDirDstDirSchema.is_file(tmpfile_relative_str)
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.LOCAL_FILE_INVALID
 
-def test_schema_is_dir(path_generator):
+def test_SrcDirDstDirSchema_is_dir(path_generator):
     tmpdir_str = str(path_generator("tmpdir", mkdir=True))
-    assert config.Schema.is_dir(tmpdir_str) == Path(tmpdir_str)
-    assert config.Schema.is_dir(Path(tmpdir_str)) == Path(tmpdir_str)
+    assert config.SrcDirDstDirSchema.is_dir(tmpdir_str) == Path(tmpdir_str)
+    assert config.SrcDirDstDirSchema.is_dir(Path(tmpdir_str)) == Path(tmpdir_str)
 
     shutil.rmtree(tmpdir_str)
     with pytest.raises(vlp.Invalid) as exc:
-        config.Schema.is_dir(tmpdir_str)
-    assert str(exc.value) == config.Schema.ErrMsg.LOCAL_DIR_INVALID
+        config.SrcDirDstDirSchema.is_dir(tmpdir_str)
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.LOCAL_DIR_INVALID
 
     with pytest.raises(vlp.Invalid) as exc:
         tmpdir_relative = path_generator("tmpdir", base_dir=".", mkdir=True)
         tmpdir_relative_str = "./" + tmpdir_relative.name
         assert Path(tmpdir_relative_str).is_dir()
-        config.Schema.is_dir(tmpdir_relative_str)
-    assert str(exc.value) == config.Schema.ErrMsg.LOCAL_DIR_INVALID
+        config.SrcDirDstDirSchema.is_dir(tmpdir_relative_str)
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.LOCAL_DIR_INVALID
 
-def test_schema_is_sshtarget_spec():
+def test_SrcDirDstDirSchema_is_sshtarget_spec():
     sshtarget_spec = "ssh://p22:root@localhost:/"
-    assert config.Schema.is_sshtarget_spec(sshtarget_spec) == sshtarget_spec
+    assert config.SrcDirDstDirSchema.is_sshtarget_spec(sshtarget_spec) == sshtarget_spec
 
     with pytest.raises(vlp.Invalid) as exc:
-        config.Schema.is_sshtarget_spec("/")
-    assert str(exc.value) == config.Schema.ErrMsg.SSH_TARGET_SPEC_INVALID
+        config.SrcDirDstDirSchema.is_sshtarget_spec("/")
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_TARGET_SPEC_INVALID
 
     with pytest.raises(vlp.Invalid) as exc:
-        config.Schema.is_sshtarget_spec("")
-    assert str(exc.value) == config.Schema.ErrMsg.SSH_TARGET_SPEC_INVALID
+        config.SrcDirDstDirSchema.is_sshtarget_spec("")
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_TARGET_SPEC_INVALID
 
-def test_schema_is_dir_or_sshtarget_spec(path_generator):
+def test_SrcDirDstDirSchema_is_dir_or_sshtarget_spec(path_generator):
     sshtarget_spec = "ssh://p22:root@localhost:/"
-    assert config.Schema.is_dir_or_sshtarget_spec(sshtarget_spec) == sshtarget_spec
+    assert config.SrcDirDstDirSchema.is_dir_or_sshtarget_spec(sshtarget_spec) == sshtarget_spec
 
     tmpdir_str = str(path_generator("tmpdir", mkdir=True))
-    assert config.Schema.is_dir_or_sshtarget_spec(tmpdir_str) == Path(tmpdir_str)
-    assert config.Schema.is_dir_or_sshtarget_spec(Path(tmpdir_str)) == Path(tmpdir_str)
+    assert config.SrcDirDstDirSchema.is_dir_or_sshtarget_spec(tmpdir_str) == Path(tmpdir_str)
+    assert config.SrcDirDstDirSchema.is_dir_or_sshtarget_spec(Path(tmpdir_str)) == Path(tmpdir_str)
 
     shutil.rmtree(tmpdir_str)
     with pytest.raises(vlp.Invalid) as exc:
-        config.Schema.is_dir_or_sshtarget_spec(tmpdir_str)
-    assert str(exc.value) == config.Schema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR
+        config.SrcDirDstDirSchema.is_dir_or_sshtarget_spec(tmpdir_str)
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR
 
-def test_schema_src_dir_dst_dir_max_one_sshtarget_spec(path_generator):
+def test_SrcDirDstDirSchema_max_one_sshtarget_spec(path_generator):
     src_dir_str = str(path_generator("src_dir", mkdir=True))
     dst_dir_str = str(path_generator("dst_dir", mkdir=True))
     data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str}
-    assert config.Schema.src_dir_dst_dir_max_one_sshtarget_spec(data) == data
+    assert config.SrcDirDstDirSchema.max_one_sshtarget_spec(data) == data
 
     sshtarget_spec = "ssh://p22:root@localhost:/"
 
     data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str}
-    assert config.Schema.src_dir_dst_dir_max_one_sshtarget_spec(data) == data
+    assert config.SrcDirDstDirSchema.max_one_sshtarget_spec(data) == data
 
     data = {"src_dir": src_dir_str, "dst_dir": sshtarget_spec}
-    assert config.Schema.src_dir_dst_dir_max_one_sshtarget_spec(data) == data
+    assert config.SrcDirDstDirSchema.max_one_sshtarget_spec(data) == data
 
     with pytest.raises(vlp.Invalid) as exc:
         sshtarget_spec2 = "ssh://p22:root@localhost:/foo"
         data = {"src_dir": sshtarget_spec, "dst_dir": sshtarget_spec2}
-        config.Schema.src_dir_dst_dir_max_one_sshtarget_spec(data)
-    assert str(exc.value) == config.Schema.ErrMsg.MULTIPLE_SSH_TARGET_SPECS
+        config.SrcDirDstDirSchema.max_one_sshtarget_spec(data)
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.MULTIPLE_SSH_TARGET_SPECS
 
-def test_schema_src_dir_dst_dir_ssh_key_required_if_ssh_target(path_generator):
+def test_SrcDirDstDirSchema_ssh_key_required_if_ssh_target(path_generator):
     src_dir_str = str(path_generator("src_dir", mkdir=True))
     dst_dir_str = str(path_generator("dst_dir", mkdir=True))
 
     data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str}
-    assert config.Schema.src_dir_dst_dir_ssh_key_required_if_ssh_target(data) == data
+    assert config.SrcDirDstDirSchema.ssh_key_required_if_ssh_target(data) == data
 
     sshtarget_spec = "ssh://p22:root@localhost:/"
     ssh_key_str = str(path_generator("ssh_key", touch=True))
     data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str, "ssh_key": ssh_key_str}
-    assert config.Schema.src_dir_dst_dir_ssh_key_required_if_ssh_target(data) == {**data, "ssh_key": Path(data["ssh_key"])}
+    assert config.SrcDirDstDirSchema.ssh_key_required_if_ssh_target(data) == {**data, "ssh_key": Path(data["ssh_key"])}
 
     with pytest.raises(vlp.Invalid) as exc:
         data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str}
-        config.Schema.src_dir_dst_dir_ssh_key_required_if_ssh_target(data)
-    assert str(exc.value) == config.Schema.ErrMsg.SSH_KEY_MISSING
+        config.SrcDirDstDirSchema.ssh_key_required_if_ssh_target(data)
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_KEY_MISSING
 
     Path(ssh_key_str).unlink()
     with pytest.raises(vlp.Invalid) as exc:
         data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str, "ssh_key": ssh_key_str}
-        config.Schema.src_dir_dst_dir_ssh_key_required_if_ssh_target(data)
-    assert str(exc.value) == config.Schema.ErrMsg.LOCAL_FILE_INVALID
+        config.SrcDirDstDirSchema.ssh_key_required_if_ssh_target(data)
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.LOCAL_FILE_INVALID
 
 def test_parse_file():
     """Tests on a valid YAML config file."""
