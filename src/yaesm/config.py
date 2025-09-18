@@ -28,7 +28,7 @@ class SrcDirDstDirSchema:
         SSH_CONNECTION_FAILED_TO_ESTABLISH = "Could not establish an SSH connection to the SSH target"
 
     @staticmethod
-    def src_dir_dst_dir_schema() -> vlp.Schema:
+    def schema() -> vlp.Schema:
         """Voluptuous Schema to validate a basic 'src_dir' and 'dst_dir' config.
 
         This Schema is meant to be applied to a dict whos values are still just
