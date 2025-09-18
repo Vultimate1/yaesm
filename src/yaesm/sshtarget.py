@@ -45,7 +45,7 @@ class SSHTarget:
         """Check if `spec` is a valid ssh target spec."""
         if not isinstance(spec, str):
             return None
-        target_re = re.compile("^ssh://(p[0-9]+:)?([^:]+):(.+)$")
+        target_re = re.compile("^ssh://(p[0-9]+:)?([^:]+):(/.*)$")
         result = target_re.match(spec)
         return result
 

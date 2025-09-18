@@ -17,25 +17,27 @@ def btrfs_backend():
 
 def test_configuration_schema(btrfs_backend, path_generator, sshtarget):
     schema = btrfs_backend._configuration_schema()
-    src_dir = path_generator("yaesm-btrfs-testing-src-dir",mkdir=True)
-    dst_dir = path_generator("yaesm-btrfs-testing-dst-dir",mkdir=True)
-    ssh_key = path_generator("yaesm-btrfs-testing-ssh-key",touch=True)
-    ssh_config = path_generator("yaesm-btrfs-testing-ssh-config",touch=True)
-    assert schema({"src_dir": src_dir, "dst_dir": dst_dir})
-    assert schema({"src_dir": sshtarget.spec, "dst_dir": dst_dir, "ssh_key": ssh_key})
-    assert schema({"src_dir": src_dir, "dst_dir": sshtarget.spec, "ssh_key": ssh_key})
-    assert schema({"src_dir": src_dir, "dst_dir": sshtarget.spec, "ssh_key": ssh_key, "ssh_config": ssh_config})
-    assert schema({"src_dir": src_dir, "dst_dir": dst_dir, "ssh_key": ssh_key, "ssh_config": ssh_config})
+    src_dir = str(path_generator("yaesm-btrfs-testing-src-dir",mkdir=True))
+    dst_dir = str(path_generator("yaesm-btrfs-testing-dst-dir",mkdir=True))
+    ssh_config = str(path_generator("yaesm-btrfs-testing-ssh-config",touch=True))
+
+    r = schema({"src_dir": src_dir, "dst_dir": dst_dir})
+    assert r["src_dir"] == Path(src_dir)
+
+    assert schema({"src_dir": sshtarget.spec, "dst_dir": dst_dir, "ssh_key": sshtarget.key})
+    assert schema({"src_dir": src_dir, "dst_dir": sshtarget.spec, "ssh_key": sshtarget.key})
+    assert schema({"src_dir": src_dir, "dst_dir": sshtarget.spec, "ssh_key": sshtarget.key, "ssh_config": ssh_config})
+    assert schema({"src_dir": src_dir, "dst_dir": dst_dir, "ssh_key": sshtarget.key, "ssh_config": ssh_config})
     with pytest.raises(vlp.Invalid):
         schema({"src_dir": src_dir, "dst_dir": sshtarget.spec})
     with pytest.raises(vlp.Invalid):
-        schema({"src_dir": src_dir, "dst_dir": path_generator("",mkdir=False), "ssh_key": ssh_key})
+        schema({"src_dir": src_dir, "dst_dir": path_generator("",mkdir=False), "ssh_key": sshtarget.key})
     with pytest.raises(vlp.Invalid):
-        schema({"src_dir": sshtarget.spec, "dst_dir": sshtarget.spec, "ssh_key": ssh_key})
+        schema({"src_dir": sshtarget.spec, "dst_dir": sshtarget.spec, "ssh_key": sshtarget.key})
     with pytest.raises(vlp.Invalid):
         schema({"src_dir": sshtarget.spec, "dst_dir": sshtarget.spec})
     with pytest.raises(vlp.Invalid):
-        schema({"src_dir": src_dir, "dst_dir": sshtarget.spec, "ssh_key": ssh_key, "ssh_config": path_generator("",touch=False)})
+        schema({"src_dir": src_dir, "dst_dir": sshtarget.spec, "ssh_key": sshtarget.key, "ssh_config": path_generator("",touch=False)})
     with pytest.raises(vlp.Invalid):
         schema({"src_dir": src_dir, "dst_dir": dst_dir, "ssh_key": path_generator("",touch=False)})
 

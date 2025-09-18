@@ -48,7 +48,7 @@ class BtrfsBackend(BackendBase):
         _btrfs_delete_subvolumes_remote(*backups)
 
     def _configuration_schema(self):
-        return config.src_dir_dst_dir_schema()
+        return config.Schema.src_dir_dst_dir_schema()
 
 def _btrfs_take_snapshot_local(src_dir:Path, snapshot:Path, check=True):
     """Take a readonly local btrfs snapshot of 'src_dir', and place it at
