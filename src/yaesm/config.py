@@ -54,9 +54,9 @@ class SrcDirDstDirSchema:
                   "ssh_key": vlp.Optional(SrcDirDstDirSchema.is_file),
                   "ssh_config": vlp.Optional(SrcDirDstDirSchema.is_file)
                 },
-                SrcDirDstDirSchema.src_dir_dst_dir_max_one_sshtarget_spec,
-                SrcDirDstDirSchema.src_dir_dst_dir_ssh_key_required_if_ssh_target,
-                SrcDirDstDirSchema.src_dir_dst_dir_ensure_ssh_target_valid
+                SrcDirDstDirSchema.max_one_sshtarget_spec,
+                SrcDirDstDirSchema.ssh_key_required_if_ssh_target,
+                SrcDirDstDirSchema.ssh_target_valid
             ),
             required=True)
 
