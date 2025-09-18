@@ -64,7 +64,7 @@ class SSHTarget:
         """
         configfile_opt = "" if self.sshconfig is None else f"-F '{self.sshconfig}'"
         port_opt = "" if self.port is None else f"-p {self.port}"
-        return f"{extra_opts} -q -i '{self.key}' -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ControlMaster=auto -o 'ControlPath=~/.ssh/yaesm-controlmaster-%r@%h:%p' -o ControlPersist=310 {configfile_opt} {port_opt}"
+        return f"{extra_opts} -q -i '{self.key}' -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o PasswordAuthentication=no -o ControlMaster=auto -o 'ControlPath=~/.ssh/yaesm-controlmaster-%r@%h:%p' -o ControlPersist=310 {configfile_opt} {port_opt}"
 
     def openssh_cmd(self, cmd, extra_opts="", quote_cmd=True):
         """Returns a string of an OpenSSH command that executes 'cmd' on the
@@ -84,16 +84,24 @@ class SSHTarget:
         host = self.host if self.user is None else f"{self.user}@{self.host}"
         return f"ssh {self.openssh_opts(extra_opts)} '{host}' {cmd}"
 
+    def can_connect(self):
+        """Return True if we can establish a connection to the SSH target server
+        and return False otherwise.
+        """
+        return 0 == subprocess.run(self.openssh_cmd("exit 0"), shell=True).returncode
+
     def is_dir(self, d=None):
         """Return True if 'd' is an existing directory on the remote SSH server.
-        If 'd' is None then default to checking 'self.path'."""
+        If 'd' is None then default to checking 'self.path'.
+        """
         if d is None:
             d = self.path
         return 0 == subprocess.run(self.openssh_cmd(f"[ -d '{d}' ]; exit $?"), shell=True).returncode
 
     def is_file(self, f=None):
         """Return True if 'f' is an existing file on the remote SSH server. If
-        'f' is None then default to checking 'self.path'"""
+        'f' is None then default to checking 'self.path'
+        """
         if f is None:
             f = self.path
         return 0 == subprocess.run(self.openssh_cmd(f"[ -f '{f}' ]; exit $?"), shell=True).returncode
