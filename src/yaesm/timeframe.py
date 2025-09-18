@@ -122,10 +122,6 @@ class FiveMinuteTimeframe(Timeframe):
         self.name = "5minute"
         self.keep = keep
 
-    @staticmethod
-    def required_config_settings():
-        return ["5minute_keep"]
-
 class HourlyTimeframe(Timeframe):
     """The hourly timeframe represents backups to be taken every hour at some set
     of minutes. The 'minutes' instance variable is a list of ints with values in
@@ -137,10 +133,6 @@ class HourlyTimeframe(Timeframe):
         self.name = "hourly"
         self.keep = keep
         self.minutes = minutes
-
-    @staticmethod
-    def required_config_settings():
-        return ["hourly_keep", "hourly_minutes"]
 
 class DailyTimeframe(Timeframe):
     """The daily timeframe represents backups to be taken every day at some set

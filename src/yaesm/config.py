@@ -6,6 +6,12 @@ from yaesm.backup import Backup
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
 
+class TimeframeSchema:
+    required_settings = {
+        "5minute": ["5minute_keep"],
+        "hourly": ["hourly_keep", "hourly_minutes"]
+    }
+
 class SrcDirDstDirSchema:
     """This class provides voluptuous schema and validator functions for a
     src_dir and dst_dir configuration.
