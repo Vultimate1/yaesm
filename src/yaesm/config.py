@@ -1,7 +1,7 @@
 """src/yaesm/config.py"""
+from typing import final
 from datetime import datetime
 import re
-
 import yaml
 import voluptuous as vlp
 from pathlib import Path
@@ -10,8 +10,39 @@ from yaesm.backup import Backup
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
 
+class Schema():
+    """Base class for all yaesm configuration schema classes."""
 
-class TimeframeSchema:
+    @staticmethod
+    def base_schema() -> vlp.Schema:
+        """The base schema is responsible for doing basic and safe (non-IO)
+        validation and for coercing freshly parsed yaml into usable types.
+        """
+        ...
+
+    @staticmethod
+    def extra_schema() -> vlp.Schema:
+        """Extra schema that is safe (non-IO), that you only want to run under
+        some circumstances. This schema should only be applied to data after
+        first applying the 'base_schema'
+        """
+        return Schema.empty_schema()
+
+    @staticmethod
+    def io_schema() -> vlp.Schema:
+        """Extra schema that is unsafe (performs IO), that you only want to run
+        under some circumstances. This schema should only be applied to data
+        after first applying the 'base_schema'
+        """
+        return Schema.empty_schema()
+
+    @staticmethod
+    @final
+    def empty_schema() -> vlp.Schema:
+        """A pass-through that accepts any input and passes it back unchanged."""
+        return vlp.Schema(lambda x: x)
+
+class TimeframeSchema(Schema):
     """TODO"""
     class ErrMsg:
         SETTING_MISSING = "A setting required by one of your timeframe types is missing"
@@ -101,7 +132,7 @@ class TimeframeSchema:
         return spec
 
 
-class SrcDirDstDirSchema:
+class SrcDirDstDirSchema(Schema):
     """This class provides voluptuous schema and validator functions for a
     src_dir and dst_dir configuration.
     """
@@ -117,7 +148,7 @@ class SrcDirDstDirSchema:
         SSH_CONNECTION_FAILED_TO_ESTABLISH = "Could not establish an SSH connection to the SSH target"
 
     @staticmethod
-    def schema() -> vlp.Schema:
+    def base_schema() -> vlp.Schema:
         """Voluptuous Schema to validate a basic 'src_dir' and 'dst_dir' config.
 
         This Schema is meant to be applied to a dict whos values are still just

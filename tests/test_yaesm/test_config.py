@@ -10,6 +10,13 @@ from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, \
     WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
 
+def test_Schema_empty_schema():
+    empty_schema = config.Schema.empty_schema()
+    assert empty_schema("") == ""
+    assert empty_schema("foo") == "foo"
+    assert empty_schema(12) == 12
+    assert empty_schema({"foo": "bar", "baz": 12}) == {"foo": "bar", "baz": 12}
+
 def test_SrcDirDstDirSchema_is_file(path_generator):
     tmpfile_str = str(path_generator("tmpfile", touch=True))
     assert config.SrcDirDstDirSchema.is_file(tmpfile_str) == Path(tmpfile_str)
