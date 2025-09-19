@@ -1,6 +1,6 @@
 # YAESM
 
-A backup tool for multiple file systems!
+A snapshotting tool for multiple file systems!
 
 # DEVELOPERS
 
