@@ -1,3 +1,7 @@
+"""src/yaesm/config.py"""
+from datetime import datetime
+import re
+
 import yaml
 import voluptuous as vlp
 from pathlib import Path
@@ -6,11 +10,96 @@ from yaesm.backup import Backup
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
 
+
 class TimeframeSchema:
-    required_settings = {
-        "5minute": ["5minute_keep"],
-        "hourly": ["hourly_keep", "hourly_minutes"]
-    }
+    """TODO"""
+    class ErrMsg:
+        SETTING_MISSING = "A setting required by one of your timeframe types is missing"
+        TIME_MALFORMED = "Not a valid time specification"
+        HOUR_OUT_OF_RANGE = "Hour portion of time specification not within range [0, 23]"
+        MINUTE_OUT_OF_RANGE = "Minute portion of time specification not within range [0, 59]"
+
+    @staticmethod
+    def get_days_in_year(year):
+        """Returns 366 if `year` is a leap year, and 365 otherwise."""
+        if year % 4 != 0 or (year % 100 == 0 and year % 400 != 0):
+            return 365
+        return 366
+
+    @staticmethod
+    def timeframe_schema() -> vlp.Schema:
+        """Voluptuous Schema to validate timeframe configs."""
+        return vlp.Schema(
+            vlp.All(
+                {vlp.Required("timeframes"): vlp.All(list,
+                                                     ["5minute", "hourly", "daily", "weekly",
+                                                      "monthly", "yearly"])},
+                TimeframeSchema.has_required_settings,
+                {("5minute_keep", "hourly_keep", "daily_keep", "weekly_keep", "monthly_keep",
+                  "yearly_keep"): vlp.All(int, vlp.Range(min=0)),
+                  "hourly_minutes": vlp.All(int, vlp.Range(min=0, max=59)),
+                  ("daily_times", "weekly_times", "monthly_times",
+                   "yearly_times"): vlp.All(TimeframeSchema.are_valid_timespecs,
+                                            TimeframeSchema.are_valid_hours,
+                                            TimeframeSchema.are_valid_minutes),
+                  "weekly_days": ["monday", "tuesday", "wednesday", "thursday", "friday",
+                                 "saturday", "sunday"],
+                  "monthly_days": vlp.All(int, vlp.Range(min=1, max=31)),
+                  "yearly_days": vlp.All(int,
+                                         vlp.Range(min=1,
+                                                   max=TimeframeSchema.get_days_in_year(
+                                                       datetime.now().year)))}))
+
+    @staticmethod
+    def has_required_settings(spec: dict) -> dict:
+        """TODO"""
+        required_settings = {
+            "5minute": ["5minute_keep"],
+            "hourly": ["hourly_keep", "hourly_minutes"],
+            "daily": ["daily_keep", "daily_times"],
+            "weekly": ["weekly_keep", "weekly_times", "weekly_days"],
+            "monthly": ["monthly_keep", "monthly_times", "monthly_days"],
+            "yearly": ["yearly_keep", "yearly_times", "yearly_days"]
+        }
+        for tf_type in spec["timeframes"]:
+            missing_settings = [setting not in spec.keys()
+                                for setting in required_settings[tf_type]]
+            if len(missing_settings) > 0:
+                raise vlp.Invalid(TimeframeSchema.ErrMsg.SETTING_MISSING
+                                  + f"\n\t{tf_type}: {missing_settings}")
+        return spec
+
+    @staticmethod
+    def are_valid_timespecs(spec: list[str]) -> list[list[int, int]]:
+        """TODO"""
+        res = []
+        for timespec in spec:
+            timespec_re = re.compile("([0-9]{2}):([0-9]{2})")
+            if re_result := timespec_re.match(timespec):
+                res.append([int(re_result.group(1)), int(re_result.group(2))])
+            else:
+                raise vlp.Invalid(TimeframeSchema.ErrMsg.TIME_MALFORMED
+                                  + f"\n\tExpected format 'hh:mm', got {timespec}")
+        return res
+
+    @staticmethod
+    def are_valid_hours(spec: list[list[int, int]]) -> list[list[int, int]]:
+        """TODO"""
+        for time in spec:
+            if time[0] < 0 or time[0] > 23:
+                raise vlp.Invalid(TimeframeSchema.ErrMsg.HOUR_OUT_OF_RANGE
+                                  + f"\n\tGot {spec}")
+        return spec
+
+    @staticmethod
+    def are_valid_minutes(spec: list[list[int, int]]) -> list[list[int, int]]:
+        """TODO"""
+        for time in spec:
+            if time[1] < 0 or time[1] > 59:
+                raise vlp.Invalid(TimeframeSchema.ErrMsg.MINUTE_OUT_OF_RANGE
+                                  + f"\n\tGot {spec}")
+        return spec
+
 
 class SrcDirDstDirSchema:
     """This class provides voluptuous schema and validator functions for a
@@ -176,9 +265,10 @@ def construct_timeframes(backup_spec, timeframe_type) -> list:
     #         if not func(val):
     #             result["bad_specs"].append(BadSpec(setting, val))
 
+def construct_timeframes(backup_spec, timeframe_type) -> Timeframe:
+    """Returns a number of timeframes of `timeframe_type`."""
     settings = timeframe_type.required_config_settings()
-    result.append(timeframe_type(*[backup_spec[s] for s in settings]))
-    return result
+    return timeframe_type(*[backup_spec[s] for s in settings])
 
 def handle_timeframes(backup_spec) -> list:
     """Returns a list containing the successfully instantiated timeframes."""
@@ -186,7 +276,7 @@ def handle_timeframes(backup_spec) -> list:
     timeframe_dict = dict(zip(Timeframe.tframe_types(names=True), Timeframe.tframe_types()))
     for timeframe in backup_spec["timeframes"]:
         result = construct_timeframes(backup_spec, timeframe_dict[timeframe])
-        timeframes.extend(result)
+        timeframes.append(result)
 
     return timeframes
 
