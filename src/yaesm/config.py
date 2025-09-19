@@ -144,14 +144,14 @@ class SrcDirDstDirSchema:
         """
         return vlp.Schema(
             vlp.All(
-                { "src_dir": SrcDirDstDirSchema.is_dir_or_sshtarget_spec,
-                  "dst_dir": SrcDirDstDirSchema.is_dir_or_sshtarget_spec,
+                { "src_dir": SrcDirDstDirSchema._is_dir_or_sshtarget_spec,
+                  "dst_dir": SrcDirDstDirSchema._is_dir_or_sshtarget_spec,
                   "ssh_key": vlp.Optional(SrcDirDstDirSchema.is_file),
                   "ssh_config": vlp.Optional(SrcDirDstDirSchema.is_file)
                 },
-                SrcDirDstDirSchema.max_one_sshtarget_spec,
-                SrcDirDstDirSchema.ssh_key_required_if_ssh_target,
-                SrcDirDstDirSchema.ssh_target_valid
+                SrcDirDstDirSchema._dict_max_one_sshtarget_spec,
+                SrcDirDstDirSchema._dict_ssh_key_required_if_has_ssh_target,
+                SrcDirDstDirSchema._dict_ssh_target_connectable
             ),
             required=True)
 
@@ -175,7 +175,7 @@ class SrcDirDstDirSchema:
         return Path(s)
 
     @staticmethod
-    def is_sshtarget_spec(spec:str) -> str:
+    def _is_sshtarget_spec(spec:str) -> str:
         """Validator to ensure 'spec' is a string representing a valid SSHTarget
         spec as per the function 'SSHTarget.is_sshtarget_spec()', and if so just
         returns 'spec' back directly.
@@ -185,19 +185,19 @@ class SrcDirDstDirSchema:
         return spec
 
     @staticmethod
-    def is_dir_or_sshtarget_spec(s:str) -> (Path | str):
+    def _is_dir_or_sshtarget_spec(s:str) -> (Path | str):
         """Validator to ensure 's' is a string representing either an existing
         directory on the system, or a valid SSH target spec.
         """
         validator = vlp.Any(
-            SrcDirDstDirSchema.is_sshtarget_spec,
+            SrcDirDstDirSchema._is_sshtarget_spec,
             SrcDirDstDirSchema.is_dir,
             msg=SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR
         )
         return validator(s)
 
     @staticmethod
-    def max_one_sshtarget_spec(d:dict) -> dict:
+    def _dict_max_one_sshtarget_spec(d:dict) -> dict:
         """Ensure that the dict 'd' contains two keys, 'src_dir' and 'dst_dir'
         that both associate to Path's or SSH target specs, but ensure at most
         one of them is and SSH target spec.
@@ -207,11 +207,11 @@ class SrcDirDstDirSchema:
         return d
 
     @staticmethod
-    def ssh_key_required_if_ssh_target(d:dict) -> dict:
+    def _dict_ssh_key_required_if_ssh_target(d:dict) -> dict:
         """Ensure that if either the key 'src_dir' or 'dst_dir' associates to
         an SSH target spec that we also have a key 'ssh_key' that associates to
         an existing file. When calling this validator as part of a schema, this
-        validator should only be run after first running `max_one_sshtarget_spec`.
+        validator should only be run after first running `_dict_max_one_sshtarget_spec`.
         The 'ssh_key' value will be changed into a Path object in the outputted dict.
         """
         if SSHTarget.is_sshtarget_spec(d["src_dir"]) or SSHTarget.is_sshtarget_spec(d["dst_dir"]):
@@ -221,13 +221,13 @@ class SrcDirDstDirSchema:
         return d
 
     @staticmethod
-    def ssh_target_valid(d:dict) -> dict:
+    def _dict_ssh_target_connectable(d:dict) -> dict:
         """Ensure that if an SSH target is being used, that we can establish a
         connection to the specified SSH server, and the target directory exists
         on the server. The SSH target spec is changed into an actual SSHTarget
         object in the outputted dict. When calling this validator as part of a
         schema, this validator should only be called after first calling both
-        `max_one_sshtarget_spec` and `ssh_key_required_if_ssh_target`.
+        `_dict_max_one_sshtarget_spec` and `_dict_ssh_key_required_if_ssh_target`.
         """
         sshtarget_spec = None
         dir_key = None
@@ -240,7 +240,11 @@ class SrcDirDstDirSchema:
             dir_key = "dst_dir"
 
         if sshtarget_spec:
-            sshtarget = SSHTarget(sshtarget_spec, d["ssh_key"], sshconfig=d.get("ssh_config"))
+            ssh_config = d.get("ssh_config")
+            if ssh_config:
+                ssh_config = SrcDirDstDirSchema.is_file(ssh_config)
+                d["ssh_config"] = ssh_config
+            sshtarget = SSHTarget(sshtarget_spec, d["ssh_key"], sshconfig=ssh_config)
             d[dir_key] = sshtarget
             if not sshtarget.can_connect():
                 raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.SSH_CONNECTION_FAILED_TO_ESTABLISH)
