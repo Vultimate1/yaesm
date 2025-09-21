@@ -13,6 +13,10 @@ from yaesm.timeframe import Timeframe
 class Schema():
     """Base class for all yaesm configuration schema classes."""
 
+    class ErrMsg:
+        LOCAL_DIR_INVALID = "Not a complete path to an existing directory"
+        LOCAL_FILE_INVALID = "Not a complete path to an existing file"
+
     @staticmethod
     def schema() -> vlp.Schema:
         """The base schema is responsible for doing basic and safe (non-IO)
@@ -30,8 +34,27 @@ class Schema():
     @staticmethod
     @final
     def schema_empty() -> vlp.Schema:
-        """A pass-through that accepts any input and passes it back unchanged."""
+        """A pass-through schema that accepts any input and returns it back unchanged."""
         return vlp.Schema(lambda x: x)
+
+    @staticmethod
+    def is_file(s:(Path | str)) -> Path:
+        """Validator to ensure 's' is a string or Path representing a full path
+        to a regular file (not directory) on the system, and if so returns 's'
+        as a Path.
+        """
+        if not s or str(s)[0] != "/" or not Path(s).is_file():
+            raise vlp.Invalid(Schema.ErrMsg.LOCAL_FILE_INVALID)
+        return Path(s)
+
+    @staticmethod
+    def is_dir(s:(Path | str)) -> Path:
+        """Validator to ensure 's' is a string or Path representing a full path
+        to an existing directory on the system, and if so returns 's' as a Path.
+        """
+        if not s or str(s)[0] != "/" or not Path(s).is_dir():
+            raise vlp.Invalid(Schema.ErrMsg.LOCAL_DIR_INVALID)
+        return Path(s)
 
 class TimeframeSchema(Schema):
     """TODO"""
@@ -128,8 +151,6 @@ class SrcDirDstDirSchema(Schema):
     src_dir and dst_dir configuration.
     """
     class ErrMsg:
-        LOCAL_DIR_INVALID = "Not a complete path to an existing directory"
-        LOCAL_FILE_INVALID = "Not a complete path to an existing file"
         REMOTE_DIR_INVALID = "Not a path to an existing directory at the SSH target remote path"
         REMOTE_FILE_INVALID = "Not a path to an existing file at the SSH target remote path"
         SSH_TARGET_SPEC_INVALID = "Not a valid SSH target spec"
@@ -168,33 +189,14 @@ class SrcDirDstDirSchema(Schema):
             vlp.All(
                 { "src_dir": SrcDirDstDirSchema._is_dir_or_sshtarget_spec,
                   "dst_dir": SrcDirDstDirSchema._is_dir_or_sshtarget_spec,
-                  "ssh_key": vlp.Optional(SrcDirDstDirSchema.is_file),
-                  "ssh_config": vlp.Optional(SrcDirDstDirSchema.is_file)
+                  "ssh_key": vlp.Optional(Schema.is_file),
+                  "ssh_config": vlp.Optional(Schema.is_file)
                 },
                 SrcDirDstDirSchema._dict_max_one_sshtarget_spec,
                 SrcDirDstDirSchema._dict_ssh_key_required_if_has_ssh_target,
                 SrcDirDstDirSchema._dict_ssh_target_connectable
             ),
             required=True)
-
-    @staticmethod
-    def is_file(s:(Path | str)) -> Path:
-        """Validator to ensure 's' is a string or Path representing a full path
-        to a regular file (not directory) on the system, and if so returns 's'
-        as a Path.
-        """
-        if not s or str(s)[0] != "/" or not Path(s).is_file():
-            raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.LOCAL_FILE_INVALID)
-        return Path(s)
-
-    @staticmethod
-    def is_dir(s:(Path | str)) -> Path:
-        """Validator to ensure 's' is a string or Path representing a full path
-        to an existing directory on the system, and if so returns 's' as a Path.
-        """
-        if not s or str(s)[0] != "/" or not Path(s).is_dir():
-            raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.LOCAL_DIR_INVALID)
-        return Path(s)
 
     @staticmethod
     def _is_sshtarget_spec(spec:str) -> str:
@@ -213,7 +215,7 @@ class SrcDirDstDirSchema(Schema):
         """
         validator = vlp.Any(
             SrcDirDstDirSchema._is_sshtarget_spec,
-            SrcDirDstDirSchema.is_dir,
+            Schema.is_dir,
             msg=SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR
         )
         return validator(s)
@@ -239,7 +241,7 @@ class SrcDirDstDirSchema(Schema):
         if SSHTarget.is_sshtarget_spec(d["src_dir"]) or SSHTarget.is_sshtarget_spec(d["dst_dir"]):
             if not d.get("ssh_key"):
                 raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.SSH_KEY_MISSING)
-            d["ssh_key"] = SrcDirDstDirSchema.is_file(d["ssh_key"])
+            d["ssh_key"] = Schema.is_file(d["ssh_key"])
         return d
 
     @staticmethod
@@ -264,7 +266,7 @@ class SrcDirDstDirSchema(Schema):
         if sshtarget_spec:
             ssh_config = d.get("ssh_config")
             if ssh_config:
-                ssh_config = SrcDirDstDirSchema.is_file(ssh_config)
+                ssh_config = Schema.is_file(ssh_config)
                 d["ssh_config"] = ssh_config
             sshtarget = SSHTarget(sshtarget_spec, d["ssh_key"], sshconfig=ssh_config)
             d[dir_key] = sshtarget

@@ -10,31 +10,31 @@ from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, \
     WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
 
-def test_Schema_empty_schema():
-    empty_schema = config.Schema.empty_schema()
-    assert empty_schema("") == ""
-    assert empty_schema("foo") == "foo"
-    assert empty_schema(12) == 12
-    assert empty_schema({"foo": "bar", "baz": 12}) == {"foo": "bar", "baz": 12}
+def test_Schema_schema_empty():
+    schema = config.Schema.schema_empty()
+    assert schema("") == ""
+    assert schema("foo") == "foo"
+    assert schema(12) == 12
+    assert schema({"foo": "bar", "baz": 12}) == {"foo": "bar", "baz": 12}
 
-def test_SrcDirDstDirSchema_is_file(path_generator):
+def test_Schema_is_file(path_generator):
     tmpfile_str = str(path_generator("tmpfile", touch=True))
-    assert config.SrcDirDstDirSchema.is_file(tmpfile_str) == Path(tmpfile_str)
-    assert config.SrcDirDstDirSchema.is_file(Path(tmpfile_str)) == Path(tmpfile_str)
+    assert config.Schema.is_file(tmpfile_str) == Path(tmpfile_str)
+    assert config.Schema.is_file(Path(tmpfile_str)) == Path(tmpfile_str)
 
     Path(tmpfile_str).unlink()
     with pytest.raises(vlp.Invalid) as exc:
         config.SrcDirDstDirSchema.is_file(tmpfile_str)
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.LOCAL_FILE_INVALID
+    assert str(exc.value) == config.Schema.ErrMsg.LOCAL_FILE_INVALID
 
     with pytest.raises(vlp.Invalid) as exc:
         tmpfile_relative = path_generator("tmpfile", base_dir=".", touch=True)
         tmpfile_relative_str = "./" + tmpfile_relative.name
         assert Path(tmpfile_relative_str).is_file()
         config.SrcDirDstDirSchema.is_file(tmpfile_relative_str)
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.LOCAL_FILE_INVALID
+    assert str(exc.value) == config.Schema.ErrMsg.LOCAL_FILE_INVALID
 
-def test_SrcDirDstDirSchema_is_dir(path_generator):
+def test_Schems_is_dir(path_generator):
     tmpdir_str = str(path_generator("tmpdir", mkdir=True))
     assert config.SrcDirDstDirSchema.is_dir(tmpdir_str) == Path(tmpdir_str)
     assert config.SrcDirDstDirSchema.is_dir(Path(tmpdir_str)) == Path(tmpdir_str)
@@ -42,14 +42,14 @@ def test_SrcDirDstDirSchema_is_dir(path_generator):
     shutil.rmtree(tmpdir_str)
     with pytest.raises(vlp.Invalid) as exc:
         config.SrcDirDstDirSchema.is_dir(tmpdir_str)
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.LOCAL_DIR_INVALID
+    assert str(exc.value) == config.Schema.ErrMsg.LOCAL_DIR_INVALID
 
     with pytest.raises(vlp.Invalid) as exc:
         tmpdir_relative = path_generator("tmpdir", base_dir=".", mkdir=True)
         tmpdir_relative_str = "./" + tmpdir_relative.name
         assert Path(tmpdir_relative_str).is_dir()
         config.SrcDirDstDirSchema.is_dir(tmpdir_relative_str)
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.LOCAL_DIR_INVALID
+    assert str(exc.value) == config.Schema.ErrMsg.LOCAL_DIR_INVALID
 
 def test_SrcDirDstDirSchema_is_sshtarget_spec():
     sshtarget_spec = "ssh://p22:root@localhost:/"
@@ -117,7 +117,7 @@ def test_SrcDirDstDirSchema_dict_ssh_key_required_if_ssh_target(path_generator):
     with pytest.raises(vlp.Invalid) as exc:
         data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str, "ssh_key": ssh_key_str}
         config.SrcDirDstDirSchema._dict_ssh_key_required_if_ssh_target(data)
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.LOCAL_FILE_INVALID
+    assert str(exc.value) == config.Schema.ErrMsg.LOCAL_FILE_INVALID
 
 def test_SrcDirDstDirSchema_dict_ssh_target_connectable(sshtarget_generator, path_generator):
     sshtarget = sshtarget_generator()
