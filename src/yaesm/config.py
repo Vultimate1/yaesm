@@ -14,31 +14,22 @@ class Schema():
     """Base class for all yaesm configuration schema classes."""
 
     @staticmethod
-    def base_schema() -> vlp.Schema:
+    def schema() -> vlp.Schema:
         """The base schema is responsible for doing basic and safe (non-IO)
         validation and for coercing freshly parsed yaml into usable types.
         """
         ...
 
     @staticmethod
-    def extra_schema() -> vlp.Schema:
-        """Extra schema that is safe (non-IO), that you only want to run under
-        some circumstances. This schema should only be applied to data after
-        first applying the 'base_schema'
+    def schema_extra() -> vlp.Schema:
+        """Extra schema to be only be run in some circumstances. This schema
+        should only be applied to data after first applying the 'base_schema'
         """
-        return Schema.empty_schema()
-
-    @staticmethod
-    def io_schema() -> vlp.Schema:
-        """Extra schema that is unsafe (performs IO), that you only want to run
-        under some circumstances. This schema should only be applied to data
-        after first applying the 'base_schema'
-        """
-        return Schema.empty_schema()
+        return Schema.schema_empty()
 
     @staticmethod
     @final
-    def empty_schema() -> vlp.Schema:
+    def schema_empty() -> vlp.Schema:
         """A pass-through that accepts any input and passes it back unchanged."""
         return vlp.Schema(lambda x: x)
 
@@ -148,7 +139,7 @@ class SrcDirDstDirSchema(Schema):
         SSH_CONNECTION_FAILED_TO_ESTABLISH = "Could not establish an SSH connection to the SSH target"
 
     @staticmethod
-    def base_schema() -> vlp.Schema:
+    def schema() -> vlp.Schema:
         """Voluptuous Schema to validate a basic 'src_dir' and 'dst_dir' config.
 
         This Schema is meant to be applied to a dict whos values are still just
