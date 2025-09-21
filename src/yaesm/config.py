@@ -19,15 +19,17 @@ class Schema():
 
     @staticmethod
     def schema() -> vlp.Schema:
-        """The base schema is responsible for doing basic and safe (non-IO)
-        validation and for coercing freshly parsed yaml into usable types.
+        """The base schema is responsible for doing basic validation and for
+        coercing freshly parsed yaml into usable types.
         """
         ...
 
     @staticmethod
     def schema_extra() -> vlp.Schema:
-        """Extra schema to be only be run in some circumstances. This schema
-        should only be applied to data after first applying the 'base_schema'
+        """Extra schema to be only be run in some circumstances. More complicated
+        validation (like testing SSH connectivity) should probably happen in this
+        schema. This schema should only be applied to data after first applying
+        the 'base_schema'
         """
         return Schema.schema_empty()
 
