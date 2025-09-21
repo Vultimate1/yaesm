@@ -119,29 +119,159 @@ def test_SrcDirDstDirSchema_dict_ssh_key_required_if_ssh_target(path_generator):
         config.SrcDirDstDirSchema._dict_ssh_key_required_if_ssh_target(data)
     assert str(exc.value) == config.Schema.ErrMsg.LOCAL_FILE_INVALID
 
-def test_SrcDirDstDirSchema_dict_ssh_target_connectable(sshtarget_generator, path_generator):
-    sshtarget = sshtarget_generator()
-    data = {"src_dir": "/foo", "dst_dir": sshtarget.spec, "ssh_key": sshtarget.key}
-    data = config.SrcDirDstDirSchema._dict_ssh_target_connectable(data)
+def test_SrcDirDstDirSchema_dict_promote_ssh_target_spec_to_ssh_target(path_generator):
+    src_dir = path_generator("src_dir", mkdir=True)
+    dst_dir = path_generator("dst_dir", mkdir=True)
+    data = {"src_dir": src_dir, "dst_dir": dst_dir}
+    assert config.SrcDirDstDirSchema._dict_promote_ssh_target_spec_to_ssh_target(data) == data
+
+    sshtarget_spec = "ssh://p22:root@localhost:/"
+    fake_key = path_generator("fake_key", touch=True)
+    data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir, "ssh_key": fake_key}
+    data = config.SrcDirDstDirSchema._dict_promote_ssh_target_spec_to_ssh_target(data)
+    assert isinstance(data["src_dir"], SSHTarget)
+
+    data = {"src_dir": src_dir, "dst_dir": sshtarget_spec, "ssh_key": fake_key}
+    data = config.SrcDirDstDirSchema._dict_promote_ssh_target_spec_to_ssh_target(data)
     assert isinstance(data["dst_dir"], SSHTarget)
 
-    ssh_config_str = str(path_generator("ssh_config", touch=True))
-    data = {"src_dir": "/foo", "dst_dir": sshtarget.spec, "ssh_key": sshtarget.key, "ssh_config": ssh_config_str}
+def test_SrcDirDstDirSchema_dict_ssh_target_connectable(sshtarget_generator, path_generator):
+    sshtarget = sshtarget_generator()
+    data = {"src_dir": Path("/foo"), "dst_dir": sshtarget, "ssh_key": sshtarget.key}
     data = config.SrcDirDstDirSchema._dict_ssh_target_connectable(data)
-    assert data["ssh_config"] == Path(ssh_config_str)
+    assert isinstance(data["dst_dir"], SSHTarget)
 
     sshtarget = sshtarget_generator()
     with pytest.raises(vlp.Invalid) as exc:
         bad_key = path_generator("bad_key", touch=True)
-        data = {"ssh_key": bad_key, "src_dir": "/foo", "dst_dir": sshtarget.spec}
+        new_sshtarget = sshtarget.with_path(sshtarget.path)
+        new_sshtarget.key = bad_key
+        data = {"ssh_key": bad_key, "src_dir": Path("/foo"), "dst_dir": new_sshtarget}
         config.SrcDirDstDirSchema._dict_ssh_target_connectable(data)
     assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_CONNECTION_FAILED_TO_ESTABLISH
 
     with pytest.raises(vlp.Invalid) as exc:
         bad_dir = path_generator("bad_dir", mkdir=False)
-        sshtarget.spec = re.sub(r':(/[^:]+)$', f":{bad_dir}", sshtarget.spec)
-        data = {"src_dir": sshtarget.spec, "dst_dir": "/foo", "ssh_key": sshtarget.key}
+        new_sshtarget = sshtarget.with_path(bad_dir)
+        data = {"src_dir": new_sshtarget, "dst_dir": "/foo"}
         config.SrcDirDstDirSchema._dict_ssh_target_connectable(data)
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.REMOTE_DIR_INVALID
+
+def test_SrcDirDstDirSchema_schema(path_generator):
+    schema = config.SrcDirDstDirSchema.schema()
+
+    sshtarget_spec = "ssh://p22:root@localhost:/"
+    key = str(path_generator("key", touch=True))
+    ssh_config = str(path_generator("ssh_config", touch=True))
+    src_dir_str = str(path_generator("src_dir", mkdir=True))
+    dst_dir_str = str(path_generator("dst_dir", mkdir=True))
+
+    data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str}
+    assert schema(data) == {"src_dir": Path(src_dir_str), "dst_dir": Path(dst_dir_str)}
+
+    data = {"src_dir": src_dir_str, "dst_dir": sshtarget_spec, "ssh_key": key, "ssh_config": ssh_config}
+    data = schema(data)
+    assert sorted(data) == ["dst_dir", "src_dir", "ssh_config", "ssh_key"]
+    assert data["src_dir"] == Path(src_dir_str)
+    assert isinstance(data["dst_dir"], SSHTarget)
+    assert data["dst_dir"].path == Path("/")
+    assert data["dst_dir"].port == 22
+    assert data["dst_dir"].user == "root"
+    assert data["dst_dir"].host == "localhost"
+    assert data["dst_dir"].key == Path(key)
+    assert data["dst_dir"].sshconfig == Path(ssh_config)
+    assert data["ssh_key"] == Path(key)
+    assert data["ssh_config"] == Path(ssh_config)
+
+    data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str, "ssh_key": key}
+    data = schema(data)
+    assert sorted(data) == ["dst_dir", "src_dir", "ssh_key"]
+    assert data["dst_dir"] == Path(dst_dir_str)
+    assert isinstance(data["src_dir"], SSHTarget)
+    assert data["ssh_key"] == Path(key)
+
+    with pytest.raises(vlp.Invalid) as exc:
+        data = {"foo": "bar", "src_dir": src_dir_str, "dst_dir": dst_dir_str}
+        schema(data)
+    assert re.match("extra keys not allowed", str(exc.value))
+
+    with pytest.raises(vlp.Invalid) as exc:
+        data = {"src_dir": src_dir_str}
+        schema(data)
+    assert re.match("required key not provided", str(exc.value))
+
+    with pytest.raises(vlp.Invalid) as exc:
+        data = ["src_dir", src_dir_str, "dst_dir", dst_dir_str]
+        schema(data)
+    assert re.match("expected a dictionary", str(exc.value))
+
+    Path(src_dir_str).rmdir()
+    with pytest.raises(vlp.Invalid) as exc:
+        data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str}
+        schema(data)
+    assert re.match(config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR, str(exc.value))
+    Path(src_dir_str).mkdir()
+
+    Path(dst_dir_str).rmdir()
+    with pytest.raises(vlp.Invalid) as exc:
+        data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str}
+        schema(data)
+    assert re.match(config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR, str(exc.value))
+    Path(dst_dir_str).mkdir()
+
+    Path(key).unlink()
+    with pytest.raises(vlp.Invalid) as exc:
+        data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str, "ssh_key": key}
+        schema(data)
+    assert re.match(config.Schema.ErrMsg.LOCAL_FILE_INVALID, str(exc.value))
+    Path(key).touch()
+
+    Path(ssh_config).unlink()
+    with pytest.raises(vlp.Invalid) as exc:
+        data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str, "ssh_config": ssh_config}
+        schema(data)
+    assert re.match(config.Schema.ErrMsg.LOCAL_FILE_INVALID, str(exc.value))
+    Path(ssh_config).touch()
+
+    with pytest.raises(vlp.Invalid) as exc:
+        data = {"src_dir": sshtarget_spec, "dst_dir": sshtarget_spec, "ssh_key": key}
+        schema(data)
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.MULTIPLE_SSH_TARGET_SPECS
+
+    with pytest.raises(vlp.Invalid) as exc:
+        data = {"src_dir": src_dir_str, "dst_dir": sshtarget_spec}
+        schema(data)
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_KEY_MISSING
+
+def test_SrcDirDstDirSchema_schema_extra(sshtarget_generator, path_generator):
+    schema_extra = config.SrcDirDstDirSchema.schema_extra()
+    src_dir = path_generator("src_dir", mkdir=True)
+    dst_dir = path_generator("dst_dir", mkdir=True)
+    sshtarget = sshtarget_generator()
+
+    data = {"src_dir": src_dir, "dst_dir": dst_dir}
+    assert schema_extra(data) == data
+
+    data = {"src_dir": sshtarget, "dst_dir": dst_dir}
+    assert schema_extra(data) == data
+
+    data = {"src_dir": src_dir, "dst_dir": sshtarget}
+    assert schema_extra(data) == data
+
+    with pytest.raises(vlp.Invalid) as exc:
+        bad_key = path_generator("bad_key", touch=True)
+        new_sshtarget = sshtarget_generator()
+        new_sshtarget.key = bad_key
+        data = {"src_dir": new_sshtarget, "dst_dir": dst_dir}
+        schema_extra(data)
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_CONNECTION_FAILED_TO_ESTABLISH
+
+    with pytest.raises(vlp.Invalid) as exc:
+        bad_path = path_generator("bad_path")
+        new_sshtarget = sshtarget.with_path(sshtarget.path)
+        new_sshtarget.path = bad_path
+        data = {"src_dir": new_sshtarget, "dst_dir": dst_dir}
+        schema_extra(data)
     assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.REMOTE_DIR_INVALID
 
 # def test_parse_file():
