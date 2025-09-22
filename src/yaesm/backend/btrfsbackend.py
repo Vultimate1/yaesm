@@ -20,7 +20,7 @@ class BtrfsBackend(BackendBase):
     commands 'btrfs subvolume snapshot', 'btrfs subvolume delete', 'btrfs send',
     and 'btrfs receive'.
     """
-    def _exec_backup_local_to_local(self, backup:bckp.Backup, timeframe:Timeframe):
+    def _exec_backup_local_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
         src_dir = backup.src_dir
         backup_path = backup.dst_dir.joinpath(bckp.backup_basename_now(backup, timeframe))
         returncode, _ = _btrfs_take_snapshot_local(src_dir, backup_path, check=False)
@@ -30,17 +30,17 @@ class BtrfsBackend(BackendBase):
             _btrfs_send_receive_local_to_local(tmp_snapshot, backup_path.parent, parent=bootstrap_snapshot)
             _btrfs_delete_subvolumes_local(tmp_snapshot)
 
-    def _exec_backup_local_to_remote(self, backup:bckp.Backup, timeframe:Timeframe):
+    def _exec_backup_local_to_remote(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
         src_dir = backup.src_dir
-        backup_path = backup.dst_dir.with_path(backup.dst_dir.path.joinpath(bckp.backup_basename_now(backup, timeframe)))
+        backup_path = backup.dst_dir.with_path(backup.dst_dir.path.joinpath(backup_basename))
         bootstrap_snapshot = _btrfs_bootstrap_local_to_remote(src_dir, backup_path.with_path(backup_path.path.parent))
         _, tmp_snapshot = _btrfs_take_snapshot_local(src_dir, src_dir.joinpath(backup_path.path.name))
         _btrfs_send_receive_local_to_remote(tmp_snapshot, backup_path.with_path(backup_path.path.parent), parent=bootstrap_snapshot)
         _btrfs_delete_subvolumes_local(tmp_snapshot)
 
-    def _exec_backup_remote_to_local(self, backup:bckp.Backup, timeframe:Timeframe):
+    def _exec_backup_remote_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
         src_dir = backup.src_dir
-        backup_path = backup.dst_dir.joinpath(bckp.backup_basename_now(backup, timeframe))
+        backup_path = backup.dst_dir.joinpath(backup_basename)
         bootstrap_snapshot = _btrfs_bootstrap_remote_to_local(src_dir, backup_path.parent)
         _, tmp_snapshot = _btrfs_take_snapshot_remote(src_dir, src_dir.with_path(src_dir.path.joinpath(backup_path.name)))
         _btrfs_send_receive_remote_to_local(tmp_snapshot, backup_path.parent, parent=bootstrap_snapshot)

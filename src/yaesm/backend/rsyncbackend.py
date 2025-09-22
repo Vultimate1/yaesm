@@ -11,14 +11,14 @@ class RsyncBackend(BackendBase):
     """The rysnc backup execution backend. See BackendBase for more details on
     backup execution backends in general.
     """
-    def _exec_backup_local_to_local(self, backup:bckp.Backup, timeframe:Timeframe):
-        return self._exec_backup(backup, timeframe)
+    def _exec_backup_local_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
+        return self._exec_backup(backup, backup_basename, timeframe)
 
-    def _exec_backup_local_to_remote(self, backup:bckp.Backup, timeframe:Timeframe):
-        return self._exec_backup(backup, timeframe)
+    def _exec_backup_local_to_remote(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
+        return self._exec_backup(backup, backup_basename, timeframe)
 
-    def _exec_backup_remote_to_local(self, backup:bckp.Backup, timeframe:Timeframe):
-        return self._exec_backup(backup, timeframe)
+    def _exec_backup_remote_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
+        return self._exec_backup(backup, backup_basename, timeframe)
 
     def _delete_backups_local(self, *backups):
         for backup in backups:
@@ -34,7 +34,7 @@ class RsyncBackend(BackendBase):
             subprocess.run(backup.openssh_cmd(f"sudo -n rm -r -f '{backup.path}'"), shell=True, check=True)
         return backups
         
-    def _exec_backup(self, backup:bckp.Backup, timeframe:Timeframe):
+    def _exec_backup(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
         """
         Execute a single backup for `backup` in the timeframe `timeframe`. This
         function automatically deals with if the backup is local-to-local,
@@ -63,7 +63,7 @@ class RsyncBackend(BackendBase):
         else:
             src_dir = backup.src_dir
     
-        dst_dir = Path(dst_dir).joinpath(bckp.backup_basename_now(backup, timeframe))
+        dst_dir = Path(dst_dir).joinpath(backup_basename)
         rsync_cmd += [f"{src_dir}/", f"{dst_dir}/"]
     
         subprocess.run(rsync_cmd, check=True)

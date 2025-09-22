@@ -29,7 +29,7 @@ def test_exec_backup(rsync_backend, path_generator, random_backup_generator, yae
         for i in range(5):
             new_files, deleted_files, modified_files = random_filesystem_modifier(src_dir)
             with freeze_time(now + timedelta(hours=i)):
-                backups.insert(0, rsync_backend._exec_backup(backup, timeframe))
+                backups.insert(0, rsync_backend._exec_backup(backup, bckp.backup_basename_now(backup, timeframe), timeframe))
             if i >= 1:
                 new_backup = backups[0]
                 prev_backup = backups[1]

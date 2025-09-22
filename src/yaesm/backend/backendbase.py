@@ -25,11 +25,11 @@ class BackendBase(abc.ABC):
         """
         backup_basename = bckp.backup_basename_now(backup, timeframe)
         if backup.backup_type == "local_to_local":
-            self._exec_backup_local_to_local(backup, timeframe)
+            self._exec_backup_local_to_local(backup, backup_basename, timeframe)
         elif backup.backup_type == "local_to_remote":
-            self._exec_backup_local_to_remote(backup, timeframe)
+            self._exec_backup_local_to_remote(backup, backup_basename, timeframe)
         else: # remote_to_local
-            self._exec_backup_remote_to_local(backup, timeframe)
+            self._exec_backup_remote_to_local(backup, backup_basename, timeframe)
         backups = bckp.backups_collect(backup, timeframe=timeframe) # sorted newest to oldest
         to_delete = []
         while len(backups) > timeframe.keep:
@@ -41,26 +41,27 @@ class BackendBase(abc.ABC):
                 self._delete_backups_local(*to_delete)
 
     @abc.abstractmethod
-    def _exec_backup_local_to_local(self, backup:bckp.Backup, timeframe:Timeframe):
+    def _exec_backup_local_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
         """Execute a single local to local backup for the Backup `backup` in the
-        Timeframe `timeframe`. Note that this function does not perform any
-        cleanup.
+        Timeframe `timeframe`. The resulting backup will have basename
+        `backup_basename`. Note that this function does not perform any cleanup.
         """
         ...
 
     @abc.abstractmethod
-    def _exec_backup_local_to_remote(self, backup:bckp.Backup, timeframe:Timeframe):
+    def _exec_backup_local_to_remote(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
         """Execute a single local to remote backup for the Backup `backup` in
-        the Timeframe `timeframe`. Note that this function does not perform any
+        the Timeframe `timeframe`. The resulting backup backup will have
+        basename `backup_basename`. Note that this function does not perform any
         cleanup.
         """
         ...
 
     @abc.abstractmethod
-    def _exec_backup_remote_to_local(self, backup:bckp.Backup, timeframe:Timeframe):
+    def _exec_backup_remote_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
         """Execute a single remote to local backup for the Backup `backup` in
-        the Timeframe `timeframe`. Note that this function does not perform any
-        cleanup.
+        the Timeframe `timeframe`. The resulting backup will have basename
+        `backup_basename`. Note that this function does not perform any cleanup.
         """
         ...
 

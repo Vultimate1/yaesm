@@ -1,8 +1,5 @@
 import pytest
-import shutil
-import subprocess
 import os
-from pathlib import Path
 from datetime import datetime, timedelta
 from freezegun import freeze_time
 
@@ -30,13 +27,24 @@ def test_do_backup(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_
         assert len(backups) == timeframe.keep
         assert expected_backup_basenames[0:timeframe.keep] == backup_basenames
 
-def test_exec_backup_local_to_local(btrfs_backend, random_backup_generator, btrfs_fs):
-    backup = random_backup_generator(btrfs_fs, backup_type="local_to_local", dst_dir_base=btrfs_fs)
-    timeframe = backup.timeframes[0]
+def test_exec_backup_local_to_local(btrfs_backend, random_backup_generator, btrfs_fs_generator):
+    btrfs_fs1 = btrfs_fs_generator()
+    btrfs_fs2 = btrfs_fs_generator()
+
     with freeze_time("1999-05-13 23:59"):
-        backup_path = backup.dst_dir.joinpath(f"yaesm-{backup.name}-{timeframe.name}.1999_05_13_23:59")
+        backup_diff_fs = random_backup_generator(btrfs_fs1, backup_type="local_to_local", dst_dir_base=btrfs_fs2)
+        timeframe = backup_diff_fs.timeframes[0]
+        backup_path = backup_diff_fs.dst_dir.joinpath(f"yaesm-{backup_diff_fs.name}-{timeframe.name}.1999_05_13_23:59")
         assert not backup_path.is_dir()
-        btrfs_backend._exec_backup_local_to_local(backup, timeframe)
+        btrfs_backend._exec_backup_local_to_local(backup_diff_fs, bckp.backup_basename_now(backup_diff_fs, timeframe), timeframe)
+        assert backup_path.is_dir()
+
+    with freeze_time("1999-05-13 23:59"):
+        backup_same_fs = random_backup_generator(btrfs_fs1, backup_type="local_to_local", dst_dir_base=btrfs_fs1)
+        timeframe = backup_same_fs.timeframes[0]
+        backup_path = backup_same_fs.dst_dir.joinpath(f"yaesm-{backup_same_fs.name}-{timeframe.name}.1999_05_13_23:59")
+        assert not backup_path.is_dir()
+        btrfs_backend._exec_backup_local_to_local(backup_same_fs, bckp.backup_basename_now(backup_same_fs, timeframe), timeframe)
         assert backup_path.is_dir()
 
 def test_exec_backup_local_to_remote(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_access):
@@ -45,7 +53,7 @@ def test_exec_backup_local_to_remote(btrfs_backend, random_backup_generator, btr
     with freeze_time("1999-05-13 23:59"):
         backup_path = backup.dst_dir.path.joinpath(f"yaesm-{backup.name}-{timeframe.name}.1999_05_13_23:59")
         assert not backup_path.is_dir()
-        btrfs_backend._exec_backup_local_to_remote(backup, timeframe)
+        btrfs_backend._exec_backup_local_to_remote(backup, bckp.backup_basename_now(backup, timeframe), timeframe)
         assert backup_path.is_dir()
 
 def test_exec_backup_remote_to_local(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_access):
@@ -54,7 +62,7 @@ def test_exec_backup_remote_to_local(btrfs_backend, random_backup_generator, btr
     with freeze_time("1999-05-13 23:59"):
         backup_path = backup.dst_dir.joinpath(f"yaesm-{backup.name}-{timeframe.name}.1999_05_13_23:59")
         assert not backup_path.is_dir()
-        btrfs_backend._exec_backup_remote_to_local(backup, timeframe)
+        btrfs_backend._exec_backup_remote_to_local(backup, bckp.backup_basename_now(backup, timeframe), timeframe)
         assert backup_path.is_dir()
 
 def test_btrfs_take_and_delete_snapshot_local(btrfs_fs, path_generator):
