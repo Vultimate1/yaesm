@@ -2,6 +2,7 @@ import pytest
 import os
 from datetime import datetime, timedelta
 from freezegun import freeze_time
+from pathlib import Path
 
 import yaesm.backend.btrfsbackend as btrfs
 import yaesm.backup as bckp
@@ -123,6 +124,35 @@ def test_btrfs_take_and_delete_snapshot_remote(btrfs_fs, btrfs_sudo_access, ssht
     assert [snapshot] == deleted
     assert not snapshot.path.is_dir()
     assert 0 == len(os.listdir(snapshot.path.parent))
+
+def test_delete_backups_local(btrfs_backend, btrfs_fs, path_generator):
+    dst_dir1 = path_generator("test-snapshot", base_dir=btrfs_fs, mkdir=True)
+    dst_dir2 = path_generator("test-snapshot", base_dir=btrfs_fs, mkdir=True)
+    backup_basename = "yaesm-foo-backup-hourly.1999_05_13_23:59"
+    snapshot1 = dst_dir1.joinpath(backup_basename)
+    snapshot2 = dst_dir2.joinpath(backup_basename)
+    _, snapshot1 = btrfs._btrfs_take_snapshot_local(btrfs_fs, snapshot1)
+    _, snapshot2 = btrfs._btrfs_take_snapshot_local(btrfs_fs, snapshot2)
+    assert Path(snapshot1).is_dir()
+    assert Path(snapshot2).is_dir()
+    btrfs_backend._delete_backups_local(snapshot1, snapshot2)
+    assert not Path(snapshot1).is_dir()
+    assert not Path(snapshot2).is_dir()
+
+def test_delete_backups_remote(btrfs_backend, btrfs_fs, sshtarget, btrfs_sudo_access, path_generator):
+    src_dir = sshtarget.with_path(btrfs_fs)
+    dst_dir1 = sshtarget.with_path(path_generator("test-snapshot", base_dir=btrfs_fs, mkdir=True))
+    dst_dir2 = sshtarget.with_path(path_generator("test-snapshot", base_dir=btrfs_fs, mkdir=True))
+    backup_basename = "yaesm-foo-backup-hourly.1999_05_13_23:59"
+    snapshot1 = dst_dir1.with_path(dst_dir1.path.joinpath(backup_basename))
+    snapshot2 = dst_dir2.with_path(dst_dir2.path.joinpath(backup_basename))
+    _, snapshot1 = btrfs._btrfs_take_snapshot_remote(src_dir, snapshot1)
+    _, snapshot2 = btrfs._btrfs_take_snapshot_remote(src_dir, snapshot2)
+    assert snapshot1.path.is_dir()
+    assert snapshot2.path.is_dir()
+    btrfs_backend._delete_backups_remote(snapshot1, snapshot2)
+    assert not snapshot1.path.is_dir()
+    assert not snapshot2.path.is_dir()
 
 def test_btrfs_send_receive_local_to_local(btrfs_fs, path_generator):
     _, parent_snapshot = btrfs._btrfs_take_snapshot_local(btrfs_fs, path_generator("test-parent-snapshot", base_dir=btrfs_fs))
