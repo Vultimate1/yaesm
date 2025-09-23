@@ -21,6 +21,9 @@ class BtrfsBackend(BackendBase):
     commands 'btrfs subvolume snapshot', 'btrfs subvolume delete', 'btrfs send',
     and 'btrfs receive'.
     """
+    def name():
+        return "btrfs"
+
     def _exec_backup_local_to_local(self, src_dir:Path, backup_path:Path):
         returncode, _ = _btrfs_take_snapshot_local(src_dir, backup_path, check=False)
         if 0 != returncode:
@@ -46,9 +49,6 @@ class BtrfsBackend(BackendBase):
 
     def _delete_backups_remote(self, *backups):
         _btrfs_delete_subvolumes_remote(*backups)
-
-    def _configuration_schema(self):
-        return config.Schema.src_dir_dst_dir_schema()
 
 def _btrfs_take_snapshot_local(src_dir:Path, snapshot:Path, check=True):
     """Take a readonly local btrfs snapshot of 'src_dir', and place it at

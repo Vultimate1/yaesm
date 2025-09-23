@@ -7,6 +7,7 @@ import voluptuous as vlp
 from pathlib import Path
 
 from yaesm.backup import Backup
+from yaesm.backend.backendbase import BackendBase
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
 
@@ -57,6 +58,37 @@ class Schema():
         if not s or str(s)[0] != "/" or not Path(s).is_dir():
             raise vlp.Invalid(Schema.ErrMsg.LOCAL_DIR_INVALID)
         return Path(s)
+
+class BackendSchema(Schema):
+    """Schema for ensuring a valid backend was specified, and if so promoting the
+    backend name to an actual backend class.
+    """
+    class ErrMsg:
+        INVALID_BACKEND_NAME="Not a valid backend name"
+
+    @staticmethod
+    def schema() -> vlp.Schema:
+        """Schema that accepts a dict with a single key 'backend' with a value
+        that is a string dentoting a valid backend name (like 'btrfs' or 'rsync').
+
+        This schema Outputs a dict witht he backend name promoted to its
+        corresponding backend class.
+        """
+        return vlp.Schema(vlp.All({
+            vlp.Required("backend"): vlp.In(
+                [cls.name() for cls in BackendBase.backend_classes()],
+                msg=BackendSchema.ErrMsg.INVALID_BACKEND_NAME
+            )}, BackendSchema._dict_promote_backend_name_to_backend_class))
+
+    @staticmethod
+    def _dict_promote_backend_name_to_backend_class(d:dict) -> dict:
+        """Promotes a backend name to its cooresponding backend class."""
+        backend_name = d["backend"]
+        for backend_class in BackendBase.backend_classes():
+            if backend_name == backend_class.name():
+                d["backend"] = backend_class
+                break
+        return d
 
 class TimeframeSchema(Schema):
     """TODO"""

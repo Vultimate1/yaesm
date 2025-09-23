@@ -1,10 +1,6 @@
 import pytest
-import shutil
-import subprocess
 import os
-from pathlib import Path
 from datetime import datetime, timedelta
-import voluptuous as vlp
 from freezegun import freeze_time
 
 import yaesm.backend.btrfsbackend as btrfs
@@ -14,32 +10,6 @@ from yaesm.sshtarget import SSHTarget
 @pytest.fixture(scope="session")
 def btrfs_backend():
     return btrfs.BtrfsBackend()
-
-def test_configuration_schema(btrfs_backend, path_generator, sshtarget):
-    schema = btrfs_backend._configuration_schema()
-    src_dir = str(path_generator("yaesm-btrfs-testing-src-dir",mkdir=True))
-    dst_dir = str(path_generator("yaesm-btrfs-testing-dst-dir",mkdir=True))
-    ssh_config = str(path_generator("yaesm-btrfs-testing-ssh-config",touch=True))
-
-    r = schema({"src_dir": src_dir, "dst_dir": dst_dir})
-    assert r["src_dir"] == Path(src_dir)
-
-    assert schema({"src_dir": sshtarget.spec, "dst_dir": dst_dir, "ssh_key": sshtarget.key})
-    assert schema({"src_dir": src_dir, "dst_dir": sshtarget.spec, "ssh_key": sshtarget.key})
-    assert schema({"src_dir": src_dir, "dst_dir": sshtarget.spec, "ssh_key": sshtarget.key, "ssh_config": ssh_config})
-    assert schema({"src_dir": src_dir, "dst_dir": dst_dir, "ssh_key": sshtarget.key, "ssh_config": ssh_config})
-    with pytest.raises(vlp.Invalid):
-        schema({"src_dir": src_dir, "dst_dir": sshtarget.spec})
-    with pytest.raises(vlp.Invalid):
-        schema({"src_dir": src_dir, "dst_dir": path_generator("",mkdir=False), "ssh_key": sshtarget.key})
-    with pytest.raises(vlp.Invalid):
-        schema({"src_dir": sshtarget.spec, "dst_dir": sshtarget.spec, "ssh_key": sshtarget.key})
-    with pytest.raises(vlp.Invalid):
-        schema({"src_dir": sshtarget.spec, "dst_dir": sshtarget.spec})
-    with pytest.raises(vlp.Invalid):
-        schema({"src_dir": src_dir, "dst_dir": sshtarget.spec, "ssh_key": sshtarget.key, "ssh_config": path_generator("",touch=False)})
-    with pytest.raises(vlp.Invalid):
-        schema({"src_dir": src_dir, "dst_dir": dst_dir, "ssh_key": path_generator("",touch=False)})
 
 def test_do_backup(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_access, path_generator):
     for backup_type in ["local_to_local", "local_to_remote,", "remote_to_local"]:

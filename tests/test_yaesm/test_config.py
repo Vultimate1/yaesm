@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 
 import yaesm.config as config
+from yaesm.backend.backendbase import BackendBase
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, \
     WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
@@ -34,7 +35,7 @@ def test_Schema_is_file(path_generator):
         config.SrcDirDstDirSchema.is_file(tmpfile_relative_str)
     assert str(exc.value) == config.Schema.ErrMsg.LOCAL_FILE_INVALID
 
-def test_Schems_is_dir(path_generator):
+def test_Schema_is_dir(path_generator):
     tmpdir_str = str(path_generator("tmpdir", mkdir=True))
     assert config.SrcDirDstDirSchema.is_dir(tmpdir_str) == Path(tmpdir_str)
     assert config.SrcDirDstDirSchema.is_dir(Path(tmpdir_str)) == Path(tmpdir_str)
@@ -50,6 +51,43 @@ def test_Schems_is_dir(path_generator):
         assert Path(tmpdir_relative_str).is_dir()
         config.SrcDirDstDirSchema.is_dir(tmpdir_relative_str)
     assert str(exc.value) == config.Schema.ErrMsg.LOCAL_DIR_INVALID
+
+def test_BackendSchema_schema():
+    schema = config.BackendSchema.schema()
+
+    data = {"backend": "btrfs"}
+    data = schema(data)
+    assert issubclass(data["backend"], BackendBase)
+    assert len(data) == 1
+
+    with pytest.raises(vlp.Invalid) as exc:
+        data = {"backend": "THISISNOTAVALIDBACKENDNAME"}
+        schema(data)
+    assert re.match("^" + config.BackendSchema.ErrMsg.INVALID_BACKEND_NAME, str(exc.value))
+
+    with pytest.raises(vlp.Invalid) as exc:
+        data = {"INVALID_KEY": "btrfs"}
+        schema(data)
+    assert re.match("extra keys not allowed @", str(exc.value))
+
+    with pytest.raises(vlp.Invalid) as exc:
+        data = {"backend": "btrfs", "INVALID_KEY": "FOO"}
+        schema(data)
+    assert re.match("extra keys not allowed @", str(exc.value))
+
+    with pytest.raises(vlp.Invalid) as exc:
+        data = {}
+        schema(data)
+    assert re.match("required key not provided @", str(exc.value))
+
+def test_BackendSchema_dict_promote_backend_name_to_backend_class():
+    data = {"backend": "btrfs"}
+    data = config.BackendSchema._dict_promote_backend_name_to_backend_class(data)
+    assert issubclass(data["backend"], BackendBase)
+    assert len(data) == 1
+    with pytest.raises(KeyError):
+        data = {"FOO": "BAR", "BAZ": "QUUX"}
+        config.BackendSchema._dict_promote_backend_name_to_backend_class(data)
 
 def test_SrcDirDstDirSchema_is_sshtarget_spec():
     sshtarget_spec = "ssh://p22:root@localhost:/"
