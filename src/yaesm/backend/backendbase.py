@@ -48,7 +48,7 @@ class BackendBase(abc.ABC):
     @staticmethod
     @abc.abstractmethod
     def name() -> str:
-        """Function to return the backend name as as string ('btrfs', 'rsync', etc)."""
+        """Function to return the backend name as a string ('btrfs', 'rsync', etc)."""
         ...
 
     @staticmethod
