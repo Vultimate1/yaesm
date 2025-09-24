@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timedelta
 from freezegun import freeze_time
 from pathlib import Path
+import subprocess
 
 import yaesm.backend.btrfsbackend as btrfs
 import yaesm.backup as bckp
@@ -93,6 +94,11 @@ def test_btrfs_take_and_delete_snapshot_local(btrfs_fs, path_generator):
     assert [snapshot] == deleted
     assert not snapshot.is_dir()
     assert 0 == len(os.listdir(dst_dir.parent))
+    bad_src_dir = path_generator("bad-src-dir", mkdir=False)
+    with pytest.raises(subprocess.CalledProcessError):
+        btrfs._btrfs_take_snapshot_local(bad_src_dir, "/foo")
+    with pytest.raises(subprocess.CalledProcessError):
+        btrfs._btrfs_delete_subvolumes_local(bad_src_dir, "/foo")
 
 def test_btrfs_take_and_delete_snapshot_remote(btrfs_fs, btrfs_sudo_access, sshtarget, path_generator):
     src_dir = sshtarget.with_path(btrfs_fs)
@@ -207,6 +213,12 @@ def test_btrfs_bootstrap_local_to_local(btrfs_fs, path_generator):
     assert not dst_bootstrap.is_dir()
     bootstrap_snapshot = btrfs._btrfs_bootstrap_local_to_local(src_dir, dst_dir)
     assert dst_bootstrap.is_dir()
+    btrfs._btrfs_delete_subvolumes_local(bootstrap_snapshot)
+    assert not bootstrap_snapshot.is_dir()
+    btrfs._btrfs_bootstrap_local_to_local(src_dir, dst_dir)
+    assert bootstrap_snapshot.is_dir()
+    btrfs._btrfs_bootstrap_local_to_local(src_dir, dst_dir)
+    assert bootstrap_snapshot.is_dir()
 
 def test_btrfs_bootstrap_local_to_remote(btrfs_fs, btrfs_sudo_access, sshtarget, path_generator):
     src_dir = btrfs_fs
@@ -220,6 +232,12 @@ def test_btrfs_bootstrap_local_to_remote(btrfs_fs, btrfs_sudo_access, sshtarget,
     assert not dst_bootstrap.path.is_dir()
     bootstrap_snapshot = btrfs._btrfs_bootstrap_local_to_remote(src_dir, dst_dir)
     assert dst_bootstrap.path.is_dir()
+    btrfs._btrfs_delete_subvolumes_local(bootstrap_snapshot)
+    assert not bootstrap_snapshot.is_dir()
+    btrfs._btrfs_bootstrap_local_to_remote(src_dir, dst_dir)
+    assert bootstrap_snapshot.is_dir()
+    btrfs._btrfs_bootstrap_local_to_remote(src_dir, dst_dir)
+    assert bootstrap_snapshot.is_dir()
 
 def test_btrfs_bootstrap_remote_to_local(btrfs_fs, btrfs_sudo_access, sshtarget, path_generator):
     src_dir = sshtarget.with_path(btrfs_fs)
@@ -233,3 +251,9 @@ def test_btrfs_bootstrap_remote_to_local(btrfs_fs, btrfs_sudo_access, sshtarget,
     assert not dst_bootstrap.is_dir()
     bootstrap_snapshot = btrfs._btrfs_bootstrap_remote_to_local(src_dir, dst_dir)
     assert dst_bootstrap.is_dir()
+    btrfs._btrfs_delete_subvolumes_remote(bootstrap_snapshot)
+    assert not bootstrap_snapshot.path.is_dir()
+    btrfs._btrfs_bootstrap_remote_to_local(src_dir, dst_dir)
+    assert bootstrap_snapshot.path.is_dir()
+    btrfs._btrfs_bootstrap_remote_to_local(src_dir, dst_dir)
+    assert bootstrap_snapshot.path.is_dir()
