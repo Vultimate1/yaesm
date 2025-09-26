@@ -91,7 +91,7 @@ class BackendSchema(Schema):
         return d
 
 class TimeframeSchema(Schema):
-    """TODO"""
+    """Voluptuous schema and validator for timeframe configuration."""
     class ErrMsg:
         SETTING_MISSING = "A setting required by one of your timeframe types is missing"
         TIME_MALFORMED = "Not a valid time specification"
@@ -99,15 +99,28 @@ class TimeframeSchema(Schema):
         MINUTE_OUT_OF_RANGE = "Minute portion of time specification not within range [0, 59]"
 
     @staticmethod
-    def get_days_in_year(year):
-        """Returns 366 if `year` is a leap year, and 365 otherwise."""
-        if year % 4 != 0 or (year % 100 == 0 and year % 400 != 0):
-            return 365
-        return 366
-
-    @staticmethod
     def timeframe_schema() -> vlp.Schema:
-        """Voluptuous Schema to validate timeframe configs."""
+        """Voluptuous Schema to validate timeframe configs.
+
+        This Schema is meant to be applied to a `dict` containing the freshly parsed values
+        for the backup. This returns a `dict` which preserves the keys, but will modify any
+        '*_times' settings to fit the format expected by the `Scheduler`.
+
+        This schema implements the following checks:
+            * 'timeframes' is a `list` and contains only valid timeframe types
+            * for every type listed in 'timeframes', check that the required settings have been
+              provided
+            * all '*_keep' settings are an `int` and no less than 0
+            * 'hourly_minutes' (if given) contains `int`'s within the range of 0-59, inclusive
+            * all '*_times' settings contain correctly formatted timespecs (`hh:mm`), each with
+              valid hour and minute part (this tool uses military time)
+            * 'weekly_days' (if given) contains only valid weekdays (not case sensitive)
+            * 'monthly_days' (if given) contains only days found within *any* month, that is,
+              1-31. Be advised that months that do *not* contain a given day are skipped. For
+              example: a timeframe with a month day of 29 only makes a backup in February on
+              leap years.
+            * 'yearly_days' (if given) contains a valid day within the range 1-365 (TODO: Add
+              support for leap years with 366 days.)"""
         return vlp.Schema(
             vlp.All(
                 {vlp.Required("timeframes"): vlp.All(list,
@@ -121,17 +134,20 @@ class TimeframeSchema(Schema):
                    "yearly_times"): vlp.All(TimeframeSchema.are_valid_timespecs,
                                             TimeframeSchema.are_valid_hours,
                                             TimeframeSchema.are_valid_minutes),
-                  "weekly_days": ["monday", "tuesday", "wednesday", "thursday", "friday",
-                                 "saturday", "sunday"],
+                  "weekly_days": vlp.All(vlp.Lower,
+                                         ["monday", "tuesday", "wednesday", "thursday", "friday",
+                                          "saturday", "sunday"]),
                   "monthly_days": vlp.All(int, vlp.Range(min=1, max=31)),
                   "yearly_days": vlp.All(int,
                                          vlp.Range(min=1,
-                                                   max=TimeframeSchema.get_days_in_year(
-                                                       datetime.now().year)))}))
+                                                   max=365))}))
 
     @staticmethod
     def has_required_settings(spec: dict) -> dict:
-        """TODO"""
+        """Takes the `spec` passed to the schema.
+        
+        Raises a `voluptuous.Invalid` if not all the settings for the given timeframe
+        types are present."""
         required_settings = {
             "5minute": ["5minute_keep"],
             "hourly": ["hourly_keep", "hourly_minutes"],
@@ -150,7 +166,11 @@ class TimeframeSchema(Schema):
 
     @staticmethod
     def are_valid_timespecs(spec: list[str]) -> list[list[int, int]]:
-        """TODO"""
+        """Takes a list of supposed timespecs. Returns a list of hour:minute pairings if
+        successful.
+
+        Raises `voluptuous.Invalid` if a timespec is formatted incorrectly, or if the minute or
+        hour parts cannot be converted to `int`."""
         res = []
         for timespec in spec:
             timespec_re = re.compile("([0-9]{2}):([0-9]{2})")
@@ -163,7 +183,9 @@ class TimeframeSchema(Schema):
 
     @staticmethod
     def are_valid_hours(spec: list[list[int, int]]) -> list[list[int, int]]:
-        """TODO"""
+        """Takes a list of hour:minute pairings.
+        
+        Raises `voluptuous.Invalid` if the hour part is not within the accepted range."""
         for time in spec:
             if time[0] < 0 or time[0] > 23:
                 raise vlp.Invalid(TimeframeSchema.ErrMsg.HOUR_OUT_OF_RANGE
@@ -172,7 +194,9 @@ class TimeframeSchema(Schema):
 
     @staticmethod
     def are_valid_minutes(spec: list[list[int, int]]) -> list[list[int, int]]:
-        """TODO"""
+        """Takes a list of hour:minute pairings.
+
+        Raises `voluptuous.Invalid` if the minute part is not within the accepted range."""
         for time in spec:
             if time[1] < 0 or time[1] > 59:
                 raise vlp.Invalid(TimeframeSchema.ErrMsg.MINUTE_OUT_OF_RANGE
