@@ -1,10 +1,10 @@
 """src/yaesm/config.py"""
 from typing import final
-from datetime import datetime
 import re
+from pathlib import Path
+
 import yaml
 import voluptuous as vlp
-from pathlib import Path
 
 from yaesm.backup import Backup
 import yaesm.backend.backendbase as backendbase
@@ -92,6 +92,7 @@ class BackendSchema(Schema):
 
 class TimeframeSchema(Schema):
     """Voluptuous schema and validator for timeframe configuration."""
+
     class ErrMsg:
         SETTING_MISSING = "A setting required by one of your timeframe types is missing"
         TIME_MALFORMED = "Not a valid time specification"
