@@ -106,8 +106,8 @@ class TimeframeSchema(Schema):
 
         This Schema is meant to be applied to a `dict` containing the freshly parsed values
         for the backup. This returns a `dict` which preserves the keys, but will modify any
-        '*_times' settings to fit the format expected by the `Scheduler`. Assuming all prior
-        tests pass, the ''timeframes' key will have its value replaced with a list of
+        '*_times' settings to a pair of `int` representing the hour and minute. Assuming all
+        prior tests pass, the ''timeframes' key will have its value replaced with a list of
         `Timeframe`.
 
         This schema implements the following checks:
