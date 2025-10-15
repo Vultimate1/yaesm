@@ -9,7 +9,7 @@ import voluptuous as vlp
 from yaesm.backup import Backup
 import yaesm.backend.backendbase as backendbase
 from yaesm.sshtarget import SSHTarget
-from yaesm.timeframe import Timeframe
+from yaesm.timeframe import *
 
 class Schema():
     """Base class for all yaesm configuration schema classes."""
@@ -105,7 +105,9 @@ class TimeframeSchema(Schema):
 
         This Schema is meant to be applied to a `dict` containing the freshly parsed values
         for the backup. This returns a `dict` which preserves the keys, but will modify any
-        '*_times' settings to fit the format expected by the `Scheduler`.
+        '*_times' settings to fit the format expected by the `Scheduler`. Assuming all prior
+        tests pass, the ''timeframes' key will have its value replaced with a list of
+        `Timeframe`.
 
         This schema implements the following checks:
             * 'timeframes' is a `list` and contains only valid timeframe types
@@ -139,9 +141,8 @@ class TimeframeSchema(Schema):
                                          ["monday", "tuesday", "wednesday", "thursday", "friday",
                                           "saturday", "sunday"]),
                   "monthly_days": vlp.All(int, vlp.Range(min=1, max=31)),
-                  "yearly_days": vlp.All(int,
-                                         vlp.Range(min=1,
-                                                   max=365))}))
+                  "yearly_days": vlp.All(int, vlp.Range(min=1, max=365))},
+                TimeframeSchema._promote_timeframes_spec_to_list_of_timeframes))
 
     @staticmethod
     def has_required_settings(spec: dict) -> dict:
@@ -203,6 +204,30 @@ class TimeframeSchema(Schema):
                 raise vlp.Invalid(TimeframeSchema.ErrMsg.MINUTE_OUT_OF_RANGE
                                   + f"\n\tGot {spec}")
         return spec
+
+    @staticmethod
+    def _construct_timeframes(spec: str, timeframe_type) -> Timeframe:
+        """Returns a number of timeframes of `timeframe_type`."""
+        settings = timeframe_type.required_config_settings()
+        return timeframe_type(*[spec[s] for s in settings])
+
+    @staticmethod
+    def _promote_timeframes_spec_to_list_of_timeframes(spec: dict) -> list[Timeframe]:
+        """Maintains the 'timeframes' key, but replaces its value with a list of
+        `yaesm.Timeframe`.
+
+        The value paired with 'timeframes' in `spec` is assumed to be entirely valid."""
+        timeframe_dict = {"5minute": FiveMinuteTimeframe,
+                          "hourly": HourlyTimeframe,
+                          "daily": DailyTimeframe,
+                          "weekly": WeeklyTimeframe,
+                          "monthly": MonthlyTimeframe,
+                          "yearly": YearlyTimeframe}
+        timeframes = []
+        for timeframe_name in spec["timeframes"]:
+            result = TimeframeSchema._construct_timeframes(spec, timeframe_dict[timeframe_name])
+            timeframes.append(result)
+        return timeframes
 
 
 class SrcDirDstDirSchema(Schema):
