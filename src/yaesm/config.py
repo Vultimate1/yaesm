@@ -378,36 +378,6 @@ class SrcDirDstDirSchema(Schema):
 
         return d
 
-def construct_timeframes(backup_spec, timeframe_type) -> list:
-    """Returns a number of timeframes of `timeframe_type`."""
-    result = []
-    # validity_checks = {"keep" : Timeframe.valid_keep,
-    #                    "minutes" : Timeframe.valid_minute,
-    #                    "times" : Timeframe.valid_timespec,
-    #                    "weekly_days" : Timeframe.valid_weekday,
-    #                    "monthly_days" : Timeframe.valid_monthday,
-    #                    "yearly_days" : Timeframe.valid_yearday}
-
-    # def check_validity(func, s):
-    #     s = s if isinstance(s, list) else [s]
-    #     for val in s:
-    #         if not func(val):
-    #             result["bad_specs"].append(BadSpec(setting, val))
-
-def construct_timeframes(backup_spec, timeframe_type) -> Timeframe:
-    """Returns a number of timeframes of `timeframe_type`."""
-    settings = timeframe_type.required_config_settings()
-    return timeframe_type(*[backup_spec[s] for s in settings])
-
-def handle_timeframes(backup_spec) -> list:
-    """Returns a list containing the successfully instantiated timeframes."""
-    timeframes = []
-    timeframe_dict = dict(zip(Timeframe.tframe_types(names=True), Timeframe.tframe_types()))
-    for timeframe in backup_spec["timeframes"]:
-        result = construct_timeframes(backup_spec, timeframe_dict[timeframe])
-        timeframes.append(result)
-
-    return timeframes
 
 def get_directories(backup_spec, target_setting_names) -> tuple[str | SSHTarget, str | SSHTarget]:
     """Returns the source and destination directories as a tuple, in that order.
@@ -478,56 +448,6 @@ def parse_file(config_path: str) -> list:
 #     missing = [k for k in keys if k not in d]
 #     l.extend(missing)
 #     return len(missing)
-
-# def construct_timeframes(backup_spec, timeframe_type) -> dict:
-#     """Returns a dictionary with 3 keys: `"timeframes"`, `"bad_specs"`, and
-#     `"missing_specs"`"""
-#     result = {"timeframes": [], "missing_specs": [], "bad_specs": []}
-#     validity_checks = {"keep" : Timeframe.valid_keep,
-#                        "minutes" : Timeframe.valid_minute,
-#                        "times" : Timeframe.valid_timespec,
-#                        "weekly_days" : Timeframe.valid_weekday,
-#                        "monthly_days" : Timeframe.valid_monthday,
-#                        "yearly_days" : Timeframe.valid_yearday}
-
-#     def check_validity(func, s):
-#         s = s if isinstance(s, list) else [s]
-#         for val in s:
-#             if not func(val):
-#                 result["bad_specs"].append(BadSpec(setting, val))
-
-#     settings = timeframe_type.required_config_settings()
-#     if append_missing_keys(result["missing_specs"], backup_spec, settings) == 0:
-#         for setting in settings:
-#             setting_type = setting[setting.rfind("_") + 1:]
-#             if setting_type == "days":
-#                 check_validity(validity_checks[setting], backup_spec[setting])
-#             else:
-#                 check_validity(validity_checks[setting_type], backup_spec[setting])
-#         result["timeframes"].append(timeframe_type(*[backup_spec[s] for s in settings]))
-
-#     return result
-
-# def handle_timeframes(backup_spec) -> list:
-#     """Returns 3 lists containing the successfully instantiated timeframes, missing
-#     specifications and bad specifications, in that order."""
-#     timeframes = []
-#     bad_specs = []
-#     missing_specs = []
-#     if type(backup_spec["timeframes"]) is list:
-#         timeframe_dict = dict(zip(Timeframe.tframe_types(names=True), Timeframe.tframe_types()))
-#         for timeframe in backup_spec["timeframes"]:
-#             try:
-#                 result = construct_timeframes(backup_spec, timeframe_dict[timeframe])
-#                 timeframes.extend(result["timeframes"])
-#                 missing_specs.extend(result["missing_specs"])
-#                 bad_specs.extend(result["bad_specs"])
-#             except KeyError:
-#                 bad_specs.append(BadSpec("timeframes", timeframe))
-#     else:
-#         bad_specs.append(BadSpec("timeframes", type(backup_spec["timeframes"])))
-
-#     return timeframes, missing_specs, bad_specs
 
 # def construct_backup(backup_name, backup_spec, timeframes):
 #     """Returns a result code and the type of data corresponding to said code.
