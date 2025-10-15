@@ -6,10 +6,11 @@ from pathlib import Path
 import yaml
 import voluptuous as vlp
 
+from yaesm.backend import backendbase
 from yaesm.backup import Backup
-import yaesm.backend.backendbase as backendbase
 from yaesm.sshtarget import SSHTarget
-from yaesm.timeframe import *
+from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, \
+    WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
 
 class Schema():
     """Base class for all yaesm configuration schema classes."""
