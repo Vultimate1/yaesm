@@ -65,15 +65,8 @@ def test_BackendSchema_schema():
         schema(data)
     assert re.match("^" + config.BackendSchema.ErrMsg.INVALID_BACKEND_NAME, str(exc.value))
 
-    with pytest.raises(vlp.Invalid) as exc:
-        data = {"INVALID_KEY": "btrfs"}
-        schema(data)
-    assert re.match("extra keys not allowed @", str(exc.value))
-
-    with pytest.raises(vlp.Invalid) as exc:
-        data = {"backend": "btrfs", "INVALID_KEY": "FOO"}
-        schema(data)
-    assert re.match("extra keys not allowed @", str(exc.value))
+    data = {"backend": "btrfs", "INVALID_KEY": "FOO"}
+    schema(data)
 
     with pytest.raises(vlp.Invalid) as exc:
         data = {}
@@ -228,10 +221,8 @@ def test_SrcDirDstDirSchema_schema(path_generator):
     assert isinstance(data["src_dir"], SSHTarget)
     assert data["ssh_key"] == Path(key)
 
-    with pytest.raises(vlp.Invalid) as exc:
-        data = {"foo": "bar", "src_dir": src_dir_str, "dst_dir": dst_dir_str}
-        schema(data)
-    assert re.match("extra keys not allowed", str(exc.value))
+    data = {"foo": "bar", "src_dir": src_dir_str, "dst_dir": dst_dir_str}
+    schema(data) # doesn't raise error for extra keys
 
     with pytest.raises(vlp.Invalid) as exc:
         data = {"src_dir": src_dir_str}

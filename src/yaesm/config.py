@@ -79,7 +79,7 @@ class BackendSchema(Schema):
             vlp.Required("backend"): vlp.In(
                 [cls.name() for cls in backendbase.BackendBase.backend_classes()],
                 msg=BackendSchema.ErrMsg.INVALID_BACKEND_NAME
-            )}, BackendSchema._dict_promote_backend_name_to_backend_class))
+            )}, BackendSchema._dict_promote_backend_name_to_backend_class), extra=vlp.ALLOW_EXTRA)
 
     @staticmethod
     def _dict_promote_backend_name_to_backend_class(d:dict) -> dict:
@@ -143,7 +143,7 @@ class TimeframeSchema(Schema):
                                           "saturday", "sunday"]),
                   "monthly_days": vlp.All(int, vlp.Range(min=1, max=31)),
                   "yearly_days": vlp.All(int, vlp.Range(min=1, max=365))},
-                TimeframeSchema._promote_timeframes_spec_to_list_of_timeframes))
+                TimeframeSchema._promote_timeframes_spec_to_list_of_timeframes), extra=vlp.ALLOW_EXTRA)
 
     @staticmethod
     def has_required_settings(spec: dict) -> dict:
@@ -277,7 +277,7 @@ class SrcDirDstDirSchema(Schema):
                 SrcDirDstDirSchema._dict_ssh_key_required_if_ssh_target,
                 SrcDirDstDirSchema._dict_promote_ssh_target_spec_to_ssh_target
             ),
-            required=True)
+            extra=vlp.ALLOW_EXTRA)
 
     @staticmethod
     def schema_extra() -> vlp.Schema:
