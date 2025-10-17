@@ -101,7 +101,7 @@ class TimeframeSchema(Schema):
         MINUTE_OUT_OF_RANGE = "Minute portion of time specification not within range [0, 59]"
 
     @staticmethod
-    def timeframe_schema() -> vlp.Schema:
+    def schema() -> vlp.Schema:
         """Voluptuous Schema to validate timeframe configs.
 
         This Schema is meant to be applied to a `dict` containing the freshly parsed values
