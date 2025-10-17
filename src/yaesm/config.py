@@ -28,10 +28,9 @@ class Schema():
 
     @staticmethod
     def schema_extra() -> vlp.Schema:
-        """Extra schema only be run in some circumstances. More complicated
-        validation (like testing SSH connectivity) should probably happen in this
-        schema. This schema should only be applied to data after first applying
-        the 'base_schema'
+        """Extra schema is only run in some circumstances. More complicated
+        validation (like testing SSH connectivity) should happen in this schema.
+        This schema should only be applied to data after first applying the 'base_schema'.
         """
         return Schema.schema_empty()
 
