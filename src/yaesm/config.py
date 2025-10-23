@@ -159,8 +159,8 @@ class TimeframeSchema(Schema):
             "yearly": ["yearly_keep", "yearly_times", "yearly_days"]
         }
         for tf_type in spec["timeframes"]:
-            missing_settings = [setting not in spec.keys()
-                                for setting in required_settings[tf_type]]
+            missing_settings = list(filter(lambda s: s not in spec.keys(),
+                                           required_settings[tf_type]))
             if len(missing_settings) > 0:
                 raise vlp.Invalid(TimeframeSchema.ErrMsg.SETTING_MISSING
                                   + f"\n\t{tf_type}: {missing_settings}")
