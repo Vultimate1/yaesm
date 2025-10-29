@@ -169,7 +169,8 @@ class TimeframeSchema(Schema):
     @staticmethod
     def are_valid_timespecs(spec: list[str]) -> list[list[int, int]]:
         """Takes a list of supposed timespecs. Returns a list of hour:minute pairings if
-        successful.
+        successful. This does NOT check if the hour and minute parts are valid, use
+        `are_valid_hours` and `are_valid_minutes` to do this.
 
         Raises `voluptuous.Invalid` if a timespec is formatted incorrectly, or if the minute or
         hour parts cannot be converted to `int`."""
