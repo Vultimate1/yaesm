@@ -192,7 +192,7 @@ class TimeframeSchema(Schema):
         for time in spec:
             if time[0] < 0 or time[0] > 23:
                 raise vlp.Invalid(TimeframeSchema.ErrMsg.HOUR_OUT_OF_RANGE
-                                  + f"\n\tGot {spec}")
+                                  + f"\n\tGot {time}")
         return spec
 
     @staticmethod
@@ -203,7 +203,7 @@ class TimeframeSchema(Schema):
         for time in spec:
             if time[1] < 0 or time[1] > 59:
                 raise vlp.Invalid(TimeframeSchema.ErrMsg.MINUTE_OUT_OF_RANGE
-                                  + f"\n\tGot {spec}")
+                                  + f"\n\tGot {time}")
         return spec
 
     @staticmethod
