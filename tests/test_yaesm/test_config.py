@@ -82,6 +82,62 @@ def test_BackendSchema_dict_promote_backend_name_to_backend_class():
         data = {"FOO": "BAR", "BAZ": "QUUX"}
         config.BackendSchema._dict_promote_backend_name_to_backend_class(data)
 
+def test_TimeframeSchema_has_required_settings():
+    data = {"timeframes": ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]}
+    setting_keys = ["5minute_keep", "hourly_keep", "hourly_minutes", "daily_keep", "daily_times",
+                    "weekly_keep", "weekly_times", "weekly_days", "monthly_keep", "monthly_times",
+                    "monthly_days", "yearly_keep", "yearly_times", "yearly_days"]
+    # The value is irrelevant for this method
+    data.update(dict.fromkeys(setting_keys))
+    assert config.TimeframeSchema.has_required_settings(data) == data
+
+    data.pop("hourly_keep")
+    with pytest.raises(vlp.Invalid) as exc:
+        config.TimeframeSchema.has_required_settings(data)
+    assert str(exc.value) == config.TimeframeSchema.ErrMsg.SETTING_MISSING \
+        + "\n\thourly: ['hourly_keep']"
+
+    # For the time being, this will only return the first error.
+    data.pop("weekly_times")
+    with pytest.raises(vlp.Invalid) as exc:
+        config.TimeframeSchema.has_required_settings(data)
+    assert str(exc.value) == config.TimeframeSchema.ErrMsg.SETTING_MISSING \
+        + "\n\thourly: ['hourly_keep']"
+
+def test_TimeframeSchema_are_valid_timespecs():
+    valid_specs = ["12:34", "23:59", "00:00", "99:99"]
+    valid_expected = [[12, 34], [23, 59], [0, 0], [99, 99]]
+    assert config.TimeframeSchema.are_valid_timespecs(valid_specs) == valid_expected
+
+    invalid_specs = ["1:23", "12:3", "ab:cd", "1234", ""]
+    for spec in invalid_specs:
+        with pytest.raises(vlp.Invalid) as exc:
+            config.TimeframeSchema.are_valid_timespecs([spec])
+        assert str(exc.value) == config.TimeframeSchema.ErrMsg.TIME_MALFORMED \
+            + f"\n\tExpected format 'hh:mm', got {spec}"
+
+def test_TimeframeSchema_are_valid_hours():
+    valid_specs = [[12, 34], [23, 59], [0, 0], [3, -1]]
+    assert config.TimeframeSchema.are_valid_hours(valid_specs) == valid_specs
+
+    invalid_specs = [[-1, 30], [24, 30]]
+    for spec in invalid_specs:
+        with pytest.raises(vlp.Invalid) as exc:
+            config.TimeframeSchema.are_valid_hours([spec])
+        assert str(exc.value) == config.TimeframeSchema.ErrMsg.HOUR_OUT_OF_RANGE \
+            + f"\n\tGot {spec}"
+
+def test_TimeframeSchema_are_valid_minutes():
+    valid_specs = [[12, 34], [23, 59], [0, 0], [-1, 30]]
+    assert config.TimeframeSchema.are_valid_minutes(valid_specs) == valid_specs
+
+    invalid_specs = [[3, -1], [3, 60]]
+    for spec in invalid_specs:
+        with pytest.raises(vlp.Invalid) as exc:
+            config.TimeframeSchema.are_valid_minutes([spec])
+        assert str(exc.value) == config.TimeframeSchema.ErrMsg.MINUTE_OUT_OF_RANGE \
+            + f"\n\tGot {spec}"
+
 def test_SrcDirDstDirSchema_is_sshtarget_spec():
     sshtarget_spec = "ssh://p22:root@localhost:/"
     assert config.SrcDirDstDirSchema._is_sshtarget_spec(sshtarget_spec) == sshtarget_spec
