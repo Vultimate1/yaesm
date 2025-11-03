@@ -99,6 +99,15 @@ class TimeframeSchema(Schema):
         HOUR_OUT_OF_RANGE = "Hour portion of time specification not within range [0, 23]"
         MINUTE_OUT_OF_RANGE = "Minute portion of time specification not within range [0, 59]"
 
+    REQUIRED_SETTINGS = {
+        "5minute": ["5minute_keep"],
+        "hourly": ["hourly_keep", "hourly_minutes"],
+        "daily": ["daily_keep", "daily_times"],
+        "weekly": ["weekly_keep", "weekly_times", "weekly_days"],
+        "monthly": ["monthly_keep", "monthly_times", "monthly_days"],
+        "yearly": ["yearly_keep", "yearly_times", "yearly_days"]
+    }
+
     @staticmethod
     def schema() -> vlp.Schema:
         """Voluptuous Schema to validate timeframe configs.
@@ -142,7 +151,8 @@ class TimeframeSchema(Schema):
                                           "saturday", "sunday"]),
                   "monthly_days": vlp.All(int, vlp.Range(min=1, max=31)),
                   "yearly_days": vlp.All(int, vlp.Range(min=1, max=365))},
-                TimeframeSchema._promote_timeframes_spec_to_list_of_timeframes), extra=vlp.ALLOW_EXTRA)
+                TimeframeSchema._promote_timeframes_spec_to_list_of_timeframes),
+                extra=vlp.ALLOW_EXTRA)
 
     @staticmethod
     def has_required_settings(spec: dict) -> dict:
@@ -150,17 +160,9 @@ class TimeframeSchema(Schema):
         
         Raises a `voluptuous.Invalid` if not all the settings for the given timeframe
         types are present."""
-        required_settings = {
-            "5minute": ["5minute_keep"],
-            "hourly": ["hourly_keep", "hourly_minutes"],
-            "daily": ["daily_keep", "daily_times"],
-            "weekly": ["weekly_keep", "weekly_times", "weekly_days"],
-            "monthly": ["monthly_keep", "monthly_times", "monthly_days"],
-            "yearly": ["yearly_keep", "yearly_times", "yearly_days"]
-        }
         for tf_type in spec["timeframes"]:
             missing_settings = list(filter(lambda s: s not in spec.keys(),
-                                           required_settings[tf_type]))
+                                           TimeframeSchema.REQUIRED_SETTINGS[tf_type]))
             if len(missing_settings) > 0:
                 raise vlp.Invalid(TimeframeSchema.ErrMsg.SETTING_MISSING
                                   + f"\n\t{tf_type}: {missing_settings}")
@@ -207,10 +209,10 @@ class TimeframeSchema(Schema):
         return spec
 
     @staticmethod
-    def _construct_timeframes(spec: str, timeframe_type) -> Timeframe:
+    def _construct_timeframes(spec: dict, tf_name: str, tf_type: Timeframe) -> Timeframe:
         """Returns a number of timeframes of `timeframe_type`."""
-        settings = timeframe_type.required_config_settings()
-        return timeframe_type(*[spec[s] for s in settings])
+        settings = TimeframeSchema.REQUIRED_SETTINGS[tf_name]
+        return tf_type(*[spec[s] for s in settings])
 
     @staticmethod
     def _promote_timeframes_spec_to_list_of_timeframes(spec: dict) -> list[Timeframe]:
@@ -226,7 +228,9 @@ class TimeframeSchema(Schema):
                           "yearly": YearlyTimeframe}
         timeframes = []
         for timeframe_name in spec["timeframes"]:
-            result = TimeframeSchema._construct_timeframes(spec, timeframe_dict[timeframe_name])
+            result = TimeframeSchema._construct_timeframes(spec,
+                                                           timeframe_name,
+                                                           timeframe_dict[timeframe_name])
             timeframes.append(result)
         return timeframes
 
