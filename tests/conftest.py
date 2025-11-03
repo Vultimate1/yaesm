@@ -370,3 +370,45 @@ def btrfs_sudo_access(yaesm_test_users_group, tmp_path_factory):
             for rule in sudoers_rules:
                 f.write(rule + "\n")
     return True
+
+@pytest.fixture
+def example_valid_config_spec():
+    """See example config "test_config.yaml" for notes."""
+    return {
+        "root_backup": {
+            "backend": "rsync",
+            "src_dir": "/",
+            "dst_dir": "/mnt/backupdrive/yaesm/root_backup",
+            "exclude": ["~/.cache"],
+            "exclude_from": "somefile.txt",
+            "timeframes": ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"],
+            "5minute_keep": 24,
+            "hourly_minutes": [0, 30],
+            "hourly_keep": 48,
+            "daily_times": ["23:59", "11:59"],
+            "daily_keep": 720,
+            "weekly_keep": 21,
+            "weekly_days": ["monday", "friday", "sunday"],
+            "weekly_times": ["23:59", "05:30"],
+            "monthly_keep": 100,
+            "monthly_days": [1, 7, 30],
+            "monthly_times": ["23:59"],
+            "yearly_keep": 5,
+            "yearly_days": [1, 129],
+            "yearly_times": ["23:59"]},
+        "home_backup": {
+            "backend": "btrfs",
+            "src_dir": "/home/fred",
+            "dst_dir": "fred@192.168.1.73:/yaesm/fred_laptop_backups",
+            "ssh_key": "/home/fred/.ssh/id_rsa",
+            "ssh_config": "/etc/ssh/some_other_config",
+            "timeframes": ["daily"],
+            "daily_times": ["23:59"],
+            "daily_keep": 365},
+        "database_snapshot": {
+            "backend": "zfs",
+            "src_dataset": "/important-database",
+            "dst_dataset": "/.snapshots/yaesm/important-database",
+            "timeframes": ["hourly"],
+            "hourly_keep": 10000000000,
+            "hourly_minutes": [0]}}

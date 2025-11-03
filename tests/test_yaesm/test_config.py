@@ -138,6 +138,9 @@ def test_TimeframeSchema_are_valid_minutes():
         assert str(exc.value) == config.TimeframeSchema.ErrMsg.MINUTE_OUT_OF_RANGE \
             + f"\n\tGot {spec}"
 
+def test_TimeframeSchema_construct_timeframes(example_valid_config_spec):
+    spec = example_valid_config_spec
+
 def test_SrcDirDstDirSchema_is_sshtarget_spec():
     sshtarget_spec = "ssh://p22:root@localhost:/"
     assert config.SrcDirDstDirSchema._is_sshtarget_spec(sshtarget_spec) == sshtarget_spec
