@@ -209,8 +209,8 @@ class TimeframeSchema(Schema):
         return spec
 
     @staticmethod
-    def _construct_timeframes(spec: dict, tf_name: str, tf_type: Timeframe) -> Timeframe:
-        """Returns a number of timeframes of `timeframe_type`."""
+    def _construct_timeframe(spec: dict, tf_name: str, tf_type: Timeframe) -> Timeframe:
+        """Returns a timeframe of `timeframe_type`."""
         settings = TimeframeSchema.REQUIRED_SETTINGS[tf_name]
         return tf_type(*[spec[s] for s in settings])
 
