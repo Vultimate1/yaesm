@@ -99,6 +99,9 @@ class TimeframeSchema(Schema):
         HOUR_OUT_OF_RANGE = "Hour portion of time specification not within range [0, 23]"
         MINUTE_OUT_OF_RANGE = "Minute portion of time specification not within range [0, 59]"
 
+    # Be Scared, BE AFRAID!!! Due to an oversight, devs must ensure the settings for
+    # each key are in the same order as they appear in the Timeframe class'
+    # constructor. Fix this when convenient.
     REQUIRED_SETTINGS = {
         "5minute": ["5minute_keep"],
         "hourly": ["hourly_keep", "hourly_minutes"],
