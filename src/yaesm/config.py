@@ -231,9 +231,9 @@ class TimeframeSchema(Schema):
                           "yearly": YearlyTimeframe}
         timeframes = []
         for timeframe_name in spec["timeframes"]:
-            result = TimeframeSchema._construct_timeframes(spec,
-                                                           timeframe_name,
-                                                           timeframe_dict[timeframe_name])
+            result = TimeframeSchema._construct_timeframe(spec,
+                                                          timeframe_name,
+                                                          timeframe_dict[timeframe_name])
             timeframes.append(result)
         return timeframes
 
