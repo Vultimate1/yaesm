@@ -138,7 +138,7 @@ def test_TimeframeSchema_are_valid_minutes():
         assert str(exc.value) == config.TimeframeSchema.ErrMsg.MINUTE_OUT_OF_RANGE \
             + f"\n\tGot {spec}"
 
-def test_TimeframeSchema_construct_timeframes(example_valid_config_spec):
+def test_TimeframeSchema_construct_timeframe(example_valid_config_spec):
     spec = example_valid_config_spec
     name = spec["root_backup"]
     name["daily_times"] = config.TimeframeSchema.are_valid_timespecs(name["daily_times"])
@@ -175,7 +175,14 @@ def test_TimeframeSchema_construct_timeframes(example_valid_config_spec):
 
 def test_TimeframeSchema_promote_timeframes_spec_to_list_of_timeframes(example_valid_config_spec):
     spec = example_valid_config_spec
-    
+    name = spec["root_backup"]
+    tfs = config.TimeframeSchema._promote_timeframes_spec_to_list_of_timeframes(name)
+    tfs_actual_types = map(type, tfs)
+    assert len(tfs) == len(name["timeframes"])
+    expected_tf_types = [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe,
+                         MonthlyTimeframe, YearlyTimeframe]
+    for tf_type in expected_tf_types:
+        assert tf_type in tfs_actual_types
 
 def test_SrcDirDstDirSchema_is_sshtarget_spec():
     sshtarget_spec = "ssh://p22:root@localhost:/"
