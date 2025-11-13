@@ -176,9 +176,10 @@ def test_TimeframeSchema_construct_timeframe(example_valid_config_spec):
 def test_TimeframeSchema_promote_timeframes_spec_to_list_of_timeframes(example_valid_config_spec):
     spec = example_valid_config_spec
     name = spec["root_backup"]
-    tfs = config.TimeframeSchema._promote_timeframes_spec_to_list_of_timeframes(name)
-    tfs_actual_types = map(type, tfs)
-    assert len(tfs) == len(name["timeframes"])
+    original_tfs_list = name["timeframes"]
+    name = config.TimeframeSchema._promote_timeframes_spec_to_list_of_timeframes(name)
+    tfs_actual_types = map(type, name["timeframes"])
+    assert len(name["timeframes"]) == len(original_tfs_list)
     expected_tf_types = [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe,
                          MonthlyTimeframe, YearlyTimeframe]
     for tf_type in expected_tf_types:

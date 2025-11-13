@@ -218,7 +218,7 @@ class TimeframeSchema(Schema):
         return tf_type(*[spec[s] for s in settings])
 
     @staticmethod
-    def _promote_timeframes_spec_to_list_of_timeframes(spec: dict) -> list[Timeframe]:
+    def _promote_timeframes_spec_to_list_of_timeframes(spec: dict) -> dict:
         """Maintains the 'timeframes' key, but replaces its value with a list of
         `yaesm.Timeframe`.
 
@@ -235,6 +235,7 @@ class TimeframeSchema(Schema):
                                                           timeframe_name,
                                                           timeframe_dict[timeframe_name])
             timeframes.append(result)
+        spec["timeframes"] = timeframes
         return timeframes
 
 
