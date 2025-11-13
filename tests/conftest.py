@@ -15,6 +15,7 @@ from pathlib import Path
 import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
+import yaesm.backend.backendbase as backendbase
 
 @pytest.fixture
 def loopback_generator(path_generator):
@@ -166,7 +167,13 @@ def path_generator(random_string_generator):
             shutil.rmtree(path)
 
 @pytest.fixture
-def random_backup_generator(random_timeframes_generator, sshtarget, path_generator, random_string_generator):
+def random_backend():
+    backends = backendbase.BackendBase.backend_classes()
+    random_backend = random.choice(backends)
+    return random_backend
+
+@pytest.fixture
+def random_backup_generator(random_timeframes_generator, sshtarget, random_backend, path_generator, random_string_generator):
     """Fixture for generating random Backups."""
     names = []
     def generator(src_dir, dst_dir_base="/tmp", backup_type=None, num_timeframes=3):
@@ -178,11 +185,11 @@ def random_backup_generator(random_timeframes_generator, sshtarget, path_generat
         backup_type = backup_type if backup_type is not None else random.choice(["local_to_local", "local_to_remote", "remote_to_local"])
         timeframes = random_timeframes_generator(num=num_timeframes)
         if backup_type == "local_to_local":
-            return bckp.Backup(name, src_dir, dst_dir, timeframes)
+            return bckp.Backup(name, random_backend, src_dir, dst_dir, timeframes)
         elif backup_type == "local_to_remote":
-            return bckp.Backup(name, src_dir, sshtarget.with_path(dst_dir), timeframes)
+            return bckp.Backup(name, random_backend, src_dir, sshtarget.with_path(dst_dir), timeframes)
         else: # remote_to_local
-            return bckp.Backup(name, sshtarget.with_path(src_dir), dst_dir, timeframes)
+            return bckp.Backup(name, random_backend, sshtarget.with_path(src_dir), dst_dir, timeframes)
     return generator
 
 @pytest.fixture

@@ -11,8 +11,9 @@ class BackupError(Exception):
     ...
 
 class Backup:
-    def __init__(self, name, src_dir, dst_dir, timeframes):
+    def __init__(self, name, backend, src_dir, dst_dir, timeframes):
         self.name = name
+        self.backend = backend
         self.src_dir = src_dir
         self.dst_dir = dst_dir
         self.timeframes = timeframes
