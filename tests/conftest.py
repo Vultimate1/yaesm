@@ -295,7 +295,7 @@ def random_timeframe_times_generator(random_timeframe_timespecs_generator):
     """Fixture to generate a list of random timeframe times."""
     def generator(num=3):
         timespecs = random_timeframe_timespecs_generator(num=num)
-        times = list(map(lambda x: Timeframe.timespec_to_time(x), timespecs))
+        times = list(map(lambda x: tuple(map(int, x.split(':'))), timespecs))
         return times
     return generator
 
