@@ -1,4 +1,6 @@
 """tests/test_yaesm/test_config.py"""
+import copy
+
 import pytest
 import shutil
 import voluptuous as vlp
@@ -184,6 +186,29 @@ def test_TimeframeSchema_promote_timeframes_spec_to_list_of_timeframes(example_v
                          MonthlyTimeframe, YearlyTimeframe]
     for tf_type in expected_tf_types:
         assert tf_type in tfs_actual_types
+
+def test_TimeframeSchema_schema(example_valid_config_spec):
+    spec = example_valid_config_spec
+    backup_name = spec["root_backup"]
+    schema = config.TimeframeSchema.schema()
+    processed_backup_name = schema(copy.deepcopy(backup_name))
+    for key in backup_name:
+        if isinstance(backup_name[key], list):
+            assert len(processed_backup_name[key]) == len(backup_name[key])
+
+    expected_tf_types = [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe,
+                         MonthlyTimeframe, YearlyTimeframe]
+    actual_tf_types = map(type, processed_backup_name["timeframes"])
+    unmodified_setting_keys = ["5minute_keep", "hourly_keep", "hourly_minutes", "daily_keep",
+                               "weekly_keep", "weekly_days", "monthly_keep", "monthly_days",
+                               "yearly_keep", "yearly_days"]
+    times_settings = ["daily_times", "weekly_times", "monthly_times", "yearly_times"]
+    for tf_type in expected_tf_types:
+        assert tf_type in actual_tf_types
+    for setting in unmodified_setting_keys:
+        assert processed_backup_name[setting] == backup_name[setting]
+    for setting in times_settings:
+        assert [isinstance(item, int) for time in processed_backup_name[setting] for item in time]
 
 def test_SrcDirDstDirSchema_is_sshtarget_spec():
     sshtarget_spec = "ssh://p22:root@localhost:/"
