@@ -236,7 +236,7 @@ class TimeframeSchema(Schema):
                                                           timeframe_dict[timeframe_name])
             timeframes.append(result)
         spec["timeframes"] = timeframes
-        return timeframes
+        return spec
 
 
 class SrcDirDstDirSchema(Schema):
