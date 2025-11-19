@@ -173,36 +173,50 @@ def random_backend():
     return random_backend
 
 @pytest.fixture
-def random_backup_generator(random_timeframes_generator, sshtarget, random_backend, path_generator, random_string_generator):
-    """Fixture for generating random Backups."""
+def random_backup_generator(random_timeframes_generator, btrfs_fs_generator, sshtarget_generator, random_backend, path_generator, random_string_generator):
+    """Fixture for generating a single random `Backup`."""
     names = []
-    def generator(src_dir, dst_dir_base="/tmp", backup_type=None, num_timeframes=3):
-        name = None
-        dst_dir = path_generator(f"yaesm-test-backup-dst-dir-{name}-", base_dir=dst_dir_base, mkdir=True)
-        while name is None or name in names:
-            name = "test-backup-" + random_string_generator()
-        names.append(name)
+    def generator(backend_type=None, backup_type=None, num_timeframes=3):
         backup_type = backup_type if backup_type is not None else random.choice(["local_to_local", "local_to_remote", "remote_to_local"])
         timeframes = random_timeframes_generator(num=num_timeframes)
+
+        if backend_type is None:
+            backend_type = random_backend
+
+        src_dir = None
+        dst_dir = None
+        if backend_type.name() == "btrfs":
+            src_dir = btrfs_fs_generator()
+            dst_dir = btrfs_fs_generator()
+        elif backend_type.name() == "rsync":
+            src_dir = btrfs_fs_generator("rsync-random-backup-src-dir", mkdir=True)
+            src_dir = btrfs_fs_generator("rsync-random-backup-dst-dir", mkdir=True)
+        else:
+            raise Exception(f"Unknown backend type '{backend_type.name()}'")
+
+        name = None
+        while name is None or name in names:
+            name = "backup_" + random_string_generator()
+        names.append(name)
+
+        if backup_type is None:
+            backup_type = random.choice(["local_to_local", "local_to_remote", "remote_to_local"])
         if backup_type == "local_to_local":
             return bckp.Backup(name, random_backend, src_dir, dst_dir, timeframes)
         elif backup_type == "local_to_remote":
+            sshtarget = sshtarget_generator()
             return bckp.Backup(name, random_backend, src_dir, sshtarget.with_path(dst_dir), timeframes)
         else: # remote_to_local
+            sshtarget = sshtarget_generator()
             return bckp.Backup(name, random_backend, sshtarget.with_path(src_dir), dst_dir, timeframes)
     return generator
 
 @pytest.fixture
-def random_backups_generator(random_backup_generator):
-    """Fixture for generating a list of random Backups. See 'random_backup_generator'
-    for more information.
+def random_backup(random_backup_generator):
+    """Fixture to provide a random `Backup`. See the `random_backup_generator`
+    fixture for more details on how the `Backup` is generated.
     """
-    def generator(num=3, src_dir_base="/tmp", dst_dir_base="/tmp", num_timeframes=3):
-        backups = []
-        for _ in range(num):
-            backups.append(random_backup_generator, src_dir_base=src_dir_base, dst_dir_base=dst_dir_base, num_timeframes=num_timeframes)
-        return backups
-    return generator
+    return random_backup_generator()
 
 @pytest.fixture
 def sshtarget_generator(localhost_server_generator):
@@ -379,43 +393,49 @@ def btrfs_sudo_access(yaesm_test_users_group, tmp_path_factory):
     return True
 
 @pytest.fixture
-def example_valid_config_spec():
-    """See example config "test_config.yaml" for notes."""
-    return {
-        "root_backup": {
-            "backend": "rsync",
-            "src_dir": "/",
-            "dst_dir": "/mnt/backupdrive/yaesm/root_backup",
-            "exclude": ["~/.cache"],
-            "exclude_from": "somefile.txt",
-            "timeframes": ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"],
-            "5minute_keep": 24,
-            "hourly_minutes": [0, 30],
-            "hourly_keep": 48,
-            "daily_times": ["23:59", "11:59"],
-            "daily_keep": 720,
-            "weekly_keep": 21,
-            "weekly_days": ["monday", "friday", "sunday"],
-            "weekly_times": ["23:59", "05:30"],
-            "monthly_keep": 100,
-            "monthly_days": [1, 7, 30],
-            "monthly_times": ["23:59"],
-            "yearly_keep": 5,
-            "yearly_days": [1, 129],
-            "yearly_times": ["23:59"]},
-        "home_backup": {
-            "backend": "btrfs",
-            "src_dir": "/home/fred",
-            "dst_dir": "fred@192.168.1.73:/yaesm/fred_laptop_backups",
-            "ssh_key": "/home/fred/.ssh/id_rsa",
-            "ssh_config": "/etc/ssh/some_other_config",
-            "timeframes": ["daily"],
-            "daily_times": ["23:59"],
-            "daily_keep": 365},
-        "database_snapshot": {
-            "backend": "zfs",
-            "src_dataset": "/important-database",
-            "dst_dataset": "/.snapshots/yaesm/important-database",
-            "timeframes": ["hourly"],
-            "hourly_keep": 10000000000,
-            "hourly_minutes": [0]}}
+def valid_raw_config_generator(random_backup_generator):
+    """Fixture to generate a valid raw configuration dict. A raw configuration
+    is a dict that comes directly after parsing the user configuration yaml
+    file, before it goes through the configuration validation and type promotion
+    code in yaesm.config.
+
+    TODO: backend specific config settings
+    """
+    def generator(num_backups=3):
+        backups = []
+        for _ in range(num_backups):
+            backups.append(random_backup_generator())
+        config = {}
+        for backup in backups:
+            backup_settings = {}
+            backup_settings["backend"] = backup.backend.name()
+            timeframes = []
+            for tframe in backup.timeframes:
+                timeframes.append(tframe.name)
+                backup_settings[f"{tframe.name}_keep"] = tframe.keep
+                if isinstance(tframe, FiveMinuteTimeframe):
+                    ...
+                elif isinstance(tframe, HourlyTimeframe):
+                    backup_settings[f"{tframe.name}_minutes"] = tframe.minutes
+                elif isinstance(tframe, DailyTimeframe):
+                    backup_settings[f"{tframe.name}_times"] = tframe.times
+                elif isinstance(tframe, WeeklyTimeframe):
+                    backup_settings[f"{tframe.name}_times"] = tframe.times
+                    backup_settings[f"{tframe.name}_days"] = tframe.weekdays
+                elif isinstance(tframe, MonthlyTimeframe):
+                    backup_settings[f"{tframe.name}_times"] = tframe.times
+                    backup_settings[f"{tframe.name}_days"] = tframe.monthdays
+                elif isinstance(tframe, YearlyTimeframe):
+                    backup_settings[f"{tframe.name}_times"] = tframe.times
+                    backup_settings[f"{tframe.name}_days"] = tframe.yeardays
+            backup_settings["timeframes"] = timeframes
+            config[backup.name] = backup_settings
+        return config
+    return generator
+
+@pytest.fixture
+def valid_raw_config(valid_raw_config_generator):
+    """Fixture to provide a single valid raw configuration dict. See the
+    'valid_raw_config_generator' fixture for more details.
+    """
+    return valid_raw_config_generator()
