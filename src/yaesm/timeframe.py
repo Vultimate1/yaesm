@@ -2,7 +2,6 @@
 import dataclasses
 from typing import final
 
-@dataclasses.dataclass
 class Timeframe():
     """Timeframe is a base class for the different timeframe types. None of the
     Timeframe classes do validity checking on their initialization arguments.
