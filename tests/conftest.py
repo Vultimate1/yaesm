@@ -189,8 +189,8 @@ def random_backup_generator(random_timeframes_generator, btrfs_fs_generator, ssh
             src_dir = btrfs_fs_generator()
             dst_dir = btrfs_fs_generator()
         elif backend_type.name() == "rsync":
-            src_dir = btrfs_fs_generator("rsync-random-backup-src-dir", mkdir=True)
-            src_dir = btrfs_fs_generator("rsync-random-backup-dst-dir", mkdir=True)
+            src_dir = path_generator("rsync-random-backup-src-dir", mkdir=True)
+            src_dir = path_generator("rsync-random-backup-dst-dir", mkdir=True)
         else:
             raise Exception(f"Unknown backend type '{backend_type.name()}'")
 
