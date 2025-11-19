@@ -143,7 +143,8 @@ def test_TimeframeSchema_promote_timeframes_spec_to_list_of_timeframes(valid_raw
     for backup_name in sorted(valid_raw_config.keys()):
         backup_settings = valid_raw_config[backup_name]
         orig_timeframes = backup_settings["timeframes"]
-        backup_spec = config.TimeframeSchema._promote_timeframes_spec_to_list_of_timeframes(valid_raw_config[backup_name])
+        backup_spec = config.TimeframeSchema._promote_timeframes_spec_to_list_of_timeframes(
+            valid_raw_config[backup_name])
         assert len(orig_timeframes) == len(backup_spec["timeframes"])
         for timeframe in backup_spec["timeframes"]:
             assert isinstance(timeframe, Timeframe)
@@ -175,31 +176,32 @@ def test_TimeframeSchema_promote_timeframes_spec_to_list_of_timeframes(valid_raw
                 assert timeframe.yeardays == backup_spec["yearly_days"]
 
 def test_TimeframeSchema_schema(valid_raw_config):
-    assert 1 == 1
-    # TODO: reimplement this test using valid_raw_config
+    for backup in valid_raw_config.values():
+        schema = config.TimeframeSchema.schema()
+        processed_backup = schema(copy.deepcopy(backup))
+        for key in backup:
+            if isinstance(backup[key], list):
+                assert len(processed_backup[key]) == len(backup[key])
 
-
-    # spec = example_valid_config_spec
-    # backup_name = spec["root_backup"]
-    # schema = config.TimeframeSchema.schema()
-    # processed_backup_name = schema(copy.deepcopy(backup_name))
-    # for key in backup_name:
-    #     if isinstance(backup_name[key], list):
-    #         assert len(processed_backup_name[key]) == len(backup_name[key])
-
-    # expected_tf_types = [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe,
-    #                      MonthlyTimeframe, YearlyTimeframe]
-    # actual_tf_types = map(type, processed_backup_name["timeframes"])
-    # unmodified_setting_keys = ["5minute_keep", "hourly_keep", "hourly_minutes", "daily_keep",
-    #                            "weekly_keep", "weekly_days", "monthly_keep", "monthly_days",
-    #                            "yearly_keep", "yearly_days"]
-    # times_settings = ["daily_times", "weekly_times", "monthly_times", "yearly_times"]
-    # for tf_type in expected_tf_types:
-    #     assert tf_type in actual_tf_types
-    # for setting in unmodified_setting_keys:
-    #     assert processed_backup_name[setting] == backup_name[setting]
-    # for setting in times_settings:
-    #     assert [isinstance(item, int) for time in processed_backup_name[setting] for item in time]
+        tf_types = Timeframe.tframe_types()
+        tf_names = Timeframe.tframe_types(names=True)
+        expected_tf_types = [tf_types[i]
+                             for i in range(len(tf_names))
+                             if tf_names[i] in backup["timeframes"]]
+        actual_tf_types = list(map(type, processed_backup["timeframes"]))
+        unmodified_setting_keys = ["5minute_keep", "hourly_keep", "hourly_minutes", "daily_keep",
+                                   "weekly_keep", "weekly_days", "monthly_keep", "monthly_days",
+                                   "yearly_keep", "yearly_days"]
+        times_settings = ["daily_times", "weekly_times", "monthly_times", "yearly_times"]
+        for tf_type in expected_tf_types:
+            assert tf_type in actual_tf_types
+        for setting in unmodified_setting_keys:
+            if setting in backup:
+                assert processed_backup[setting] == backup[setting]
+        for setting in times_settings:
+            if setting in backup:
+                assert [isinstance(item, int)
+                        for time in processed_backup[setting] for item in time]
 
 def test_SrcDirDstDirSchema_is_sshtarget_spec():
     sshtarget_spec = "ssh://p22:root@localhost:/"
