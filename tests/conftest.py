@@ -78,7 +78,7 @@ def ssh_key_generator(path_generator):
     """
     def generator():
         key = path_generator("id_rsa")
-        subprocess.run(["ssh-keygen", "-N", "", "-t", "rsa", "-b", "4096", "-f", key], check=True)
+        subprocess.run(["ssh-keygen", "-N", "", "-t", "rsa", "-b", "4096", "-f", key], check=True, capture_output=True)
         return key
     return generator
 
@@ -117,7 +117,7 @@ def tmp_user_generator(yaesm_test_users_group, random_string_generator):
             except:
                 break
         subprocess.run(["useradd", "-m", "-G", yaesm_test_users_group.gr_name, username], check=True)
-        subprocess.run(["passwd", "--lock", username], check=True)
+        subprocess.run(["passwd", "--lock", username], check=True, capture_output=True)
         user = pwd.getpwnam(username)
         return user
     return generator
@@ -343,11 +343,11 @@ def btrfs_fs_generator(path_generator, loopback_generator):
     def generator():
         mountpoint = path_generator("test-yaesm-btrfs-mountpoint", base_dir="/mnt", mkdir=True)
         loop = loopback_generator()
-        subprocess.run(["mkfs", "-t", "btrfs", loop], check=True)
-        subprocess.run(["mount", loop, mountpoint], check=True)
-        subprocess.run(["btrfs", "subvolume", "create", f"{mountpoint}/@"], check=True)
-        subprocess.run(["umount", mountpoint], check=True)
-        subprocess.run(["mount", loop, "-o", "rw,noatime,subvol=@", mountpoint], check=True)
+        subprocess.run(["mkfs", "-t", "btrfs", loop], check=True, capture_output=True)
+        subprocess.run(["mount", loop, mountpoint], check=True, capture_output=True)
+        subprocess.run(["btrfs", "subvolume", "create", f"{mountpoint}/@"], check=True, capture_output=True)
+        subprocess.run(["umount", mountpoint], check=True, capture_output=True)
+        subprocess.run(["mount", loop, "-o", "rw,noatime,subvol=@", mountpoint], check=True, capture_output=True)
         return mountpoint
     return generator
 
