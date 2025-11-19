@@ -7,10 +7,9 @@ import yaml
 import voluptuous as vlp
 
 from yaesm.backend import backendbase
-from yaesm.backup import Backup
+import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
-from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, \
-    WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
+from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
 
 class Schema():
     """Base class for all yaesm configuration schema classes."""
@@ -223,21 +222,13 @@ class TimeframeSchema(Schema):
         `yaesm.Timeframe`.
 
         The value paired with 'timeframes' in `spec` is assumed to be entirely valid."""
-        timeframe_dict = {"5minute": FiveMinuteTimeframe,
-                          "hourly": HourlyTimeframe,
-                          "daily": DailyTimeframe,
-                          "weekly": WeeklyTimeframe,
-                          "monthly": MonthlyTimeframe,
-                          "yearly": YearlyTimeframe}
+        timeframe_dict = dict(zip(Timeframe.tframe_types(names=True), Timeframe.tframe_types()))
         timeframes = []
         for timeframe_name in spec["timeframes"]:
-            result = TimeframeSchema._construct_timeframe(spec,
-                                                          timeframe_name,
-                                                          timeframe_dict[timeframe_name])
-            timeframes.append(result)
-        spec["timeframes"] = timeframes
+            timeframe_obj = timeframe_dict[timeframe_name](*[spec[s] for s in TimeframeSchema.REQUIRED_SETTINGS[timeframe_name]])
+            timeframes.append(timeframe_obj)
+        spec["timeframes"] = timeframes # mutation
         return spec
-
 
 class SrcDirDstDirSchema(Schema):
     """Voluptuous schema and validator functions for a src_dir and dst_dir configuration."""

@@ -10,8 +10,7 @@ import re
 import yaesm.config as config
 from yaesm.backend.backendbase import BackendBase
 from yaesm.sshtarget import SSHTarget
-from yaesm.timeframe import FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, \
-    WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
+from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
 
 def test_Schema_schema_empty():
     schema = config.Schema.schema_empty()
@@ -140,52 +139,40 @@ def test_TimeframeSchema_are_valid_minutes():
         assert str(exc.value) == config.TimeframeSchema.ErrMsg.MINUTE_OUT_OF_RANGE \
             + f"\n\tGot {spec}"
 
-def test_TimeframeSchema_construct_timeframe(example_valid_config_spec):
-    spec = example_valid_config_spec
-    name = spec["root_backup"]
-    name["daily_times"] = config.TimeframeSchema.are_valid_timespecs(name["daily_times"])
-    name["weekly_times"] = config.TimeframeSchema.are_valid_timespecs(name["weekly_times"])
-    name["monthly_times"] = config.TimeframeSchema.are_valid_timespecs(name["monthly_times"])
-    name["yearly_times"] = config.TimeframeSchema.are_valid_timespecs(name["yearly_times"])
-    five_minute_tf = config.TimeframeSchema._construct_timeframe(name, "5minute",
-                                                                  FiveMinuteTimeframe)
-    hourly_tf = config.TimeframeSchema._construct_timeframe(name, "hourly", HourlyTimeframe)
-    daily_tf = config.TimeframeSchema._construct_timeframe(name, "daily", DailyTimeframe)
-    weekly_tf = config.TimeframeSchema._construct_timeframe(name, "weekly", WeeklyTimeframe)
-    monthly_tf = config.TimeframeSchema._construct_timeframe(name, "monthly", MonthlyTimeframe)
-    yearly_tf = config.TimeframeSchema._construct_timeframe(name, "yearly", YearlyTimeframe)
-    assert isinstance(five_minute_tf, FiveMinuteTimeframe)
-    assert isinstance(hourly_tf, HourlyTimeframe)
-    assert isinstance(daily_tf, DailyTimeframe)
-    assert isinstance(weekly_tf, WeeklyTimeframe)
-    assert isinstance(monthly_tf, MonthlyTimeframe)
-    assert isinstance(yearly_tf, YearlyTimeframe)
-    assert five_minute_tf.keep == name["5minute_keep"]
-    assert hourly_tf.keep == name["hourly_keep"]
-    assert hourly_tf.minutes == name["hourly_minutes"]
-    assert daily_tf.keep == name["daily_keep"]
-    assert daily_tf.times == name["daily_times"]
-    assert weekly_tf.keep == name["weekly_keep"]
-    assert weekly_tf.weekdays == name["weekly_days"]
-    assert weekly_tf.times == name["weekly_times"]
-    assert monthly_tf.keep == name["monthly_keep"]
-    assert monthly_tf.monthdays == name["monthly_days"]
-    assert monthly_tf.times == name["monthly_times"]
-    assert yearly_tf.keep == name["yearly_keep"]
-    assert yearly_tf.yeardays == name["yearly_days"]
-    assert yearly_tf.times == name["yearly_times"]
-
-def test_TimeframeSchema_promote_timeframes_spec_to_list_of_timeframes(example_valid_config_spec):
-    spec = example_valid_config_spec
-    name = spec["root_backup"]
-    original_tfs_list = name["timeframes"]
-    name = config.TimeframeSchema._promote_timeframes_spec_to_list_of_timeframes(name)
-    tfs_actual_types = map(type, name["timeframes"])
-    assert len(name["timeframes"]) == len(original_tfs_list)
-    expected_tf_types = [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe,
-                         MonthlyTimeframe, YearlyTimeframe]
-    for tf_type in expected_tf_types:
-        assert tf_type in tfs_actual_types
+def test_TimeframeSchema_promote_timeframes_spec_to_list_of_timeframes(valid_raw_config):
+    for backup_name in sorted(valid_raw_config.keys()):
+        backup_settings = valid_raw_config[backup_name]
+        orig_timeframes = backup_settings["timeframes"]
+        backup_spec = config.TimeframeSchema._promote_timeframes_spec_to_list_of_timeframes(valid_raw_config[backup_name])
+        assert len(orig_timeframes) == len(backup_spec["timeframes"])
+        for timeframe in backup_spec["timeframes"]:
+            assert isinstance(timeframe, Timeframe)
+            if isinstance(timeframe, FiveMinuteTimeframe):
+                assert timeframe.name == "5minute"
+                assert timeframe.keep == backup_spec["5minute_keep"]
+            elif isinstance(timeframe, HourlyTimeframe):
+                assert timeframe.name == "hourly"
+                assert timeframe.keep == backup_spec["hourly_keep"]
+                assert timeframe.minutes == backup_spec["hourly_minutes"]
+            elif isinstance(timeframe, DailyTimeframe):
+                assert timeframe.name == "daily"
+                assert timeframe.keep == backup_spec["daily_keep"]
+                assert timeframe.times == backup_spec["daily_times"]
+            elif isinstance(timeframe, WeeklyTimeframe):
+                assert timeframe.name == "weekly"
+                assert timeframe.keep == backup_spec["weekly_keep"]
+                assert timeframe.times == backup_spec["weekly_times"]
+                assert timeframe.weekdays == backup_spec["weekly_days"]
+            elif isinstance(timeframe, MonthlyTimeframe):
+                assert timeframe.name == "monthly"
+                assert timeframe.keep == backup_spec["monthly_keep"]
+                assert timeframe.times == backup_spec["monthly_times"]
+                assert timeframe.monthdays == backup_spec["monthly_days"]
+            else: # isinstance(timeframe, YearlyTimeframe):
+                assert timeframe.name == "yearly"
+                assert timeframe.keep == backup_spec["yearly_keep"]
+                assert timeframe.times == backup_spec["yearly_times"]
+                assert timeframe.yeardays == backup_spec["yearly_days"]
 
 def test_TimeframeSchema_schema(example_valid_config_spec):
     spec = example_valid_config_spec
