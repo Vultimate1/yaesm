@@ -176,18 +176,19 @@ def test_TimeframeSchema_promote_timeframes_spec_to_list_of_timeframes(valid_raw
                 assert timeframe.yeardays == backup_spec["yearly_days"]
 
 def test_TimeframeSchema_schema(valid_raw_config):
-    for backup in valid_raw_config.values():
+    for backup_name in sorted(valid_raw_config.keys()):
+        backup_settings = valid_raw_config[backup_name]
         schema = config.TimeframeSchema.schema()
-        processed_backup = schema(copy.deepcopy(backup))
-        for key in backup:
-            if isinstance(backup[key], list):
-                assert len(processed_backup[key]) == len(backup[key])
+        processed_backup = schema(copy.deepcopy(backup_settings))
+        for key in backup_settings:
+            if isinstance(backup_settings[key], list):
+                assert len(processed_backup[key]) == len(backup_settings[key])
 
         tf_types = Timeframe.tframe_types()
         tf_names = Timeframe.tframe_types(names=True)
         expected_tf_types = [tf_types[i]
                              for i in range(len(tf_names))
-                             if tf_names[i] in backup["timeframes"]]
+                             if tf_names[i] in backup_settings["timeframes"]]
         actual_tf_types = list(map(type, processed_backup["timeframes"]))
         unmodified_setting_keys = ["5minute_keep", "hourly_keep", "hourly_minutes", "daily_keep",
                                    "weekly_keep", "weekly_days", "monthly_keep", "monthly_days",
@@ -196,10 +197,13 @@ def test_TimeframeSchema_schema(valid_raw_config):
         for tf_type in expected_tf_types:
             assert tf_type in actual_tf_types
         for setting in unmodified_setting_keys:
-            if setting in backup:
-                assert processed_backup[setting] == backup[setting]
+            if setting in backup_settings:
+                assert processed_backup[setting] == backup_settings[setting]
         for setting in times_settings:
-            if setting in backup:
+            if setting in backup_settings:
+                tmp1 = backup_settings[setting]
+                tmp2 = [isinstance(item, int)
+                        for time in processed_backup[setting] for item in time]
                 assert [isinstance(item, int)
                         for time in processed_backup[setting] for item in time]
 

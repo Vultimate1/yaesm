@@ -211,12 +211,6 @@ class TimeframeSchema(Schema):
         return spec
 
     @staticmethod
-    def _construct_timeframe(spec: dict, tf_name: str, tf_type: Timeframe) -> Timeframe:
-        """Returns a timeframe of `timeframe_type`."""
-        settings = TimeframeSchema.REQUIRED_SETTINGS[tf_name]
-        return tf_type(*[spec[s] for s in settings])
-
-    @staticmethod
     def _promote_timeframes_spec_to_list_of_timeframes(spec: dict) -> dict:
         """Maintains the 'timeframes' key, but replaces its value with a list of
         `yaesm.Timeframe`.
