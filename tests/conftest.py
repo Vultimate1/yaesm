@@ -244,12 +244,12 @@ def random_timeframe_generator(random_timeframe_times_generator, random_timefram
     """Fixture for generating random Timeframes."""
     def generator(tframe_type=None, keep=None, minutes=None, times=None, weekdays=None, monthdays=None, yeardays=None) -> Timeframe:
         tframe_type = random.choice(Timeframe.tframe_types()) if tframe_type is None else tframe_type
-        keep        = random.randint(0,10) if keep is None else keep
-        minutes     = random_timeframe_minutes_generator(random.randint(0,5)) if minutes is None else minutes
-        times       = random_timeframe_times_generator(random.randint(0,5)) if times is None else times
-        weekdays    = random_timeframe_weekdays_generator(random.randint(0,3)) if weekdays is None else weekdays
-        monthdays   = random_timeframe_monthdays_generator(random.randint(0,3)) if monthdays is None else monthdays
-        yeardays    = random_timeframe_yeardays_generator(random.randint(0,3)) if yeardays is None else yeardays
+        keep        = random.randint(1,10) if keep is None else keep
+        minutes     = random_timeframe_minutes_generator(random.randint(1,5)) if minutes is None else minutes
+        times       = random_timeframe_times_generator(random.randint(1,5)) if times is None else times
+        weekdays    = random_timeframe_weekdays_generator(random.randint(1,3)) if weekdays is None else weekdays
+        monthdays   = random_timeframe_monthdays_generator(random.randint(1,3)) if monthdays is None else monthdays
+        yeardays    = random_timeframe_yeardays_generator(random.randint(1,3)) if yeardays is None else yeardays
         if tframe_type == FiveMinuteTimeframe:
             return FiveMinuteTimeframe(keep)
         elif tframe_type == HourlyTimeframe:
