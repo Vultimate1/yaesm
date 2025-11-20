@@ -201,9 +201,6 @@ def test_TimeframeSchema_schema(valid_raw_config):
                 assert processed_backup[setting] == backup_settings[setting]
         for setting in times_settings:
             if setting in backup_settings:
-                tmp1 = backup_settings[setting]
-                tmp2 = [isinstance(item, int)
-                        for time in processed_backup[setting] for item in time]
                 assert [isinstance(item, int)
                         for time in processed_backup[setting] for item in time]
 
