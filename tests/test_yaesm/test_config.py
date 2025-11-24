@@ -6,8 +6,10 @@ import shutil
 import voluptuous as vlp
 from pathlib import Path
 import re
+import random
 
 import yaesm.config as config
+import yaesm.backup as bckp
 from yaesm.backend.backendbase import BackendBase
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
@@ -425,30 +427,87 @@ def test_SrcDirDstDirSchema_schema_extra(sshtarget_generator, path_generator):
         schema_extra(data)
     assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.REMOTE_DIR_INVALID
 
-# def test_parse_file():
-#     """Tests on a valid YAML config file."""
-#     backups = config.parse_file("tests/test_config.yaml")
-#     assert isinstance(backups, list)
-#     backup_names = [backup.name for backup in backups]
-#     backup_srcs = [backup.src_dir for backup in backups]
-#     backup_dsts = [backup.dst_dir for backup in backups]
-#     assert backup_names == ["root_backup", "home_backup", "database_snapshot"]
-#     assert backup_srcs == ["/", "/home/fred", "/important-database"]
-#     assert backup_dsts == ["/mnt/backupdrive/yaesm/root_backup",
-#                            "fred@192.168.1.73:/yaesm/fred_laptop_backups",
-#                            "/.snapshots/yaesm/important-database"]
-#     # TODO assert exclude & exclude_from once added.
-#     root_tfs, home_tfs, data_tfs = [backup.timeframes for backup in backups]
-#     root_tfs_keep = [obj.keep for obj in root_tfs]
-#     tfs = [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe,
-#            MonthlyTimeframe, YearlyTimeframe]
-#     for tf in tfs:
-#         assert tf in [type(obj) for obj in root_tfs]
-#     assert root_tfs_keep == [24, 48, 720, 21, 100, 5]
-#     assert root_tfs
-#     assert isinstance(home_tfs[0], DailyTimeframe)
-#     assert home_tfs[0].keep == 365
-#     assert home_tfs[0].times == ["23:59"]
-#     assert isinstance(data_tfs[0], HourlyTimeframe)
-#     assert data_tfs[0].keep == 10000000000
-#     assert data_tfs[0].minutes == [0]
+def test_BackupSchema_ensure_single_backup():
+    d = {'foo': 1}
+    assert d == config.BackupSchema._ensure_single_backup(d)
+    d = {'foo': {'bar': 1, 'baz': 2}}
+    assert d == config.BackupSchema._ensure_single_backup(d)
+    d = {'foo': 1, 'bar': 2}
+    with pytest.raises(vlp.Invalid) as exc:
+        config.BackupSchema._ensure_single_backup(d)
+    assert str(exc.value) == config.BackupSchema.ErrMsg.NOT_1_BACKUP
+    d = {}
+    with pytest.raises(vlp.Invalid) as exc:
+        config.BackupSchema._ensure_single_backup(d)
+    assert str(exc.value) == config.BackupSchema.ErrMsg.NOT_1_BACKUP
+
+def test_BackupSchema_ensure_backup_name_valid():
+    d = {'foo': {'bar': 1, 'baz': 2}}
+    assert d == config.BackupSchema._ensure_backup_name_valid(d)
+    d = {'': {'bar': 1, 'baz': 2}}
+    with pytest.raises(vlp.Invalid) as exc:
+        config.BackupSchema._ensure_backup_name_valid(d)
+    assert str(exc.value) == config.BackupSchema.ErrMsg.INVALID_BACKUP_NAME
+    d = {'foo/bar': {'bar': 1, 'baz': 2}}
+    with pytest.raises(vlp.Invalid) as exc:
+        config.BackupSchema._ensure_backup_name_valid(d)
+    assert str(exc.value) == config.BackupSchema.ErrMsg.INVALID_BACKUP_NAME
+
+def test_BackupSchema_promote_to_backup_object(valid_raw_config):
+    backup_name = random.choice(list(valid_raw_config.keys()))
+    backup = config.BackupSchema._promote_to_backup_object({backup_name : valid_raw_config[backup_name]})
+    assert isinstance(backup, bckp.Backup)
+
+def test_BackupSchema_schema(valid_raw_config, path_generator):
+    schema = config.BackupSchema.schema()
+    # success tests
+    for backup_name in sorted(valid_raw_config.keys()):
+        backup_spec = { backup_name : valid_raw_config[backup_name] }
+        backup = schema(backup_spec)
+        assert isinstance(backup, bckp.Backup)
+        assert backup.name == backup_name
+        for tframe in backup.timeframes:
+            assert isinstance(tframe, Timeframe)
+        assert backup.backend.name() == backup_spec[backup_name]["backend"]
+        if backup.backup_type == "local_to_local":
+            assert isinstance(backup.src_dir, Path)
+            assert isinstance(backup.dst_dir, Path)
+        elif backup.backup_type == "local_to_remote":
+            assert isinstance(backup.src_dir, Path)
+            assert isinstance(backup.dst_dir, SSHTarget)
+        else: # backup.backup_type == "remote_to_local"
+            assert isinstance(backup.src_dir, SSHTarget)
+            assert isinstance(backup.dst_dir, Path)
+        raw_config_copy = copy.deepcopy(valid_raw_config)
+        raw_config_copy[backup_name]["INVALIDSETTING"] = "foo"
+        assert schema({ backup_name : raw_config_copy[backup_name] }) # no error for invalid setting
+    # failure tests
+    with pytest.raises(vlp.Invalid) as exc:
+        schema({})
+    assert str(exc.value) == config.BackupSchema.ErrMsg.NOT_1_BACKUP
+    with pytest.raises(vlp.Invalid) as exc:
+        schema(valid_raw_config)
+    assert str(exc.value) == config.BackupSchema.ErrMsg.NOT_1_BACKUP
+    for backup_name in sorted(valid_raw_config.keys()):
+        raw_config_copy = copy.deepcopy(valid_raw_config)
+        with pytest.raises(vlp.Invalid) as exc:
+            schema({ f"{backup_name} &" : valid_raw_config[backup_name] })
+        assert str(exc.value) == config.BackupSchema.ErrMsg.INVALID_BACKUP_NAME
+        with pytest.raises(vlp.Invalid) as exc:
+            raw_config_copy = copy.deepcopy(valid_raw_config)
+            backup_settings = raw_config_copy[backup_name]
+            backup_settings["backend"] = "INVALIDBACKENDNAME"
+            schema({ backup_name: backup_settings })
+        assert str(exc.value).startswith(config.BackendSchema.ErrMsg.INVALID_BACKEND_NAME)
+        with pytest.raises(vlp.Invalid) as exc:
+            raw_config_copy = copy.deepcopy(valid_raw_config)
+            backup_settings = raw_config_copy[backup_name]
+            backup_settings["timeframes"].append("INVALIDTIMEFRAME")
+            schema({ backup_name: backup_settings })
+        assert str(exc.value).startswith("value must be one of ['5minute',")
+        with pytest.raises(vlp.Invalid) as exc:
+            raw_config_copy = copy.deepcopy(valid_raw_config)
+            backup_settings = raw_config_copy[backup_name]
+            backup_settings["src_dir"] = path_generator("non-existent-dir", mkdir=False)
+            schema({ backup_name: backup_settings })
+        assert str(exc.value).startswith(config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR)

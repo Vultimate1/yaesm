@@ -58,6 +58,64 @@ class Schema():
             raise vlp.Invalid(Schema.ErrMsg.LOCAL_DIR_INVALID)
         return Path(s)
 
+class BackupSchema(Schema):
+    """BackupSchema is the top-level concrete Schema class."""
+
+    class ErrMsg:
+        NOT_1_BACKUP="Not given exactly 1 backup"
+        INVALID_BACKUP_NAME="Not a valid backup name"
+
+    @staticmethod
+    def schema() -> vlp.Schema:
+        """Voluptuous schema that combines together all the other sub-schemas
+        to produce an actual `Backup` object. This is the only schema that is
+        directly used by the `parse_config` function.
+        """
+        return vlp.Schema(vlp.All(
+            dict,
+            BackupSchema._ensure_single_backup,
+            BackupSchema._ensure_backup_name_valid,
+            vlp.Schema({
+                str: vlp.All(
+                         BackendSchema.schema(),
+                         SrcDirDstDirSchema.schema(),
+                         TimeframeSchema.schema()
+                      )
+                }
+            ),
+            BackupSchema._promote_to_backup_object))
+
+    @staticmethod
+    def _promote_to_backup_object(d:dict) -> bckp.Backup:
+        """Promote the backup spec dictionary `d` to an actual `Backup`
+        object. This function should only be called after all other validation
+        has taken place to ensure we have a valid backup spec.
+        """
+        backup_name = list(d.keys())[0]
+        backup_settings = d[backup_name]
+        backend_obj = backup_settings["backend"]
+        timeframes = backup_settings["timeframes"]
+        src_dir = backup_settings["src_dir"]
+        dst_dir = backup_settings["dst_dir"]
+        return bckp.Backup(backup_name, backend_obj, src_dir, dst_dir, timeframes)
+
+    @staticmethod
+    def _ensure_single_backup(d:dict):
+        """Validator to ensure that `d` is a dict with a single key (i.e. just one backup)."""
+        if not 1 == len(d):
+            raise vlp.Invalid(BackupSchema.ErrMsg.NOT_1_BACKUP)
+        return d
+
+    @staticmethod
+    def _ensure_backup_name_valid(d:dict):
+        """Ensure that the single key in the dict `d` is a string denoting a valid
+        backup name. Should only be called after first calling `_ensure_single_backup`.
+        """
+        backup_name = list(d.keys())[0]
+        if not bckp.backup_name_valid(backup_name):
+            raise vlp.Invalid(BackupSchema.ErrMsg.INVALID_BACKUP_NAME)
+        return d
+
 class BackendSchema(Schema):
     """Schema for ensuring a valid backend was specified, and if so promoting the
     backend name to an actual backend class.

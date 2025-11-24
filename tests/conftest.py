@@ -409,6 +409,21 @@ def valid_raw_config_generator(random_backup_generator):
         for backup in backups:
             backup_settings = {}
             backup_settings["backend"] = backup.backend.name()
+            if backup.backup_type == "local_to_local":
+                backup_settings["src_dir"] = str(backup.src_dir)
+                backup_settings["dst_dir"] = str(backup.dst_dir)
+            elif backup.backup_type == "local_to_remote":
+                backup_settings["src_dir"] = str(backup.src_dir)
+                backup_settings["dst_dir"] = backup.dst_dir.spec
+                backup_settings["ssh_key"] = str(backup.dst_dir.key)
+                if backup.dst_dir.sshconfig:
+                    backup_settings["ssh_config"] = str(backup.dst_dir.sshconfig)
+            else: # backup.backup_type == "remote_to_local":
+                backup_settings["src_dir"] = backup.src_dir.spec
+                backup_settings["dst_dir"] = str(backup.dst_dir)
+                backup_settings["ssh_key"] = str(backup.src_dir.key)
+                if backup.src_dir.sshconfig:
+                    backup_settings["ssh_config"] = str(backup.src_dir.sshconfig)
             timeframes = []
             for tframe in backup.timeframes:
                 timeframes.append(tframe.name)
