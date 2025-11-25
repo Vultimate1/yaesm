@@ -11,6 +11,33 @@ import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
 
+class ConfigErrors(Exception):
+    def __init__(self, config_file, errors=[]):
+        self.config_file = config_file
+        self.errors = errors
+
+def parse_config(config_file):
+    """Parse the file `config_file` into a list of `Backup` objects. This is the
+    only function that should be directly used from outside the yaesm.config module.
+    If there are any configuration errors then a `ConfigErrors` exception is raised.
+    """
+    with open(config_file, 'r') as f:
+        try:
+            config_data = yaml.safe_load(f)
+        except yaml.YAMLError as exc:
+            raise ConfigErrors(config_file, errors=[exc])
+    backups = []
+    errors = []
+    for backup_name in sorted(config_data.keys()):
+        try:
+            backup = BackupSchema.schema(({backup_name: config_data[backup_name]}))
+            backups.append(backup)
+        except vlp.MultipleInvalid as exc:
+            errors += exc.errors
+    if errors:
+        raise ConfigErrors(config_file, errors=errors)
+    return backups
+
 class Schema():
     """Base class for all yaesm configuration schema classes."""
 
