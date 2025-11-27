@@ -8,7 +8,6 @@ import pwd
 import grp
 import shutil
 import random
-from random import choice
 from string import ascii_lowercase
 from pathlib import Path
 
@@ -133,7 +132,7 @@ def tmp_user(tmp_user_generator):
 def random_string_generator():
     """Fixture for generating random ascii lowercase strings of arbitrary length."""
     def generator(length=5):
-        return "".join(choice(ascii_lowercase) for i in range(length))
+        return "".join(random.choice(ascii_lowercase) for i in range(length))
     return generator
 
 @pytest.fixture
