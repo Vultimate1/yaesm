@@ -8,6 +8,7 @@ import pwd
 import grp
 import shutil
 import random
+import yaml
 from string import ascii_lowercase
 from pathlib import Path
 
@@ -453,3 +454,24 @@ def valid_raw_config(valid_raw_config_generator):
     'valid_raw_config_generator' fixture for more details.
     """
     return valid_raw_config_generator()
+
+@pytest.fixture
+def valid_config_file_generator(path_generator, valid_raw_config_generator):
+    """Fixture to generate random valid yaesm configuration files. Returns a
+    Path to the generated config file.
+    """
+    def generator(num_backups=3):
+        yaml_str = ""
+        for _ in range(num_backups):
+            yaml_str += yaml.safe_dump(valid_raw_config_generator(num_backups=1)) + "\n"
+        config_file = path_generator("config-file.yml", touch=True)
+        config_file.write_text(yaml_str)
+        return config_file
+    return generator
+
+@pytest.fixture
+def valid_config_file(valid_config_file_generator):
+    """Fixture to provide a valid configuration yaml file. See the
+    `valid_config_file_generator` fixture for more details.
+    """
+    return valid_config_file_generator()
