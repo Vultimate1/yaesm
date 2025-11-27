@@ -107,9 +107,8 @@ class BackupSchema(Schema):
                          BackendSchema.schema(),
                          SrcDirDstDirSchema.schema(),
                          TimeframeSchema.schema()
-                      )
-                }
-            ),
+                     )
+            }),
             BackupSchema._promote_to_backup_object))
 
     @staticmethod
