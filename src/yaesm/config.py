@@ -9,10 +9,10 @@ import voluptuous as vlp
 from yaesm.backend import backendbase
 import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
-from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
+from yaesm.timeframe import Timeframe
 
 class ConfigErrors(Exception):
-    def __init__(self, config_file, errors=[]):
+    def __init__(self, config_file, errors):
         self.config_file = config_file
         self.errors = errors
 
@@ -25,17 +25,21 @@ def parse_config(config_file):
         try:
             config_data = yaml.safe_load(f)
         except yaml.YAMLError as exc:
-            raise ConfigErrors(config_file, errors=[exc])
+            raise ConfigErrors(config_file, [exc])
+    backup_names = sorted(list(config_data.keys())) if config_data else []
+    if not backup_names:
+        raise ConfigErrors(config_file, ["no backups specified"])
+    backup_schema = BackupSchema.schema()
     backups = []
     errors = []
-    for backup_name in sorted(config_data.keys()):
+    for backup_name in backup_names:
         try:
-            backup = BackupSchema.schema(({backup_name: config_data[backup_name]}))
+            backup = backup_schema({backup_name: config_data[backup_name]})
             backups.append(backup)
         except vlp.MultipleInvalid as exc:
             errors += exc.errors
     if errors:
-        raise ConfigErrors(config_file, errors=errors)
+        raise ConfigErrors(config_file, errors)
     return backups
 
 class Schema():
@@ -102,14 +106,31 @@ class BackupSchema(Schema):
             dict,
             BackupSchema._ensure_single_backup,
             BackupSchema._ensure_backup_name_valid,
-            vlp.Schema({
-                str: vlp.All(
-                         BackendSchema.schema(),
-                         SrcDirDstDirSchema.schema(),
-                         TimeframeSchema.schema()
-                     )
-            }),
-            BackupSchema._promote_to_backup_object))
+            BackupSchema._apply_sub_schemas,
+            BackupSchema._promote_to_backup_object)
+        )
+
+    @staticmethod
+    def _apply_sub_schemas(d:dict) -> dict:
+        """Apply all of the sub schemas (TimeframeSchema, SrcDirDstDirSchema, etc)
+        to `d`, mutating d. Collects all errors, and raises a vlp.MultipleInvalid
+        exception with all found errors, if any. This function should only be called
+        after ensuring `d` only contains a single backup.
+        """
+        backup_name = list(d.keys())[0]
+        backup_settings = d[backup_name]
+        errors = []
+        for schema in [BackendSchema.schema(), SrcDirDstDirSchema.schema(), TimeframeSchema.schema()]:
+            try:
+                backup_settings = schema(backup_settings)
+            except vlp.MultipleInvalid as exc:
+                errors += exc.errors
+            except vlp.Invalid as exc:
+                errors.append(exc)
+        if errors:
+            raise vlp.MultipleInvalid(errors)
+        d[backup_name] = backup_settings
+        return d
 
     @staticmethod
     def _promote_to_backup_object(d:dict) -> bckp.Backup:

@@ -5,6 +5,7 @@ import pytest
 import shutil
 import voluptuous as vlp
 from pathlib import Path
+import yaml
 import re
 import random
 
@@ -453,6 +454,27 @@ def test_BackupSchema_ensure_backup_name_valid():
         config.BackupSchema._ensure_backup_name_valid(d)
     assert str(exc.value) == config.BackupSchema.ErrMsg.INVALID_BACKUP_NAME
 
+def test_BackupSchema_apply_sub_schemas(valid_raw_config, path_generator):
+    # success tests
+    for backup_name in sorted(valid_raw_config.keys()):
+        backup_spec = copy.deepcopy({ backup_name : valid_raw_config[backup_name] })
+        backup_spec = config.BackupSchema._apply_sub_schemas(backup_spec)
+        backup_settings = backup_spec[backup_name]
+        assert isinstance(backup_settings["src_dir"], Path) or isinstance(backup_settings["src_dir"], SSHTarget)
+        assert isinstance(backup_settings["dst_dir"], Path) or isinstance(backup_settings["dst_dir"], SSHTarget)
+        assert issubclass(backup_settings["backend"], BackendBase)
+        for tf in backup_settings["timeframes"]:
+            assert isinstance(tf, Timeframe)
+    # failure tests
+    for backup_name in sorted(valid_raw_config.keys()):
+        backup_spec = copy.deepcopy({ backup_name : valid_raw_config[backup_name] })
+        backup_spec[backup_name]["backend"] = "INVALIDBACKEND"
+        backup_spec[backup_name]["src_dir"] = path_generator("non-existent-path", touch=False, mkdir=False)
+        backup_spec[backup_name]["timeframes"].append("INVALIDTIMEFRAMENAME")
+        with pytest.raises(vlp.MultipleInvalid) as exc:
+            backup_spec = config.BackupSchema._apply_sub_schemas(backup_spec)
+        assert len(exc.value.errors) == 3
+
 def test_BackupSchema_promote_to_backup_object(valid_raw_config):
     backup_name = random.choice(list(valid_raw_config.keys()))
     backup = config.BackupSchema._promote_to_backup_object({backup_name : valid_raw_config[backup_name]})
@@ -468,7 +490,7 @@ def test_BackupSchema_schema(valid_raw_config, path_generator):
         assert backup.name == backup_name
         for tframe in backup.timeframes:
             assert isinstance(tframe, Timeframe)
-        assert backup.backend.name() == backup_spec[backup_name]["backend"]
+        assert backup.backend.name() == backup_spec[backup_name]["backend"].name()
         if backup.backup_type == "local_to_local":
             assert isinstance(backup.src_dir, Path)
             assert isinstance(backup.dst_dir, Path)
@@ -511,3 +533,49 @@ def test_BackupSchema_schema(valid_raw_config, path_generator):
             backup_settings["src_dir"] = path_generator("non-existent-dir", mkdir=False)
             schema({ backup_name: backup_settings })
         assert str(exc.value).startswith(config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR)
+
+def test_parse_config(path_generator, valid_config_file_generator):
+    backups = config.parse_config(valid_config_file_generator())
+    assert len(backups) == 3
+    for backup in backups:
+        isinstance(backup, bckp.Backup)
+
+    config_file_copy = path_generator("config-file-copy.yml", touch=False)
+    shutil.copy(valid_config_file_generator(), config_file_copy)
+    with open(config_file_copy, 'a') as f:
+        f.write("invalid yaml syntax")
+    with pytest.raises(config.ConfigErrors) as exc:
+        config.parse_config(config_file_copy)
+    assert len(exc.value.errors) == 1
+    assert isinstance(exc.value.errors[0], yaml.YAMLError)
+
+    empty_file = path_generator("empty-config-file", touch=True)
+    with pytest.raises(config.ConfigErrors) as exc:
+        config.parse_config(empty_file)
+    assert isinstance(exc.value, config.ConfigErrors)
+
+    config_file_invalid = path_generator("config-file-invalid.yml", touch=True)
+    with open(valid_config_file_generator(num_backups=2), 'r') as fr, open(config_file_invalid, 'a') as fw:
+        for line in fr:
+            if line.startswith("  src_dir:"):
+                invalid_path = path_generator("non-existent-path", touch=False)
+                fw.write(f"  src_dir: {invalid_path}\n")
+            elif line.startswith("  backend:"):
+                fw.write("  backend: INVALIDBACKEND\n")
+            elif line.startswith("  dst_dir:"):
+                fw.write("")
+            else:
+                fw.write(line)
+    with open(config_file_invalid, 'r') as f:
+        print(f.read())
+
+    with pytest.raises(config.ConfigErrors) as exc:
+        config.parse_config(config_file_invalid)
+    assert len(exc.value.errors) == 6
+    for exc in exc.value.errors:
+        assert isinstance(exc, vlp.Invalid)
+
+    with pytest.raises(config.ConfigErrors) as exc:
+        config.parse_config(config_file_copy)
+    assert len(exc.value.errors) == 1
+    assert isinstance(exc.value.errors[0], yaml.YAMLError)
