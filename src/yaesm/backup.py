@@ -11,9 +11,8 @@ class BackupError(Exception):
     ...
 
 class Backup:
-    def __init__(self, name, backend, src_dir, dst_dir, timeframes):
+    def __init__(self, name, src_dir, dst_dir, timeframes):
         self.name = name
-        self.backend = backend
         self.src_dir = src_dir
         self.dst_dir = dst_dir
         self.timeframes = timeframes
@@ -28,10 +27,6 @@ class Backup:
             self.backup_type = "remote_to_local"
         else: # remote_to_remote
             raise BackupError(f"backup {self.name} has both src_dir and dst_dir as ssh targets")
-
-def backup_name_valid(backup_name:str) -> bool:
-    """return True if 'backup_name' is a valid backup name, otherwise return False."""
-    return True if re.match("^[a-z][-_:@a-z0-9]*$", backup_name, re.IGNORECASE) else False
 
 def backup_basename_re(backup=None, timeframe=None):
     """Returns a re compiled regex to match a yaesm backup basename. If 'backup'
