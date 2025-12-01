@@ -1,11 +1,9 @@
 import subprocess
 from pathlib import Path
-import voluptuous as vlp
 
 import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
 from yaesm.backend.backendbase import BackendBase
-import yaesm.config as config
 from yaesm.timeframe import Timeframe
 
 class BtrfsBackend(BackendBase):
