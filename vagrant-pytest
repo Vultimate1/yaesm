@@ -144,7 +144,7 @@ if [[ 0 -ne $VM_BUILT ]]; then
         _r vagrant plugin install vagrant-libvirt
     fi
     _r vagrant up --provider libvirt --no-install-provider yaesm-pytest
-    VM_BUILT=1
+    VM_BUILT=0
     _r vagrant halt yaesm-pytest
      VM_STATE=poweroff
     _log 'saving postbuild snapshot of yaesm-pytest VM'
