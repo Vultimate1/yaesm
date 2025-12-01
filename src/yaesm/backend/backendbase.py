@@ -1,8 +1,12 @@
 import abc
 from typing import final
 from pathlib import Path
+import voluptuous as vlp
+import importlib
+from functools import cache
 
 import yaesm.backup as bckp
+import yaesm.config as config
 from yaesm.timeframe import Timeframe
 from yaesm.sshtarget import SSHTarget
 
@@ -40,6 +44,27 @@ class BackendBase(abc.ABC):
             else:
                 self._delete_backups_local(*to_delete)
 
+    @staticmethod
+    @abc.abstractmethod
+    def name() -> str:
+        """Function to return the backend name as a string ('btrfs', 'rsync', etc)."""
+        ...
+
+    @staticmethod
+    def config_schema() -> vlp.Schema:
+        """Returns a voluptuous schema for this backends specific configuration.
+        See the yaesm.config module for more information.
+        """
+        return config.Schema.schema_empty()
+
+    @staticmethod
+    def config_schema_extra() -> vlp.Schema:
+        """Returns a voluptuous schema to be applied to the configuration data
+        circumstantially. More complicated or IO-driven validation should happen
+        in this schema. See the yaesm.config module for more information.
+        """
+        return config.Schema.schema_empty()
+
     @abc.abstractmethod
     def _exec_backup_local_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
         """Execute a single local to local backup for the Backup `backup` in the
@@ -74,3 +99,24 @@ class BackendBase(abc.ABC):
     def _delete_backups_remote(self, *backups):
         """Delete all the remote backups in `*backups` (SSHTargets)."""
         ...
+
+    @final
+    @cache
+    @staticmethod
+    def backend_classes():
+        """Returns a list of all the backend classes.
+
+        We are only able to do this because we use a naming convention for backend
+        classes. Backend modules named "yaesm.backend.${BACKEND_NAME_LOWERCASE}backend".
+        Within each backend module there is a class named "${BACKEND_NAME_CAPITALIZED}Backend".
+        """
+        backend_dir = Path(__file__).parent
+        backend_files = backend_dir.glob("*backend.py")
+        backend_classes = []
+        for f in backend_files:
+            class_name = f.stem.replace("backend", "").capitalize() + "Backend"
+            module_name = f"yaesm.backend.{class_name.lower()}"
+            module = importlib.import_module(module_name)
+            backend_class = getattr(module, class_name)
+            backend_classes.append(backend_class)
+        return backend_classes
