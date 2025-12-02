@@ -120,15 +120,6 @@ VM_BUILT=$?
 vagrant snapshot list --machine-readable yaesm-pytest 2>/dev/null | grep -q ',yaesm-pytest-postbuild-snapshot'
 VM_SNAPSHOT_EXISTS=$?
 
-if [[ 0 -eq $VM_BUILT ]] && [[ 0 -ne $VM_SNAPSHOT_EXISTS ]]; then
-    _die 'yaesm-pytest VM exists but its post-build snapshot does not exist'
-fi
-
-if [[ running == $VM_STATE ]]; then
-    _r vagrant halt yaesm-pytest
-     VM_STATE=poweroff
-fi
-
 if [[ 0 -eq $OPT_VM_FORCE_BUILD ]] && [[ 0 -eq $VM_BUILT ]]; then
     _log 'destroying yaesm-pytest VM'
     _r vagrant destroy -f yaesm-pytest
@@ -136,6 +127,15 @@ if [[ 0 -eq $OPT_VM_FORCE_BUILD ]] && [[ 0 -eq $VM_BUILT ]]; then
     VM_BUILT=1
     VM_SNAPSHOT_EXISTS=1 # snapshots are destroyed along with the VM
     _r vagrant global-status --prune
+fi
+
+if [[ 0 -eq $VM_BUILT ]] && [[ 0 -ne $VM_SNAPSHOT_EXISTS ]]; then
+    _die 'yaesm-pytest VM exists but its post-build snapshot does not exist'
+fi
+
+if [[ running == $VM_STATE ]]; then
+    _r vagrant halt yaesm-pytest
+    VM_STATE=poweroff
 fi
 
 if [[ 0 -ne $VM_BUILT ]]; then
