@@ -11,8 +11,9 @@ class BackupError(Exception):
     ...
 
 class Backup:
-    def __init__(self, name, src_dir, dst_dir, timeframes):
+    def __init__(self, name, backend, src_dir, dst_dir, timeframes):
         self.name = name
+        self.backend = backend
         self.src_dir = src_dir
         self.dst_dir = dst_dir
         self.timeframes = timeframes
@@ -28,9 +29,21 @@ class Backup:
         else: # remote_to_remote
             raise BackupError(f"backup {self.name} has both src_dir and dst_dir as ssh targets")
 
-def backup_basename_re():
-    """Returns a re compiled regex to match a yaesm backup basename."""
-    return re.compile("^yaesm-(.+)-(.+)\\.([0-9]{4})_([0-9]{2})_([0-9]{2})_([0-9]{2}):([0-9]{2})$")
+def backup_name_valid(backup_name:str) -> bool:
+    """return True if 'backup_name' is a valid backup name, otherwise return False."""
+    return True if re.match("^[a-z][-_:@a-z0-9]*$", backup_name, re.IGNORECASE) else False
+
+def backup_basename_re(backup=None, timeframe=None):
+    """Returns a re compiled regex to match a yaesm backup basename. If 'backup'
+    is given, then only match a basename for 'backup'. If 'timeframe' is given,
+    then only match a basename for 'timeframe'.
+    """
+    backup_name_re_component = ".+" if backup is None else backup.name
+    timeframe_name_re_component = ".+" if timeframe is None else timeframe.name
+    return re.compile(
+        f"^yaesm-({backup_name_re_component})-({timeframe_name_re_component})" +
+        "\\.([0-9]{4})_([0-9]{2})_([0-9]{2})_([0-9]{2}):([0-9]{2})$"
+    )
 
 def backup_basename_update_time(backup_basename):
     re_result = backup_basename_re().match(backup_basename)
@@ -65,25 +78,26 @@ def backups_sorted(backups):
     backups_sorted = sorted(backups, key=backup_to_datetime, reverse=True)
     return backups_sorted
 
-def backups_collect(target):
-    """This function collects all the yaesm backups at 'target', which can
-    either be an SSHTarget or a Path. If 'target' is a Path then return a list
-    of Paths of all the yaesm backups on the local system at path 'target'. If
-    'target' is a SSHTarget, then return a list of all the yaesm backups as
-    SSHTargets at the remote 'target.path'.
+def backups_collect(backup, timeframe=None):
+    """This function collects all the yaesm backups for the Backup 'backup'.
+    If the Timeframe 'timeframe' is given, then only collect the backups in this
+    given Timeframe. Remember that all the backups for all the timeframes are
+    stored in the same directory.
     """
     backups = []
-    if isinstance(target, SSHTarget):
-        cmd = f"for f in $(ls -1 '{target.path}'); do if [ -d \"{target.path}/$f\" ]; then printf '%s/%s\\n' '{target.path}' \"$f\"; fi done"
-        p = subprocess.run(target.openssh_cmd(cmd), shell=True, check=True, capture_output=True, encoding="utf-8")
+    backup_basename_re_ = backup_basename_re(backup=backup, timeframe=timeframe)
+    if backup.backup_type == "local_to_remote":
+        sshtarget = backup.dst_dir
+        collect_sh_cmd = f"for f in $(ls -1 '{sshtarget.path}'); do if [ -d \"{sshtarget.path}/$f\" ]; then printf '%s/%s\\n' '{sshtarget.path}' \"$f\"; fi done"
+        p = subprocess.run(sshtarget.openssh_cmd(collect_sh_cmd), shell=True, check=True, capture_output=True, encoding="utf-8")
         for backup in p.stdout.splitlines():
             backup = Path(backup)
-            if backup_basename_re().match(backup.name):
-                backups.append(target.with_path(backup))
-    else: # target is a Path
-        for path in target.iterdir():
-            basename = path.name
-            if path.is_dir() and backup_basename_re().match(basename):
+            if backup_basename_re_.match(backup.name):
+                backups.append(sshtarget.with_path(backup))
+    else:
+        dst_dir = backup.dst_dir
+        for path in dst_dir.iterdir():
+            if path.is_dir() and backup_basename_re_.match(path.name):
                 backups.append(path)
     backups = backups_sorted(backups)
     return backups

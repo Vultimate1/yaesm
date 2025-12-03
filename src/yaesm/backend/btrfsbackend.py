@@ -1,9 +1,11 @@
 import subprocess
 from pathlib import Path
+import voluptuous as vlp
 
 import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
 from yaesm.backend.backendbase import BackendBase
+import yaesm.config as config
 
 class BtrfsBackend(BackendBase):
     """The btrfs backup execution backend. See BackendBase for more details on
@@ -19,6 +21,9 @@ class BtrfsBackend(BackendBase):
     commands 'btrfs subvolume snapshot', 'btrfs subvolume delete', 'btrfs send',
     and 'btrfs receive'.
     """
+    def name():
+        return "btrfs"
+
     def _exec_backup_local_to_local(self, src_dir:Path, backup_path:Path):
         returncode, _ = _btrfs_take_snapshot_local(src_dir, backup_path, check=False)
         if 0 != returncode:

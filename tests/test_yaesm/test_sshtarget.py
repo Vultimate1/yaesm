@@ -62,6 +62,12 @@ def test_with_path(sshtarget):
     assert new_sshtarget.host == sshtarget.host
     assert new_sshtarget.key == sshtarget.key
 
+def test_can_connect(sshtarget, tmp_user):
+    new_sshtarget = sshtarget.with_path(Path("/foo"))
+    assert new_sshtarget.can_connect()
+    new_sshtarget.user = tmp_user.pw_name
+    assert not new_sshtarget.can_connect()
+
 def test_is_dir(sshtarget, path_generator):
     path1 = path_generator("foo")
     path2 = path_generator("bar")
