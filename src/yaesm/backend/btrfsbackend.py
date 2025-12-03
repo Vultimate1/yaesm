@@ -1,10 +1,11 @@
 import subprocess
 from pathlib import Path
+import voluptuous as vlp
 
 import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
 from yaesm.backend.backendbase import BackendBase
-from yaesm.timeframe import Timeframe
+import yaesm.config as config
 
 class BtrfsBackend(BackendBase):
     """The btrfs backup execution backend. See BackendBase for more details on
@@ -20,9 +21,10 @@ class BtrfsBackend(BackendBase):
     commands 'btrfs subvolume snapshot', 'btrfs subvolume delete', 'btrfs send',
     and 'btrfs receive'.
     """
-    def _exec_backup_local_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
-        src_dir = backup.src_dir
-        backup_path = backup.dst_dir.joinpath(bckp.backup_basename_now(backup, timeframe))
+    def name():
+        return "btrfs"
+
+    def _exec_backup_local_to_local(self, src_dir:Path, backup_path:Path):
         returncode, _ = _btrfs_take_snapshot_local(src_dir, backup_path, check=False)
         if 0 != returncode:
             bootstrap_snapshot = _btrfs_bootstrap_local_to_local(src_dir, backup_path.parent)
@@ -30,17 +32,13 @@ class BtrfsBackend(BackendBase):
             _btrfs_send_receive_local_to_local(tmp_snapshot, backup_path.parent, parent=bootstrap_snapshot)
             _btrfs_delete_subvolumes_local(tmp_snapshot)
 
-    def _exec_backup_local_to_remote(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
-        src_dir = backup.src_dir
-        backup_path = backup.dst_dir.with_path(backup.dst_dir.path.joinpath(backup_basename))
+    def _exec_backup_local_to_remote(self, src_dir:Path, backup_path:SSHTarget):
         bootstrap_snapshot = _btrfs_bootstrap_local_to_remote(src_dir, backup_path.with_path(backup_path.path.parent))
         _, tmp_snapshot = _btrfs_take_snapshot_local(src_dir, src_dir.joinpath(backup_path.path.name))
         _btrfs_send_receive_local_to_remote(tmp_snapshot, backup_path.with_path(backup_path.path.parent), parent=bootstrap_snapshot)
         _btrfs_delete_subvolumes_local(tmp_snapshot)
 
-    def _exec_backup_remote_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
-        src_dir = backup.src_dir
-        backup_path = backup.dst_dir.joinpath(backup_basename)
+    def _exec_backup_remote_to_local(self, src_dir:SSHTarget, backup_path:Path):
         bootstrap_snapshot = _btrfs_bootstrap_remote_to_local(src_dir, backup_path.parent)
         _, tmp_snapshot = _btrfs_take_snapshot_remote(src_dir, src_dir.with_path(src_dir.path.joinpath(backup_path.name)))
         _btrfs_send_receive_remote_to_local(tmp_snapshot, backup_path.parent, parent=bootstrap_snapshot)
