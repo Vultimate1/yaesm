@@ -8,13 +8,14 @@ import pwd
 import grp
 import shutil
 import random
-from random import choice
+import yaml
 from string import ascii_lowercase
 from pathlib import Path
 
 import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
+import yaesm.backend.backendbase as backendbase
 
 @pytest.fixture
 def loopback_generator(path_generator):
@@ -77,7 +78,7 @@ def ssh_key_generator(path_generator):
     """
     def generator():
         key = path_generator("id_rsa")
-        subprocess.run(["ssh-keygen", "-N", "", "-t", "rsa", "-b", "4096", "-f", key], check=True)
+        subprocess.run(["ssh-keygen", "-N", "", "-t", "rsa", "-b", "4096", "-f", key], check=True, capture_output=True)
         return key
     return generator
 
@@ -116,7 +117,7 @@ def tmp_user_generator(yaesm_test_users_group, random_string_generator):
             except:
                 break
         subprocess.run(["useradd", "-m", "-G", yaesm_test_users_group.gr_name, username], check=True)
-        subprocess.run(["passwd", "--lock", username], check=True)
+        subprocess.run(["passwd", "--lock", username], check=True, capture_output=True)
         user = pwd.getpwnam(username)
         return user
     return generator
@@ -132,7 +133,7 @@ def tmp_user(tmp_user_generator):
 def random_string_generator():
     """Fixture for generating random ascii lowercase strings of arbitrary length."""
     def generator(length=5):
-        return "".join(choice(ascii_lowercase) for i in range(length))
+        return "".join(random.choice(ascii_lowercase) for i in range(length))
     return generator
 
 @pytest.fixture
@@ -143,7 +144,7 @@ def path_generator(random_string_generator):
     removed during cleanup.
     """
     tmp_paths_to_cleanup = []
-    def generator(name_prefix, base_dir="/tmp", suffix_length=5, mkdir=False, cleanup=False):
+    def generator(name_prefix, base_dir="/tmp", suffix_length=5, mkdir=False, touch=False, cleanup=False):
         base_dir = Path(base_dir)
         tmp_path = None
         while tmp_path is None or tmp_path.exists():
@@ -151,6 +152,8 @@ def path_generator(random_string_generator):
             tmp_path = base_dir.joinpath(basename)
         if mkdir:
             tmp_path.mkdir(parents=True)
+        elif touch:
+            tmp_path.touch(exist_ok=False)
         if cleanup:
             tmp_paths_to_cleanup.append(tmp_path)
         return tmp_path
@@ -162,6 +165,12 @@ def path_generator(random_string_generator):
             path.unlink()
         elif path.is_dir():
             shutil.rmtree(path)
+
+@pytest.fixture
+def random_backend():
+    backends = backendbase.BackendBase.backend_classes()
+    random_backend = random.choice(backends)
+    return random_backend
 
 @pytest.fixture
 def random_filesystem_modifier(path_generator, random_string_generator):
@@ -225,36 +234,50 @@ def random_filesystem_modifier(path_generator, random_string_generator):
     return filesystem_modifier
 
 @pytest.fixture
-def random_backup_generator(random_timeframes_generator, sshtarget, path_generator, random_string_generator):
-    """Fixture for generating random Backups."""
+def random_backup_generator(random_timeframes_generator, btrfs_fs_generator, sshtarget_generator, random_backend, path_generator, random_string_generator):
+    """Fixture for generating a single random `Backup`."""
     names = []
-    def generator(src_dir, dst_dir_base="/tmp", backup_type=None, num_timeframes=3):
-        name = None
-        while name is None or name in names:
-            name = "test-backup-" + random_string_generator()
-        names.append(name)
-        dst_dir = path_generator(f"yaesm-test-backup-dst-dir-{name}-", base_dir=dst_dir_base, mkdir=True)
+    def generator(backend_type=None, backup_type=None, num_timeframes=3):
         backup_type = backup_type if backup_type is not None else random.choice(["local_to_local", "local_to_remote", "remote_to_local"])
         timeframes = random_timeframes_generator(num=num_timeframes)
+
+        if backend_type is None:
+            backend_type = random_backend.name()
+
+        src_dir = None
+        dst_dir = None
+        if backend_type == "btrfs":
+            src_dir = btrfs_fs_generator()
+            dst_dir = btrfs_fs_generator()
+        elif backend_type == "rsync":
+            src_dir = path_generator("rsync-random-backup-src-dir", mkdir=True)
+            dst_dir = path_generator("rsync-random-backup-dst-dir", mkdir=True)
+        else:
+            raise Exception(f"Unknown backend type '{backend_type.name()}'")
+
+        name = None
+        while name is None or name in names:
+            name = "backup_" + random_string_generator()
+        names.append(name)
+
+        if backup_type is None:
+            backup_type = random.choice(["local_to_local", "local_to_remote", "remote_to_local"])
         if backup_type == "local_to_local":
-            return bckp.Backup(name, src_dir, dst_dir, timeframes)
+            return bckp.Backup(name, random_backend, src_dir, dst_dir, timeframes)
         elif backup_type == "local_to_remote":
-            return bckp.Backup(name, src_dir, sshtarget.with_path(dst_dir), timeframes)
+            sshtarget = sshtarget_generator()
+            return bckp.Backup(name, random_backend, src_dir, sshtarget.with_path(dst_dir), timeframes)
         else: # remote_to_local
-            return bckp.Backup(name, sshtarget.with_path(src_dir), dst_dir, timeframes)
+            sshtarget = sshtarget_generator()
+            return bckp.Backup(name, random_backend, sshtarget.with_path(src_dir), dst_dir, timeframes)
     return generator
 
 @pytest.fixture
-def random_backups_generator(random_backup_generator):
-    """Fixture for generating a list of random Backups. See 'random_backup_generator'
-    for more information.
+def random_backup(random_backup_generator):
+    """Fixture to provide a random `Backup`. See the `random_backup_generator`
+    fixture for more details on how the `Backup` is generated.
     """
-    def generator(num=3, src_dir_base="/tmp", dst_dir_base="/tmp", num_timeframes=3):
-        backups = []
-        for _ in range(num):
-            backups.append(random_backup_generator, src_dir_base=src_dir_base, dst_dir_base=dst_dir_base, num_timeframes=num_timeframes)
-        return backups
-    return generator
+    return random_backup_generator()
 
 @pytest.fixture
 def sshtarget_generator(localhost_server_generator):
@@ -282,12 +305,12 @@ def random_timeframe_generator(random_timeframe_times_generator, random_timefram
     """Fixture for generating random Timeframes."""
     def generator(tframe_type=None, keep=None, minutes=None, times=None, weekdays=None, monthdays=None, yeardays=None) -> Timeframe:
         tframe_type = random.choice(Timeframe.tframe_types()) if tframe_type is None else tframe_type
-        keep        = random.randint(0,10) if keep is None else keep
-        minutes     = random_timeframe_minutes_generator(random.randint(0,5)) if minutes is None else minutes
-        times       = random_timeframe_times_generator(random.randint(0,5)) if times is None else times
-        weekdays    = random_timeframe_weekdays_generator(random.randint(0,3)) if weekdays is None else weekdays
-        monthdays   = random_timeframe_monthdays_generator(random.randint(0,3)) if monthdays is None else monthdays
-        yeardays    = random_timeframe_yeardays_generator(random.randint(0,3)) if yeardays is None else yeardays
+        keep        = random.randint(1,10) if keep is None else keep
+        minutes     = random_timeframe_minutes_generator(random.randint(1,5)) if minutes is None else minutes
+        times       = random_timeframe_times_generator(random.randint(1,5)) if times is None else times
+        weekdays    = random_timeframe_weekdays_generator(random.randint(1,3)) if weekdays is None else weekdays
+        monthdays   = random_timeframe_monthdays_generator(random.randint(1,3)) if monthdays is None else monthdays
+        yeardays    = random_timeframe_yeardays_generator(random.randint(1,3)) if yeardays is None else yeardays
         if tframe_type == FiveMinuteTimeframe:
             return FiveMinuteTimeframe(keep)
         elif tframe_type == HourlyTimeframe:
@@ -354,7 +377,7 @@ def random_timeframe_times_generator(random_timeframe_timespecs_generator):
     """Fixture to generate a list of random timeframe times."""
     def generator(num=3):
         timespecs = random_timeframe_timespecs_generator(num=num)
-        times = list(map(lambda x: Timeframe.timespec_to_time(x), timespecs))
+        times = list(map(lambda x: tuple(map(int, x.split(':'))), timespecs))
         return times
     return generator
 
@@ -395,11 +418,11 @@ def btrfs_fs_generator(path_generator, loopback_generator):
     def generator():
         mountpoint = path_generator("test-yaesm-btrfs-mountpoint", base_dir="/mnt", mkdir=True)
         loop = loopback_generator()
-        subprocess.run(["mkfs", "-t", "btrfs", loop], check=True)
-        subprocess.run(["mount", loop, mountpoint], check=True)
-        subprocess.run(["btrfs", "subvolume", "create", f"{mountpoint}/@"], check=True)
-        subprocess.run(["umount", mountpoint], check=True)
-        subprocess.run(["mount", loop, "-o", "rw,noatime,subvol=@", mountpoint], check=True)
+        subprocess.run(["mkfs", "-t", "btrfs", loop], check=True, capture_output=True)
+        subprocess.run(["mount", loop, mountpoint], check=True, capture_output=True)
+        subprocess.run(["btrfs", "subvolume", "create", f"{mountpoint}/@"], check=True, capture_output=True)
+        subprocess.run(["umount", mountpoint], check=True, capture_output=True)
+        subprocess.run(["mount", loop, "-o", "rw,noatime,subvol=@", mountpoint], check=True, capture_output=True)
         return mountpoint
     return generator
 
@@ -428,6 +451,91 @@ def btrfs_sudo_access(yaesm_test_users_group):
         with open(sudo_rule_file, "w") as f:
             for rule in sudoers_rules:
                 f.write(rule + "\n")
+    return True
+
+@pytest.fixture
+def valid_raw_config_generator(random_backup_generator):
+    """Fixture to generate a valid raw configuration dict. A raw configuration
+    is a dict that comes directly after parsing the user configuration yaml
+    file, before it goes through the configuration validation and type promotion
+    code in yaesm.config.
+
+    TODO: backend specific config settings
+    """
+    def generator(num_backups=3):
+        backups = []
+        for _ in range(num_backups):
+            backups.append(random_backup_generator())
+        config = {}
+        for backup in backups:
+            backup_settings = {}
+            backup_settings["backend"] = backup.backend.name()
+            if backup.backup_type == "local_to_local":
+                backup_settings["src_dir"] = str(backup.src_dir)
+                backup_settings["dst_dir"] = str(backup.dst_dir)
+            elif backup.backup_type == "local_to_remote":
+                backup_settings["src_dir"] = str(backup.src_dir)
+                backup_settings["dst_dir"] = backup.dst_dir.spec
+                backup_settings["ssh_key"] = str(backup.dst_dir.key)
+                if backup.dst_dir.sshconfig:
+                    backup_settings["ssh_config"] = str(backup.dst_dir.sshconfig)
+            else: # backup.backup_type == "remote_to_local":
+                backup_settings["src_dir"] = backup.src_dir.spec
+                backup_settings["dst_dir"] = str(backup.dst_dir)
+                backup_settings["ssh_key"] = str(backup.src_dir.key)
+                if backup.src_dir.sshconfig:
+                    backup_settings["ssh_config"] = str(backup.src_dir.sshconfig)
+            timeframes = []
+            for tframe in backup.timeframes:
+                timeframes.append(tframe.name)
+                backup_settings[f"{tframe.name}_keep"] = tframe.keep
+                if isinstance(tframe, FiveMinuteTimeframe):
+                    ...
+                elif isinstance(tframe, HourlyTimeframe):
+                    backup_settings[f"{tframe.name}_minutes"] = tframe.minutes
+                elif isinstance(tframe, DailyTimeframe):
+                    backup_settings[f"{tframe.name}_times"] = tframe.times
+                elif isinstance(tframe, WeeklyTimeframe):
+                    backup_settings[f"{tframe.name}_times"] = tframe.times
+                    backup_settings[f"{tframe.name}_days"] = tframe.weekdays
+                elif isinstance(tframe, MonthlyTimeframe):
+                    backup_settings[f"{tframe.name}_times"] = tframe.times
+                    backup_settings[f"{tframe.name}_days"] = tframe.monthdays
+                elif isinstance(tframe, YearlyTimeframe):
+                    backup_settings[f"{tframe.name}_times"] = tframe.times
+                    backup_settings[f"{tframe.name}_days"] = tframe.yeardays
+            backup_settings["timeframes"] = timeframes
+            config[backup.name] = backup_settings
+        return config
+    return generator
+
+@pytest.fixture
+def valid_raw_config(valid_raw_config_generator):
+    """Fixture to provide a single valid raw configuration dict. See the
+    'valid_raw_config_generator' fixture for more details.
+    """
+    return valid_raw_config_generator()
+
+@pytest.fixture
+def valid_config_file_generator(path_generator, valid_raw_config_generator):
+    """Fixture to generate random valid yaesm configuration files. Returns a
+    Path to the generated config file.
+    """
+    def generator(num_backups=3):
+        yaml_str = ""
+        for _ in range(num_backups):
+            yaml_str += yaml.safe_dump(valid_raw_config_generator(num_backups=1)) + "\n"
+        config_file = path_generator("config-file.yml", touch=True)
+        config_file.write_text(yaml_str)
+        return config_file
+    return generator
+
+@pytest.fixture
+def valid_config_file(valid_config_file_generator):
+    """Fixture to provide a valid configuration yaml file. See the
+    `valid_config_file_generator` fixture for more details.
+    """
+    return valid_config_file_generator()
 
 @pytest.fixture
 def rm_sudo_access(yaesm_test_users_group):

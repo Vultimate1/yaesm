@@ -1,23 +1,15 @@
-import abc
+"""src/yaesm/timeframe.py"""
+import dataclasses
 from typing import final
-import re
 
-class Timeframe(abc.ABC):
-    """Timeframe is an abstract base class for the different timeframe types.
-    None of the Timeframe classes do validity checking on their initialization
-    arguments, however all the tools for checking their validity are provided
-    as static methods in the base Timeframe class.
+class Timeframe():
+    """Timeframe is a base class for the different timeframe types. None of the
+    Timeframe classes do validity checking on their initialization arguments.
 
     See the subclasses of Timeframe for more details.
 
     Also see test_timeframe.py for more examples of how to use Timeframes.
     """
-    @staticmethod
-    @abc.abstractmethod
-    def required_config_settings():
-        """Return the required configuration settings for the Timeframe subclass."""
-        ...
-
     @final
     @staticmethod
     def tframe_types(names=False):
@@ -30,89 +22,7 @@ class Timeframe(abc.ABC):
         else:
             return [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe]
 
-    @final
-    @staticmethod
-    def timespec_to_time(timespec):
-        """Return a time from a timespec. A timespec is a string that matches the
-        regex [0-9]{2}:[0-9]{2} where the first number before the : represents the hour,
-        and the number after the : represents the minute. A time is a pair where the
-        first element is an int representing the hour, and the second element is
-        an int representing the minute. Note that this function expects to be
-        given a valid timespec.
-
-        See Timeframe.valid_timespec() for more information.
-        """
-        timespec_re = re.compile("([0-9]{2}):([0-9]{2})")
-        re_result = timespec_re.match(timespec)
-        hour = int(re_result.group(1))
-        minute = int(re_result.group(2))
-        return (hour, minute)
-
-    @final
-    @staticmethod
-    def valid_keep(keep):
-        """Return True if 'keep' is a valid value for a timeframes 'keep' variable."""
-        return isinstance(keep, int) and keep >= 0
-
-    @final
-    @staticmethod
-    def valid_weekday(weekday):
-        """Return True if 'weekday' is a valid weekday, and return False otherwise."""
-        return weekday in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-
-    @final
-    @staticmethod
-    def valid_monthday(monthday):
-        """Return True if 'monthday' is a valid monthday, and return False otherwise."""
-        return isinstance(monthday, int) and monthday >= 1 and monthday <= 31
-
-    @final
-    @staticmethod
-    def valid_yearday(yearday, leap=False):
-        """If 'leap' is True then return True if 'yearday' is a valid yearday in
-        a leap year, and return False otherwise. If 'leap' is false then return
-        True if 'yearday' is a valid yearday in a non-leap year, and return
-        False otherwise.
-        """
-        max_yearday = 366 if leap else 365
-        return isinstance(yearday, int) and yearday >= 1 and yearday <= max_yearday
-
-    @final
-    @staticmethod
-    def valid_minute(minute):
-        """Return True if 'minute' is a valid minute and return False otherwise."""
-        return isinstance(minute, int) and minute >= 0 and minute <= 59
-
-    @final
-    @staticmethod
-    def valid_hour(hour):
-        """Return True if 'hour' is a valid hour and return False otherwise."""
-        return isinstance(hour, int) and hour >= 0 and hour <= 23
-
-    @final
-    @staticmethod
-    def valid_timespec(timespec):
-        """Return True if 'time' is a valid timespec and return False otherwise.
-        See 'Timeframe.timespec_to_time()' for more information on timespecs and
-        times.
-        """
-        timespec_re = re.compile("([0-9]{2}):([0-9]{2})")
-        if re_result := timespec_re.match(timespec):
-            hour = int(re_result.group(1))
-            minute = int(re_result.group(2))
-            return Timeframe.valid_hour(hour) and Timeframe.valid_minute(minute)
-        else:
-            return False
-
-    @final
-    @staticmethod
-    def valid_time(time):
-        """Return True if time is a pair where its first element represents a
-        valid hour and its second element represents a valid minute. Return
-        False otherwise.
-        """
-        return Timeframe.valid_hour(time[0]) and Timeframe.valid_minute(time[1])
-
+@dataclasses.dataclass
 class FiveMinuteTimeframe(Timeframe):
     """The 5minute timeframe represents backups to be taken every 5 minutes.
     The 'keep' instance variable is a whole number that represents the maximum
@@ -122,10 +32,7 @@ class FiveMinuteTimeframe(Timeframe):
         self.name = "5minute"
         self.keep = keep
 
-    @staticmethod
-    def required_config_settings():
-        return ["5minute_keep"]
-
+@dataclasses.dataclass
 class HourlyTimeframe(Timeframe):
     """The hourly timeframe represents backups to be taken every hour at some set
     of minutes. The 'minutes' instance variable is a list of ints with values in
@@ -138,10 +45,7 @@ class HourlyTimeframe(Timeframe):
         self.keep = keep
         self.minutes = minutes
 
-    @staticmethod
-    def required_config_settings():
-        return ["hourly_keep", "hourly_minutes"]
-
+@dataclasses.dataclass
 class DailyTimeframe(Timeframe):
     """The daily timeframe represents backups to be taken every day at some set
     of times in the day. The 'times' instance variable represents the times in
@@ -156,10 +60,7 @@ class DailyTimeframe(Timeframe):
         self.keep = keep
         self.times = times
 
-    @staticmethod
-    def required_config_settings():
-        return ["daily_keep", "daily_times"]
-
+@dataclasses.dataclass
 class WeeklyTimeframe(Timeframe):
     """The weekly timeframe represents backups to be taken every week at some
     set of days in the week, at some set of times in those days. The 'weekdays'
@@ -177,10 +78,7 @@ class WeeklyTimeframe(Timeframe):
         self.times = times
         self.weekdays = weekdays
 
-    @staticmethod
-    def required_config_settings():
-        return ["weekly_keep", "weekly_times", "weekly_days"]
-
+@dataclasses.dataclass
 class MonthlyTimeframe(Timeframe):
     """The monthly timeframe represents backups to be taken every month at some
     set of days in the month, and at some set of times in those days. The
@@ -198,10 +96,7 @@ class MonthlyTimeframe(Timeframe):
         self.times = times
         self.monthdays = monthdays
 
-    @staticmethod
-    def required_config_settings():
-        return ["monthly_keep", "monthly_times", "monthly_days"]
-
+@dataclasses.dataclass
 class YearlyTimeframe(Timeframe):
     """The yearly timeframe represents backups to be taken every year at some
     set of days in the year, and at some set of times in those days. The
@@ -218,7 +113,3 @@ class YearlyTimeframe(Timeframe):
         self.keep = keep
         self.times = times
         self.yeardays = yeardays
-
-    @staticmethod
-    def required_config_settings():
-        return ["yearly_keep", "yearly_times", "yearly_days"]

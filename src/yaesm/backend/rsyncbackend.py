@@ -11,6 +11,9 @@ class RsyncBackend(BackendBase):
     """The rysnc backup execution backend. See BackendBase for more details on
     backup execution backends in general.
     """
+    def name():
+        return "rsync"
+
     def _exec_backup_local_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
         return self._exec_backup(backup, backup_basename, timeframe)
 
