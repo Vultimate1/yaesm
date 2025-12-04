@@ -15,7 +15,7 @@ def btrfs_backend():
 
 def test_do_backup(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_access, path_generator):
     for backup_type in ["local_to_local", "local_to_remote,", "remote_to_local"]:
-        backup = random_backup_generator(btrfs_fs, backup_type=backup_type, dst_dir_base=btrfs_fs)
+        backup = random_backup_generator(backend_type="btrfs", backup_type=backup_type)
         timeframe = backup.timeframes[0]
         timeframe.keep = 3
         now = datetime.now()
@@ -30,11 +30,8 @@ def test_do_backup(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_
         assert expected_backup_basenames[0:timeframe.keep] == backup_basenames
 
 def test_exec_backup_local_to_local(btrfs_backend, random_backup_generator, btrfs_fs_generator):
-    btrfs_fs1 = btrfs_fs_generator()
-    btrfs_fs2 = btrfs_fs_generator()
-
     with freeze_time("1999-05-13 23:59"):
-        backup_diff_fs = random_backup_generator(btrfs_fs1, backup_type="local_to_local", dst_dir_base=btrfs_fs2)
+        backup_diff_fs = random_backup_generator(backend_type="btrfs", backup_type="local_to_local")
         timeframe = backup_diff_fs.timeframes[0]
         backup_path = backup_diff_fs.dst_dir.joinpath(f"yaesm-{backup_diff_fs.name}-{timeframe.name}.1999_05_13_23:59")
         assert not backup_path.is_dir()
@@ -42,7 +39,7 @@ def test_exec_backup_local_to_local(btrfs_backend, random_backup_generator, btrf
         assert backup_path.is_dir()
 
     with freeze_time("1999-05-13 23:59"):
-        backup_same_fs = random_backup_generator(btrfs_fs1, backup_type="local_to_local", dst_dir_base=btrfs_fs1)
+        backup_same_fs = random_backup_generator(backend_type="btrfs", backup_type="local_to_local")
         timeframe = backup_same_fs.timeframes[0]
         backup_path = backup_same_fs.dst_dir.joinpath(f"yaesm-{backup_same_fs.name}-{timeframe.name}.1999_05_13_23:59")
         assert not backup_path.is_dir()
@@ -50,7 +47,7 @@ def test_exec_backup_local_to_local(btrfs_backend, random_backup_generator, btrf
         assert backup_path.is_dir()
 
 def test_exec_backup_local_to_remote(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_access):
-    backup = random_backup_generator(btrfs_fs, backup_type="local_to_remote", dst_dir_base=btrfs_fs)
+    backup = random_backup_generator(backend_type="btrfs", backup_type="local_to_remote")
     timeframe = backup.timeframes[0]
     with freeze_time("1999-05-13 23:59"):
         backup_path = backup.dst_dir.path.joinpath(f"yaesm-{backup.name}-{timeframe.name}.1999_05_13_23:59")
@@ -59,7 +56,7 @@ def test_exec_backup_local_to_remote(btrfs_backend, random_backup_generator, btr
         assert backup_path.is_dir()
 
 def test_exec_backup_remote_to_local(btrfs_backend, random_backup_generator, btrfs_fs, btrfs_sudo_access):
-    backup = random_backup_generator(btrfs_fs, backup_type="remote_to_local", dst_dir_base=btrfs_fs)
+    backup = random_backup_generator(backend_type="btrfs", backup_type="remote_to_local")
     timeframe = backup.timeframes[0]
     with freeze_time("1999-05-13 23:59"):
         backup_path = backup.dst_dir.joinpath(f"yaesm-{backup.name}-{timeframe.name}.1999_05_13_23:59")

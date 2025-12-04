@@ -33,7 +33,7 @@ class BackendBase(abc.ABC):
         elif backup.backup_type == "local_to_remote":
             self._exec_backup_local_to_remote(backup, backup_basename, timeframe)
         else: # remote_to_local
-            self._exec_backup_remote_to_local(backup.src_dir, backup.dst_dir.joinpath(backup_basename))
+            self._exec_backup_remote_to_local(backup, backup_basename, timeframe)
         backups = bckp.backups_collect(backup, timeframe=timeframe) # sorted newest to oldest
         to_delete = []
         while len(backups) > timeframe.keep:

@@ -172,6 +172,7 @@ def random_backend():
     random_backend = random.choice(backends)
     return random_backend
 
+@pytest.fixture
 def random_filesystem_modifier(path_generator, random_string_generator):
     """Fixture that provides a function to randomly make changes to a directory.
     Changes include creating new files, deleting files, and modifying files.
@@ -241,16 +242,16 @@ def random_backup_generator(random_timeframes_generator, btrfs_fs_generator, ssh
         timeframes = random_timeframes_generator(num=num_timeframes)
 
         if backend_type is None:
-            backend_type = random_backend
+            backend_type = random_backend.name()
 
         src_dir = None
         dst_dir = None
-        if backend_type.name() == "btrfs":
+        if backend_type == "btrfs":
             src_dir = btrfs_fs_generator()
             dst_dir = btrfs_fs_generator()
-        elif backend_type.name() == "rsync":
+        elif backend_type == "rsync":
             src_dir = path_generator("rsync-random-backup-src-dir", mkdir=True)
-            src_dir = path_generator("rsync-random-backup-dst-dir", mkdir=True)
+            dst_dir = path_generator("rsync-random-backup-dst-dir", mkdir=True)
         else:
             raise Exception(f"Unknown backend type '{backend_type.name()}'")
 
