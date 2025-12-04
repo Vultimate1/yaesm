@@ -29,10 +29,9 @@ class BackendBase(abc.ABC):
         """
         backup_basename = bckp.backup_basename_now(backup, timeframe)
         if backup.backup_type == "local_to_local":
-            self._exec_backup_local_to_local(backup.src_dir, backup.dst_dir.joinpath(backup_basename))
+            self._exec_backup_local_to_local(backup, backup_basename, timeframe)
         elif backup.backup_type == "local_to_remote":
-            backup_path = backup.dst_dir.with_path(backup.dst_dir.path.joinpath(backup_basename))
-            self._exec_backup_local_to_remote(backup.src_dir, backup_path)
+            self._exec_backup_local_to_remote(backup, backup_basename, timeframe)
         else: # remote_to_local
             self._exec_backup_remote_to_local(backup.src_dir, backup.dst_dir.joinpath(backup_basename))
         backups = bckp.backups_collect(backup, timeframe=timeframe) # sorted newest to oldest
@@ -67,40 +66,38 @@ class BackendBase(abc.ABC):
         return config.Schema.schema_empty()
 
     @abc.abstractmethod
-    def _exec_backup_local_to_local(self, src_dir:Path, backup_path:Path):
-        """Execute a single local to local backup of 'src_dir' and place it at
-        'backup_path', whos parent dir should be an existing directory on the
-        local system, and whos basename will be the backup name. Does not
-        perform any cleanup.
+    def _exec_backup_local_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
+        """Execute a single local to local backup for the Backup `backup` in the
+        Timeframe `timeframe`. The resulting backup will have basename
+        `backup_basename`. Note that this function does not perform any cleanup.
         """
         ...
 
     @abc.abstractmethod
-    def _exec_backup_local_to_remote(self, src_dir:Path, backup_path:SSHTarget):
-        """Execute a single local to remote backup of 'src_dir' and place it at
-        the SSHTarget 'backup_path', which should have a .path whos parent should
-        be an existing directory on the remote server, and whos basename will
-        be the backup name. Does not perform any cleanup.
+    def _exec_backup_local_to_remote(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
+        """Execute a single local to remote backup for the Backup `backup` in
+        the Timeframe `timeframe`. The resulting backup backup will have
+        basename `backup_basename`. Note that this function does not perform any
+        cleanup.
         """
         ...
 
     @abc.abstractmethod
-    def _exec_backup_remote_to_local(self, src_dir:SSHTarget, backup_path:Path):
-        """Execute a single remote to local backup of the SSHTarget 'src_dir'
-        and place it at the local 'backup_path', whos parent dir should be an
-        existing directory on the local system, and whos basename will be the
-        backup name. Does not perform any cleanup.
+    def _exec_backup_remote_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
+        """Execute a single remote to local backup for the Backup `backup` in
+        the Timeframe `timeframe`. The resulting backup will have basename
+        `backup_basename`. Note that this function does not perform any cleanup.
         """
         ...
 
     @abc.abstractmethod
     def _delete_backups_local(self, *backups):
-        """Delete all the local backups in '*backups' (Paths)."""
+        """Delete all the local backups in `*backups` (Paths)."""
         ...
 
     @abc.abstractmethod
     def _delete_backups_remote(self, *backups):
-        """Delete all the remote backups in '*backups' (SSHTargets)."""
+        """Delete all the remote backups in `*backups` (SSHTargets)."""
         ...
 
     @final

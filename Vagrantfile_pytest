@@ -4,11 +4,7 @@
 Vagrant.configure("2") do |config|
   config.vm.define "yaesm-pytest" do |config| 
     
-    config.vm.box = "ubuntu/jammy64"
-
-    config.vm.provider "virtualbox" do |vb|
-      vb.gui = false
-    end
+    config.vm.box = "alvistack/ubuntu-24.04" # supports libvirt, and 24.04 is lts
 
     # rsync is one-way, so modifications on guest don't affect host
     config.vm.synced_folder ".", "/home/vagrant/yaesm", type: "rsync",
@@ -18,24 +14,24 @@ Vagrant.configure("2") do |config|
     config.vm.provision "shell", inline: <<-SHELL
       set -e
 
-      apt update -y
-      apt upgrade -y
+      apt-get update -y
+      apt-get upgrade -y
 
       # OPENSSH (already installed)
       ssh-keyscan localhost >~/.ssh/known_hosts 2>/dev/null
       chmod 0600 ~/.ssh/known_hosts
 
       # PYTHON
-      apt install -y python3 python3-venv
+      apt-get install -y python3 python3-venv
 
       # RSYNC (already installed)
-      ###apt install -y rsync
+      ###apt-get install -y rsync
 
       # BTRFS
-      apt install -y btrfs-progs
+      apt-get install -y btrfs-progs
 
       # ZFS
-      apt install -y zfsutils-linux
+      apt-get install -y zfsutils-linux
 
       # PYTEST ENV
       (

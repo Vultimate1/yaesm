@@ -172,6 +172,66 @@ def random_backend():
     random_backend = random.choice(backends)
     return random_backend
 
+def random_filesystem_modifier(path_generator, random_string_generator):
+    """Fixture that provides a function to randomly make changes to a directory.
+    Changes include creating new files, deleting files, and modifying files.
+    Returns a triple containing Path's of the new files, deleted files, and
+    modified files.
+
+    The modifier function takes an option `strip_path` that when True (default)
+    removes the input path prefix from the returned file lists.
+    """
+    def filesystem_modifier(path, strip_path=True):
+        new_files = []
+        deleted_files = []
+        modified_files = []
+        existing_files = []
+        for root, _, files in os.walk(path):
+            for f in files:
+                existing_files.append(Path(os.path.join(root, f)))
+        for i in range(random.randint(5, 70)):
+            mod = i % 10
+            if mod < 5: # new file
+                p = path
+                depth = random.randint(0, 5)
+                for i in range(depth):
+                    p = path_generator("dir", base_dir=p, mkdir=True)
+                f = None
+                while f is None or f.is_file():
+                    f = p.joinpath(random_string_generator() + ".txt")
+                with open(f, "w") as fw:
+                    fw.write(random_string_generator() + "\n")
+                new_files.append(f)
+                existing_files.append(f)
+            elif mod < 8: # modify file
+                f = random.choice(existing_files)
+                if f not in modified_files and f not in new_files:
+                    with open(f, "a") as fa:
+                        fa.write(random_string_generator() + "\n")
+                    modified_files.append(f)
+            else: # delete file
+                f = random.choice(existing_files)
+                if f and f not in new_files and f not in modified_files:
+                    f.unlink()
+                    existing_files.remove(f)
+                    deleted_files.append(f)
+        if strip_path:
+            prefix_len = len(f"{path}")
+            for i in range(len(new_files)):
+                f = f"{new_files[i]}"
+                f = f[prefix_len:]
+                new_files[i] = Path(f)
+            for i in range(len(deleted_files)):
+                f = f"{deleted_files[i]}"
+                f = f[prefix_len:]
+                deleted_files[i] = Path(f)
+            for i in range(len(modified_files)):
+                f = f"{modified_files[i]}"
+                f = f[prefix_len:]
+                modified_files[i] = Path(f)
+        return new_files, deleted_files, modified_files        
+    return filesystem_modifier
+
 @pytest.fixture
 def random_backup_generator(random_timeframes_generator, btrfs_fs_generator, sshtarget_generator, random_backend, path_generator, random_string_generator):
     """Fixture for generating a single random `Backup`."""
@@ -373,7 +433,7 @@ def btrfs_fs(btrfs_fs_generator):
     return btrfs_fs_generator()
 
 @pytest.fixture
-def btrfs_sudo_access(yaesm_test_users_group, tmp_path_factory):
+def btrfs_sudo_access(yaesm_test_users_group):
     """Fixture to give users in the 'yaesm_test_users_group' group passwordless
     sudo access to the 'btrfs' executable. Users created with the 'tmp_user_generator'
     fixture are always assigned membership to this group.
@@ -475,3 +535,16 @@ def valid_config_file(valid_config_file_generator):
     `valid_config_file_generator` fixture for more details.
     """
     return valid_config_file_generator()
+
+@pytest.fixture
+def rm_sudo_access(yaesm_test_users_group):
+    """Fixture to give users in the 'yaesm_test_users_group' group passwordless
+    sudo access to the 'rm' executable. Users created with the 'tmp_user_generator'
+    fixture are always assigned membership to this group.
+    """
+    rm = shutil.which("rm")
+    rule = f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {rm} -r -f *yaesm*" # This is not actually safe sudoer rule and should never be in actual use. Sudo version 1.9.10 added regular expression support for sudoer rules that can be used to craft a safe rule. Unfortunately the OS we test on (Ubuntu Jammy) only uses sudo version 1.9.9.
+    sudo_rule_file = Path("/etc/sudoers.d/yaesm-test-rm-sudo-rule")
+    if not sudo_rule_file.is_file():
+        with open(sudo_rule_file, "w") as f:
+            f.write(rule + "\n")

@@ -474,5 +474,4 @@ class SrcDirDstDirSchema(Schema):
                 raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.SSH_CONNECTION_FAILED_TO_ESTABLISH)
             if not sshtarget.is_dir(d=sshtarget.path):
                 raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.REMOTE_DIR_INVALID)
-
         return d
