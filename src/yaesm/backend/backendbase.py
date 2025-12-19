@@ -22,6 +22,9 @@ class BackendBase(abc.ABC):
     It is important to note that it is expected that backup.dst_dir is an existing
     directory (regardless of if it is a Path or SSHTarget).
     """
+    def __init__(self, extra_opts=None):
+        self.extra_opts = extra_opts
+
     @final
     def do_backup(self, backup:bckp.Backup, timeframe:Timeframe):
         """Perform a backup of 'backup' for the Timeframe 'timeframe'. Note that
@@ -44,11 +47,16 @@ class BackendBase(abc.ABC):
             else:
                 self._delete_backups_local(*to_delete)
 
-    @staticmethod
-    @abc.abstractmethod
-    def name() -> str:
-        """Function to return the backend name as a string ('btrfs', 'rsync', etc)."""
-        ...
+    @final
+    @classmethod
+    def name(cls) -> str:
+        """Automatically derive backend name from class name.
+
+        Converts 'BtrfsBackend' -> 'btrfs', 'RsyncBackend' -> 'rsync', etc.
+        """
+        class_name = cls.__name__
+        backend_name = class_name[:-7]  # Remove 'Backend' suffix
+        return backend_name.lower()
 
     @staticmethod
     def config_schema() -> vlp.Schema:

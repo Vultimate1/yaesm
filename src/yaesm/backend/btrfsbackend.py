@@ -1,11 +1,9 @@
 import subprocess
 from pathlib import Path
-import voluptuous as vlp
 
 import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
 from yaesm.backend.backendbase import BackendBase
-import yaesm.config as config
 from yaesm.timeframe import Timeframe
 
 class BtrfsBackend(BackendBase):
@@ -22,9 +20,6 @@ class BtrfsBackend(BackendBase):
     commands 'btrfs subvolume snapshot', 'btrfs subvolume delete', 'btrfs send',
     and 'btrfs receive'.
     """
-    def name():
-        return "btrfs"
-      
     def _exec_backup_local_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
         src_dir = backup.src_dir
         backup_path = backup.dst_dir.joinpath(bckp.backup_basename_now(backup, timeframe))

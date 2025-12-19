@@ -114,15 +114,20 @@ class BackupSchema(Schema):
     def _apply_sub_schemas(d:dict) -> dict:
         """Apply all of the sub schemas (TimeframeSchema, SrcDirDstDirSchema, etc)
         to `d`, mutating d. Collects all errors, and raises a vlp.MultipleInvalid
-        exception with all found errors, if any. This function should only be called
-        after ensuring `d` only contains a single backup.
+        exception with all found errors, if any. This function is also
+        responsible for applying the proper backend-specific schema. Only call
+        this function after ensuring `d` contains just a single backup.
         """
         backup_name = list(d.keys())[0]
         backup_settings = d[backup_name]
         errors = []
-        for schema in [BackendSchema.schema(), SrcDirDstDirSchema.schema(), TimeframeSchema.schema()]:
+        for schema_class in [BackendSchema, SrcDirDstDirSchema, TimeframeSchema]:
+            schema = schema_class.schema()
             try:
                 backup_settings = schema(backup_settings)
+                if schema_class == BackendSchema:
+                    backend_schema = backup_settings["backend"].config_schema()
+                    backup_settings = backend_schema(backup_settings)
             except vlp.MultipleInvalid as exc:
                 errors += exc.errors
             except vlp.Invalid as exc:
@@ -141,6 +146,8 @@ class BackupSchema(Schema):
         backup_name = list(d.keys())[0]
         backup_settings = d[backup_name]
         backend_obj = backup_settings["backend"]
+        if backup_settings.get("extra_opts"):
+            backend_obj.extra_opts = backup_settings["extra_opts"]
         timeframes = backup_settings["timeframes"]
         src_dir = backup_settings["src_dir"]
         dst_dir = backup_settings["dst_dir"]
@@ -175,14 +182,17 @@ class BackendSchema(Schema):
         """Schema that accepts a dict with a single key 'backend' with a value
         that is a string dentoting a valid backend name (like 'btrfs' or 'rsync').
 
-        This schema Outputs a dict witht he backend name promoted to its
+        This schema Outputs a dict with the backend name promoted to its
         corresponding backend class.
         """
         return vlp.Schema(vlp.All({
             vlp.Required("backend"): vlp.In(
                 [cls.name() for cls in backendbase.BackendBase.backend_classes()],
                 msg=BackendSchema.ErrMsg.INVALID_BACKEND_NAME
-            )}, BackendSchema._dict_promote_backend_name_to_backend_class), extra=vlp.ALLOW_EXTRA)
+            )},
+            BackendSchema._dict_promote_backend_name_to_backend_class,
+            BackendSchema._apply_backend_specific_schema
+            ), extra=vlp.ALLOW_EXTRA)
 
     @staticmethod
     def _dict_promote_backend_name_to_backend_class(d:dict) -> dict:
@@ -192,6 +202,14 @@ class BackendSchema(Schema):
             if backend_name == backend_class.name():
                 d["backend"] = backend_class
                 break
+        return d
+
+    @staticmethod
+    def _apply_backend_specific_schema(d:dict) -> dict:
+        """TODO"""
+        backend_class = d["backend"]
+        backend_schema = backend_class.config_schema()
+        d = backend_schema(d)
         return d
 
 class TimeframeSchema(Schema):

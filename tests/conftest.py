@@ -167,10 +167,25 @@ def path_generator(random_string_generator):
             shutil.rmtree(path)
 
 @pytest.fixture
-def random_backend():
-    backends = backendbase.BackendBase.backend_classes()
-    random_backend = random.choice(backends)
-    return random_backend
+def random_backend_generator():
+    """Fixture to provide a function for generating a random backend object."""
+    def generator():
+        backend_class = random.choice(backendbase.BackendBase.backend_classes())
+        backend = backend_class()
+        if backend_class.name() == "rsync":
+            backend.extra_opts = ["--exclude", "SKIP*"]
+        elif backend_class.name() == "btrfs": # btrfs currently doesn't have any extra_opts
+            ...
+        return backend
+    return generator
+
+
+@pytest.fixture
+def random_backend(random_backend_generator):
+    """Fixture to provide a random backend object. See the
+    `random_backend_generator` fixture for more details.
+    """
+    return random_backend_generator()
 
 @pytest.fixture
 def random_filesystem_modifier(path_generator, random_string_generator):
@@ -242,6 +257,8 @@ def random_backup_generator(random_timeframes_generator, btrfs_fs_generator, ssh
         timeframes = random_timeframes_generator(num=num_timeframes)
 
         if backend_type is None:
+            print("HERE")
+            print(random_backend)
             backend_type = random_backend.name()
 
         src_dir = None
