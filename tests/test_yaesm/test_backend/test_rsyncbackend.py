@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from freezegun import freeze_time
 from pathlib import Path
 import filecmp
+import voluptuous as vlp
 
 import yaesm.backend.rsyncbackend as rsync
 import yaesm.backup as bckp
@@ -11,6 +12,25 @@ from yaesm.sshtarget import SSHTarget
 @pytest.fixture(scope="session")
 def rsync_backend():
     return rsync.RsyncBackend()
+
+def test_config_schema():
+    schema = rsync.RsyncBackend.config_schema()
+    d = {"rsync_extra_opts": "--exclude /mnt/* --size-only"}
+    assert schema(d) == {"extra_opts": ["--exclude", "/mnt/*", "--size-only"]}
+    d = {"rsync_extra_opts": ["--exclude /mnt/*", "--size-only"]}
+    assert schema(d) == {"extra_opts": ["--exclude", "/mnt/*", "--size-only"]}
+    d = {"rsync_extra_opts": ["--exclude", "/mnt/*", "--size-only"]}
+    assert schema(d) == {"extra_opts": ["--exclude", "/mnt/*", "--size-only"]}
+    d = {"rsync_extra_opts": ["--exclude", "/mnt/*", "--size-only"], "extra_opt": "foo"}
+    assert schema(d) == {"extra_opts": ["--exclude", "/mnt/*", "--size-only"], "extra_opt": "foo"}
+    d = {"random_opt1": "foo", "random_opt2": "bar"}
+    assert schema(d) == {"random_opt1": "foo", "random_opt2": "bar"}
+    d = {}
+    assert schema(d) == {}
+    with pytest.raises(vlp.Invalid) as exc:
+        d = {"rsync_extra_opts": 12}
+        schema(d)
+    assert str(exc.value).startswith("expected str for dictionary value @")
 
 def test_exec_backup(rsync_backend, path_generator, random_backup_generator, yaesm_test_users_group, random_filesystem_modifier):
     src_dir = path_generator("rsync_src_dir", mkdir=True)

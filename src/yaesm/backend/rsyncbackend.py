@@ -1,6 +1,7 @@
 import subprocess
 from pathlib import Path
 from shutil import rmtree
+import voluptuous as vlp
 
 import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
@@ -11,8 +12,34 @@ class RsyncBackend(BackendBase):
     """The rysnc backup execution backend. See BackendBase for more details on
     backup execution backends in general.
     """
-    def name():
-        return "rsync"
+    def config_schema() -> vlp.Schema:
+        """Rsync backups allow user to specify arbitrary extra options via a
+        'rsync_extra_opts' setting. This setting can associate to a string
+        containing the options, or a list of strings containing the options. In
+        either case the value is promoted to a list of string split on whitespace.
+        The 'rsync_extra_opts' key is renamed to 'extra_opts' in the outputted dict.
+        """
+        def _promote_options_to_list_of_strings(d: dict) -> dict:
+            if "rsync_extra_opts" in d:
+                opts = d["rsync_extra_opts"]
+                if isinstance(opts, str):
+                    d["rsync_extra_opts"] = opts.split()
+                elif isinstance(opts, list):
+                    d["rsync_extra_opts"] = [word for opt in opts for word in opt.split()]
+            return d
+
+        def _rename_key_extra_opts(d:dict) -> dict:
+            if "rsync_extra_opts" in d:
+                d["extra_opts"] = d["rsync_extra_opts"]
+                del d["rsync_extra_opts"]
+            return d
+
+        return vlp.Schema(vlp.All(
+            { vlp.Optional("rsync_extra_opts"): vlp.Any(str, [str]) },
+            _promote_options_to_list_of_strings,
+            _rename_key_extra_opts),
+            extra=vlp.ALLOW_EXTRA
+        )
 
     def _exec_backup_local_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
         return self._exec_backup(backup, backup_basename, timeframe)
@@ -46,6 +73,8 @@ class RsyncBackend(BackendBase):
         option, which allows for incremental backups.
         """
         rsync_cmd = ["rsync", "--verbose", "--archive", "--numeric-ids", "--delete"]
+        if self.extra_opts:
+            rsync_cmd += backup.extra_opts
 
         backups = bckp.backups_collect(backup) # note that we dont pass timeframe here
         if backups:
