@@ -257,8 +257,6 @@ def random_backup_generator(random_timeframes_generator, btrfs_fs_generator, ssh
         timeframes = random_timeframes_generator(num=num_timeframes)
 
         if backend_type is None:
-            print("HERE")
-            print(random_backend)
             backend_type = random_backend.name()
 
         src_dir = None
