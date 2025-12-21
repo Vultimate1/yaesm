@@ -1,7 +1,7 @@
 """src/yaesm/timeframe.py"""
 import dataclasses
-from typing import final
 
+@dataclasses.dataclass
 class Timeframe():
     """`Timeframe` is a base class for the different timeframe types. None of the
     Timeframe classes do validity checking on their initialization arguments.
@@ -9,15 +9,14 @@ class Timeframe():
     See the subclasses of `Timeframe` for more details.
 
     Also see test_timeframe.py for examples of how to use `Timeframe`'s."""
-    @final
-    @staticmethod
-    def tframe_types(names=False) -> list:
-        """If `names` is `True`, return a list containing the names of all timeframe types
-        as strings. Otherwise return a list of all the timeframe type subclasses."""
-        if names:
-            return ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]
-        return [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe,
-                MonthlyTimeframe, YearlyTimeframe]
+
+def tframe_types(names=False) -> list:
+    """If `names` is `True`, return a list containing the names of all timeframe types
+    as strings. Otherwise return a list of all the timeframe type subclasses."""
+    if names:
+        return ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]
+    return [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe,
+            MonthlyTimeframe, YearlyTimeframe]
 
 @dataclasses.dataclass
 class FiveMinuteTimeframe(Timeframe):

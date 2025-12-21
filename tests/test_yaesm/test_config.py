@@ -13,7 +13,8 @@ import yaesm.config as config
 import yaesm.backup as bckp
 from yaesm.backend.backendbase import BackendBase
 from yaesm.sshtarget import SSHTarget
-from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
+from yaesm.timeframe import Timeframe, tframe_types, FiveMinuteTimeframe, HourlyTimeframe, \
+    DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
 
 def test_Schema_schema_empty():
     schema = config.Schema.schema_empty()
@@ -187,8 +188,8 @@ def test_TimeframeSchema_schema(valid_raw_config):
             if isinstance(backup_settings[key], list):
                 assert len(processed_backup[key]) == len(backup_settings[key])
 
-        tf_types = Timeframe.tframe_types()
-        tf_names = Timeframe.tframe_types(names=True)
+        tf_types = tframe_types()
+        tf_names = tframe_types(names=True)
         expected_tf_types = [tf_types[i]
                              for i in range(len(tf_names))
                              if tf_names[i] in backup_settings["timeframes"]]
