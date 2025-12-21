@@ -155,7 +155,7 @@ fi
 _r vagrant snapshot restore --no-start yaesm-pytest yaesm-pytest-postbuild-snapshot
 _r vagrant up yaesm-pytest --provider libvirt
 VM_STATE=running
-vagrant ssh yaesm-pytest -c "sudo bash -c 'cd /home/vagrant/yaesm && . /home/vagrant/yaesm-venv/bin/activate && pytest $OPTS_PYTEST'" 2> >(grep -v '^\[fog\]\[WARNING\]' 1>&2) # for information on [fog][WARNING] see https://github.com/vagrant-libvirt/vagrant-libvirt/issues/1831#issuecomment-2471728475
+vagrant ssh yaesm-pytest -c "sudo bash -c 'cd /home/vagrant/yaesm && . /home/vagrant/yaesm-venv/bin/activate && python3 -m pytest $OPTS_PYTEST'" 2> >(grep -v '^\[fog\]\[WARNING\]' 1>&2) # for information on [fog][WARNING] see https://github.com/vagrant-libvirt/vagrant-libvirt/issues/1831#issuecomment-2471728475
 PYTEST_STATUS=$?
 
 if [[ 0 -ne $OPT_VM_KEEP_RUNNING ]]; then
@@ -164,9 +164,9 @@ if [[ 0 -ne $OPT_VM_KEEP_RUNNING ]]; then
 fi
 
 if [[ 0 -eq $OPT_VM_SAVE_SNAPSHOT ]]; then
-    local snapshot_name="yaesm-pytest-$(date +%Y_%m_%d_%H:%M)"
+    snapshot_name="yaesm-pytest-$(date +%Y_%m_%d_%H:%M)"
     _r vagrant snapshot save yaesm-pytest "$snapshot_name"
-    _log "created snapshot of yaesm-pytest VM named $snapshot-name"
+    _log "created snapshot of yaesm-pytest VM named $snapshot_name"
 fi
 
 exit $PYTEST_STATUS

@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yaesm"
+version = "0.0.1"
+description = "A backup tool with support for multiple filesystems"
+authors = [
+    {name = "Connor Gallivan"},
+    {name = "Nicholas B. Hubbard", email = "nicholashubbard@posteo.net"}
+]
+maintainers = [
+    {name = "Connor Gallivan"},
+    {name = "Nicholas B. Hubbard", email = "nicholashubbard@posteo.net"}
+]
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "GPL-3.0-or-later"}
+keywords = ["backup", "filesystem", "snapshot"]
+
+classifiers = [
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Archiving :: Backup",
+]
+
+dependencies = [
+    "croniter>=6.0.0",
+    "pyyaml>=6.0.2",
+    "voluptuous>=0.15.2",
+]
+
+[project.scripts]
+yaesm = "yaesm.main:main"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.3.4",
+    "pytest-cov>=7.0.0",
+    "freezegun>=1.5.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/Vultimate1/yaesm"
+Repository = "https://github.com/Vultimate1/yaesm"
+Issues = "https://github.com/Vultimate1/yaesm/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = [
+    "--verbose",
+    "--cov=yaesm",
+    "--cov-report=term-missing",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == '__main__':",
+]
