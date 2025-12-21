@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
-from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, \
+from yaesm.timeframe import tframe_types, Timeframe, FiveMinuteTimeframe, HourlyTimeframe, \
     DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
 import yaesm.backend.backendbase as backendbase
 import yaesm.logging
@@ -335,7 +335,7 @@ def random_timeframe_generator(
     random_timeframe_yeardays_generator):
     """Fixture for generating random Timeframes."""
     def generator(tframe_type=None, keep=None, minutes=None, times=None, weekdays=None, monthdays=None, yeardays=None) -> Timeframe:
-        tframe_type = random.choice(Timeframe.tframe_types()) if tframe_type is None else tframe_type
+        tframe_type = random.choice(tframe_types()) if tframe_type is None else tframe_type
         keep        = random.randint(1,10) if keep is None else keep
         minutes     = random_timeframe_minutes_generator(random.randint(1,5)) if minutes is None else minutes
         times       = random_timeframe_times_generator(random.randint(1,5)) if times is None else times
@@ -369,7 +369,7 @@ def random_timeframes_generator(random_timeframe_generator):
     random_timeframe_generator for more details."""
     def generator(num=3, **kwargs):
         timeframes = []
-        tf_types = random.sample(Timeframe.tframe_types(), k=num)
+        tf_types = random.sample(tframe_types(), k=num)
         for tf_type in tf_types:
             timeframes.append(random_timeframe_generator(tframe_type=tf_type, **kwargs))
         return timeframes
