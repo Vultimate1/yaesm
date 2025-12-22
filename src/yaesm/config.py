@@ -194,8 +194,8 @@ class BackendSchema(Schema):
             ), extra=vlp.ALLOW_EXTRA)
 
     @staticmethod
-    def _dict_promote_backend_name_to_backend_instance(d:dict) -> dict:
-        """Promotes a backend name to its corresponding backend class instance."""
+    def _dict_promote_backend_name_to_backend_class(d: dict) -> dict:
+        """Promotes a backend name to its cooresponding backend class."""
         backend_name = d["backend"]
         for backend_class in backendbase.BackendBase.backend_classes():
             if backend_name == backend_class.name():
