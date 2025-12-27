@@ -1,70 +1,370 @@
-from freezegun import freeze_time
 import pytest
-from threading import Thread
-import time
-from datetime import timedelta
 
-from yaesm.scheduler import Scheduler
-from yaesm.timeframe import *
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-def test_check_for_expired(capsys):
-    scheduler = Scheduler()
-    with freeze_time("1999-05-13 23:58"):
-        scheduler.add_timeframe(FiveMinuteTimeframe(1), lambda : print(1))
-        scheduler.add_timeframe(HourlyTimeframe(1, [59]), lambda : print(2))
-        scheduler.add_timeframe(DailyTimeframe(1, [(23,59)]), lambda : print(3))
-        scheduler.add_timeframe(
-            WeeklyTimeframe(1, [(0,1), (23,59)], ["thursday", "friday"]), lambda : print(4)
-        )
-        with freeze_time("1999-05-14 00:04"):
-            scheduler_thread = Thread(target=scheduler.check_for_expired, daemon=True)
-            scheduler_thread.start()
-            while scheduler_thread.is_alive():
-                if not scheduler_thread.is_alive():
-                    scheduler_thread.join()
+import yaesm.scheduler
+import yaesm.timeframe
 
-            actual_out = capsys.readouterr().out.splitlines()
-            expected_out = ["2", "3", "4", "1", "4"]
-            assert actual_out == expected_out
+def test_add_job_5minute_timeframe():
+    scheduler = yaesm.scheduler.Scheduler()
+    timeframe = yaesm.timeframe.FiveMinuteTimeframe(keep=10)
+    scheduler._add_job(lambda: 1, timeframe)
+    jobs = scheduler._apscheduler.get_jobs()
+    assert len(jobs) == 1
+    job = jobs[0]
+    start_time = datetime(1999, 1, 1, 12, 3, tzinfo=ZoneInfo("UTC"))
+    expected_times = [
+        datetime(1999, 1, 1, 12, 5,  tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 1, 12, 10, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 1, 12, 15, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 1, 12, 20, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 1, 12, 25, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 1, 12, 30, tzinfo=ZoneInfo("UTC"))
+    ]
+    next_time = job.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job.trigger.get_next_fire_time(next_time, next_time)
 
-def test_sleep_until_next_timeframe():
-    scheduler = Scheduler()
-    with freeze_time("1999-05-13 23:58") as frozen_datetime:
-        scheduler.add_timeframe(FiveMinuteTimeframe(1), lambda : print(1))
-        scheduler_thread = Thread(target=scheduler.sleep_until_next_timeframe, daemon=True)
-        scheduler_thread.start()
+def test_add_job_hourly_timeframe():
+    scheduler = yaesm.scheduler.Scheduler()
+    timeframe = yaesm.timeframe.HourlyTimeframe(keep=24, minutes=[0, 15, 30, 45])
+    scheduler._add_job(lambda: 1, timeframe)
+    jobs = scheduler._apscheduler.get_jobs()
+    assert len(jobs) == 1
+    job = jobs[0]
+    start_time = datetime(1999, 1, 1, 12, 3, tzinfo=ZoneInfo("UTC"))
+    expected_times = [
+        datetime(1999, 1, 1, 12, 15, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 1, 12, 30, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 1, 12, 45, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 1, 13, 0,  tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 1, 13, 15, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 1, 13, 30, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 1, 13, 45, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 1, 14, 0,  tzinfo=ZoneInfo("UTC"))
+    ]
+    next_time = job.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job.trigger.get_next_fire_time(next_time, next_time)
 
-        frozen_datetime.tick(delta=timedelta(minutes=1))
-        assert scheduler_thread.is_alive()
+def test_add_job_daily_timeframe():
+    scheduler = yaesm.scheduler.Scheduler()
+    timeframe = yaesm.timeframe.DailyTimeframe(keep=7, times=[(9, 0), (17, 30)])
+    scheduler._add_job(lambda: 1, timeframe)
+    jobs = scheduler._apscheduler.get_jobs()
+    assert len(jobs) == 2
+    
+    # Test first job (9:00)
+    job1 = jobs[0]
+    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
+    expected_times = [
+        datetime(1999, 1, 1, 9, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 2, 9, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 3, 9, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 4, 9, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 5, 9, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 6, 9, 0, tzinfo=ZoneInfo("UTC"))
+    ]
+    next_time = job1.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job1.trigger.get_next_fire_time(next_time, next_time)
+    
+    # Test second job (17:30)
+    job2 = jobs[1]
+    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
+    expected_times = [
+        datetime(1999, 1, 1, 17, 30, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 2, 17, 30, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 3, 17, 30, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 4, 17, 30, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 5, 17, 30, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 1, 6, 17, 30, tzinfo=ZoneInfo("UTC"))
+    ]
+    next_time = job2.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job2.trigger.get_next_fire_time(next_time, next_time)
 
-        frozen_datetime.tick(delta=timedelta(minutes=1))
-        time.sleep(1.1)
-        assert not scheduler_thread.is_alive()
-        scheduler_thread.join()
+def test_add_job_weekly_timeframe():
+    scheduler = yaesm.scheduler.Scheduler()
+    timeframe = yaesm.timeframe.WeeklyTimeframe(keep=4, times=[(10, 0), (18, 30)], weekdays=["monday", "friday"])
+    scheduler._add_job(lambda: 1, timeframe)
+    jobs = scheduler._apscheduler.get_jobs()
+    assert len(jobs) == 2  # 2 times, each with monday,friday in day_of_week
+    
+    # Test job 1: Monday and Friday at 10:00
+    job1 = jobs[0]
+    start_time = datetime(1999, 1, 3, 8, 0, tzinfo=ZoneInfo("UTC"))  # Sunday Jan 3, 1999
+    expected_times = [
+        datetime(1999, 1, 4, 10, 0, tzinfo=ZoneInfo("UTC")),   # Monday
+        datetime(1999, 1, 8, 10, 0, tzinfo=ZoneInfo("UTC")),   # Friday
+        datetime(1999, 1, 11, 10, 0, tzinfo=ZoneInfo("UTC")),  # Monday
+        datetime(1999, 1, 15, 10, 0, tzinfo=ZoneInfo("UTC")),  # Friday
+        datetime(1999, 1, 18, 10, 0, tzinfo=ZoneInfo("UTC")),  # Monday
+        datetime(1999, 1, 22, 10, 0, tzinfo=ZoneInfo("UTC")),  # Friday
+    ]
+    next_time = job1.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job1.trigger.get_next_fire_time(next_time, next_time)
+    
+    # Test job 2: Monday and Friday at 18:30
+    job2 = jobs[1]
+    start_time = datetime(1999, 1, 3, 8, 0, tzinfo=ZoneInfo("UTC"))
+    expected_times = [
+        datetime(1999, 1, 4, 18, 30, tzinfo=ZoneInfo("UTC")),  # Monday
+        datetime(1999, 1, 8, 18, 30, tzinfo=ZoneInfo("UTC")),  # Friday
+        datetime(1999, 1, 11, 18, 30, tzinfo=ZoneInfo("UTC")), # Monday
+        datetime(1999, 1, 15, 18, 30, tzinfo=ZoneInfo("UTC")), # Friday
+        datetime(1999, 1, 18, 18, 30, tzinfo=ZoneInfo("UTC")), # Monday
+        datetime(1999, 1, 22, 18, 30, tzinfo=ZoneInfo("UTC")), # Friday
+    ]
+    next_time = job2.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job2.trigger.get_next_fire_time(next_time, next_time)
 
-        scheduler_thread = Thread(target=scheduler.sleep_until_next_timeframe)
-        scheduler_thread.start()
-        time.sleep(0.1)
-        assert not scheduler_thread.is_alive()
-        scheduler_thread.join()
+def test_add_job_monthly_timeframe():
+    scheduler = yaesm.scheduler.Scheduler()
+    timeframe = yaesm.timeframe.MonthlyTimeframe(keep=12, times=[(9, 0), (21, 0)], monthdays=[1, 15])
+    scheduler._add_job(lambda: 1, timeframe)
+    jobs = scheduler._apscheduler.get_jobs()
+    assert len(jobs) == 4  # 2 monthdays * 2 times = 4 jobs
+    
+    # Test job 1: 1st of month at 9:00
+    job1 = jobs[0]
+    start_time = datetime(1999, 1, 10, 8, 0, tzinfo=ZoneInfo("UTC"))
+    expected_times = [
+        datetime(1999, 2, 1, 9, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 3, 1, 9, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 4, 1, 9, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 5, 1, 9, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 6, 1, 9, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 7, 1, 9, 0, tzinfo=ZoneInfo("UTC")),
+    ]
+    next_time = job1.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job1.trigger.get_next_fire_time(next_time, next_time)
+    
+    # Test job 2: 1st of month at 21:00
+    job2 = jobs[1]
+    start_time = datetime(1999, 1, 10, 8, 0, tzinfo=ZoneInfo("UTC"))
+    expected_times = [
+        datetime(1999, 2, 1, 21, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 3, 1, 21, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 4, 1, 21, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 5, 1, 21, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 6, 1, 21, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 7, 1, 21, 0, tzinfo=ZoneInfo("UTC")),
+    ]
+    next_time = job2.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job2.trigger.get_next_fire_time(next_time, next_time)
+    
+    # Test job 3: 15th of month at 9:00
+    job3 = jobs[2]
+    start_time = datetime(1999, 1, 10, 8, 0, tzinfo=ZoneInfo("UTC"))
+    expected_times = [
+        datetime(1999, 1, 15, 9, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 2, 15, 9, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 3, 15, 9, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 4, 15, 9, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 5, 15, 9, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 6, 15, 9, 0, tzinfo=ZoneInfo("UTC")),
+    ]
+    next_time = job3.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job3.trigger.get_next_fire_time(next_time, next_time)
+    
+    # Test job 4: 15th of month at 21:00
+    job4 = jobs[3]
+    start_time = datetime(1999, 1, 10, 8, 0, tzinfo=ZoneInfo("UTC"))
+    expected_times = [
+        datetime(1999, 1, 15, 21, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 2, 15, 21, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 3, 15, 21, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 4, 15, 21, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 5, 15, 21, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(1999, 6, 15, 21, 0, tzinfo=ZoneInfo("UTC")),
+    ]
+    next_time = job4.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job4.trigger.get_next_fire_time(next_time, next_time)
 
-def test_overlapping_func_execution(capsys):
-    def sleep_and_print():
-        time.sleep(1)
-        print(1)
+def test_add_job_yearly_timeframe():
+    scheduler = yaesm.scheduler.Scheduler()
+    # Yearday 1 = Jan 1, Yearday 32 = Feb 1, Yearday 365 = Dec 31
+    timeframe = yaesm.timeframe.YearlyTimeframe(keep=5, times=[(0, 0), (12, 0)], yeardays=[1, 32, 365])
+    scheduler._add_job(lambda: 1, timeframe)
+    jobs = scheduler._apscheduler.get_jobs()
+    assert len(jobs) == 6  # 3 yeardays * 2 times = 6 jobs
+    
+    # Test job 1: Jan 1 at 0:00
+    job1 = jobs[0]
+    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
+    expected_times = [
+        datetime(2000, 1, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2001, 1, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2002, 1, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2003, 1, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
+    ]
+    next_time = job1.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job1.trigger.get_next_fire_time(next_time, next_time)
+    
+    # Test job 2: Jan 1 at 12:00
+    job2 = jobs[1]
+    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
+    expected_times = [
+        datetime(1999, 1, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2000, 1, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2001, 1, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2002, 1, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
+    ]
+    next_time = job2.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job2.trigger.get_next_fire_time(next_time, next_time)
+    
+    # Test job 3: Feb 1 at 0:00
+    job3 = jobs[2]
+    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
+    expected_times = [
+        datetime(1999, 2, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2000, 2, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2001, 2, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2002, 2, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
+    ]
+    next_time = job3.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job3.trigger.get_next_fire_time(next_time, next_time)
+    
+    # Test job 4: Feb 1 at 12:00
+    job4 = jobs[3]
+    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
+    expected_times = [
+        datetime(1999, 2, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2000, 2, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2001, 2, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2002, 2, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
+    ]
+    next_time = job4.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job4.trigger.get_next_fire_time(next_time, next_time)
+    
+    # Test job 5: Dec 31 at 0:00
+    job5 = jobs[4]
+    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
+    expected_times = [
+        datetime(1999, 12, 31, 0, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2000, 12, 31, 0, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2001, 12, 31, 0, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2002, 12, 31, 0, 0, tzinfo=ZoneInfo("UTC")),
+    ]
+    next_time = job5.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job5.trigger.get_next_fire_time(next_time, next_time)
+    
+    # Test job 6: Dec 31 at 12:00
+    job6 = jobs[5]
+    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
+    expected_times = [
+        datetime(1999, 12, 31, 12, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2000, 12, 31, 12, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2001, 12, 31, 12, 0, tzinfo=ZoneInfo("UTC")),
+        datetime(2002, 12, 31, 12, 0, tzinfo=ZoneInfo("UTC")),
+    ]
+    next_time = job6.trigger.get_next_fire_time(None, start_time)
+    for expected in expected_times:
+        assert next_time == expected
+        next_time = job6.trigger.get_next_fire_time(next_time, next_time)
 
-    scheduler = Scheduler()
-    with freeze_time("1999-05-13 23:58") as frozen_datetime:
-        scheduler.add_timeframe(HourlyTimeframe(1, [59]), lambda : sleep_and_print())
-        scheduler.add_timeframe(HourlyTimeframe(1, [0]), lambda : print(2))
+def test_add_backups_single_backup_single_timeframe():
+    scheduler = yaesm.scheduler.Scheduler()
+    
+    mock_backup = type('MockBackup', (), {})()
+    mock_backup.timeframes = [yaesm.timeframe.FiveMinuteTimeframe(keep=10)]
+    mock_backup.backend = type('MockBackend', (), {})()
+    mock_backup.backend.do_backup = lambda b, t: None
+    
+    scheduler.add_backups([mock_backup])
+    jobs = scheduler._apscheduler.get_jobs()
+    assert len(jobs) == 1
 
-        frozen_datetime.tick(delta=timedelta(minutes=2))
-        scheduler_thread = Thread(target=scheduler.check_for_expired, daemon=True)
-        scheduler_thread.start()
-        while scheduler_thread.is_alive():
-            if not scheduler_thread.is_alive():
-                scheduler_thread.join()
-        
-        actual_out = capsys.readouterr().out.splitlines()
-        expected_out = ["2", "1"]
-        assert actual_out == expected_out
+def test_add_backups_single_backup_multiple_timeframes():
+    scheduler = yaesm.scheduler.Scheduler()
+    
+    mock_backup = type('MockBackup', (), {})()
+    mock_backup.timeframes = [
+        yaesm.timeframe.FiveMinuteTimeframe(keep=10),
+        yaesm.timeframe.HourlyTimeframe(keep=24, minutes=[0, 30]),
+        yaesm.timeframe.DailyTimeframe(keep=7, times=[(9, 0)])
+    ]
+    mock_backup.backend = type('MockBackend', (), {})()
+    mock_backup.backend.do_backup = lambda b, t: None
+    
+    scheduler.add_backups([mock_backup])
+    jobs = scheduler._apscheduler.get_jobs()
+    # 5minute: 1, hourly: 1, daily: 1 = 3 total
+    assert len(jobs) == 3
+
+def test_add_backups_multiple_backups():
+    scheduler = yaesm.scheduler.Scheduler()
+    
+    mock_backup1 = type('MockBackup', (), {})()
+    mock_backup1.timeframes = [yaesm.timeframe.FiveMinuteTimeframe(keep=10)]
+    mock_backup1.backend = type('MockBackend', (), {})()
+    mock_backup1.backend.do_backup = lambda b, t: None
+    
+    mock_backup2 = type('MockBackup', (), {})()
+    mock_backup2.timeframes = [yaesm.timeframe.HourlyTimeframe(keep=24, minutes=[0])]
+    mock_backup2.backend = type('MockBackend', (), {})()
+    mock_backup2.backend.do_backup = lambda b, t: None
+    
+    scheduler.add_backups([mock_backup1, mock_backup2])
+    jobs = scheduler._apscheduler.get_jobs()
+    assert len(jobs) == 2
+
+def test_add_backups_multiple_backups_multiple_timeframes():
+    scheduler = yaesm.scheduler.Scheduler()
+    
+    mock_backup1 = type('MockBackup', (), {})()
+    mock_backup1.timeframes = [
+        yaesm.timeframe.FiveMinuteTimeframe(keep=10),
+        yaesm.timeframe.DailyTimeframe(keep=7, times=[(9, 0), (17, 0)])
+    ]
+    mock_backup1.backend = type('MockBackend', (), {})()
+    mock_backup1.backend.do_backup = lambda b, t: None
+    
+    mock_backup2 = type('MockBackup', (), {})()
+    mock_backup2.timeframes = [
+        yaesm.timeframe.HourlyTimeframe(keep=24, minutes=[0, 30]),
+        yaesm.timeframe.WeeklyTimeframe(keep=4, times=[(10, 0)], weekdays=["monday"])
+    ]
+    mock_backup2.backend = type('MockBackend', (), {})()
+    mock_backup2.backend.do_backup = lambda b, t: None
+    
+    scheduler.add_backups([mock_backup1, mock_backup2])
+    jobs = scheduler._apscheduler.get_jobs()
+    # backup1: 5minute(1) + daily(2) = 3
+    # backup2: hourly(1) + weekly(1) = 2
+    # total = 5
+    assert len(jobs) == 5
+
+def test_add_backups_empty_list():
+    scheduler = yaesm.scheduler.Scheduler()
+    scheduler.add_backups([])
+    jobs = scheduler._apscheduler.get_jobs()
+    assert len(jobs) == 0

@@ -22,6 +22,13 @@ class Timeframe():
         else:
             return [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe]
 
+    @final
+    @staticmethod
+    def weekday_num(weekday):
+        # monday is first day to adhere to apscheduler
+        weekday_num_map = {"monday":0,"tuesday":1,"wednesday":2,"thursday":3,"friday":4,"saturday":5,"sunday":6}
+        return weekday_num_map[weekday]
+
 @dataclasses.dataclass
 class FiveMinuteTimeframe(Timeframe):
     """The 5minute timeframe represents backups to be taken every 5 minutes.
