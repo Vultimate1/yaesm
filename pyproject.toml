@@ -28,6 +28,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "apscheduler>=3.11.1",
     "croniter>=6.0.0",
     "pyyaml>=6.0.2",
     "voluptuous>=0.15.2",
