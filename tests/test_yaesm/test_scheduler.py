@@ -2,6 +2,7 @@ import pytest
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import logging
 
 import yaesm.scheduler
 import yaesm.timeframe
@@ -368,3 +369,26 @@ def test_add_backups_empty_list():
     scheduler.add_backups([])
     jobs = scheduler._apscheduler.get_jobs()
     assert len(jobs) == 0
+
+def test_job_fail_logs_instead_of_crashes(caplog):
+    scheduler = yaesm.scheduler.Scheduler()
+    call_count = [0]
+    def fail_func():
+        call_count[0] += 1
+        if call_count[0] <= 3:
+            raise Exception("TEST EXCEPTION")
+        else:
+            scheduler.stop(force=True)
+    # Schedule a job to run immediately and repeatedly
+    from datetime import datetime, timedelta
+    start_date = datetime.now() + timedelta(seconds=0.5)
+    scheduler._apscheduler.add_job(
+        fail_func,
+        'interval',
+        seconds=0.3,
+        start_date=start_date
+    )
+    # Start the scheduler (it will block until fail_func stops it)
+    scheduler.start()
+    assert call_count[0] == 4
+    assert "TEST EXCEPTION" in caplog.text
