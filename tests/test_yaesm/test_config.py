@@ -573,7 +573,9 @@ def test_parse_config(path_generator, valid_config_file_generator):
         config.parse_config(config_file_invalid)
     assert len(exc.value.errors) == 6
     for exc in exc.value.errors:
-        assert isinstance(exc, vlp.Invalid)
+        backup_name, err = exc
+        assert backup_name.startswith("backup_")
+        assert isinstance(err, vlp.Invalid)
 
     with pytest.raises(config.ConfigErrors) as exc:
         config.parse_config(config_file_copy)

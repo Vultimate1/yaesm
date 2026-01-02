@@ -14,7 +14,7 @@ from yaesm.timeframe import Timeframe
 class ConfigErrors(Exception):
     def __init__(self, config_file, errors):
         self.config_file = config_file
-        self.errors = errors
+        self.errors = errors # list of pairs of backup-name, vlp.Invalid
 
 def parse_config(config_file):
     """Parse the file `config_file` into a list of `Backup` objects. This is the
@@ -41,7 +41,8 @@ def parse_config(config_file):
             backup = backup_schema({backup_name: config_data[backup_name]})
             backups.append(backup)
         except vlp.MultipleInvalid as exc:
-            errors += exc.errors
+            for error in exc.errors:
+                errors += [(backup_name, error)]
     if errors:
         raise ConfigErrors(config_file, errors)
     return backups
