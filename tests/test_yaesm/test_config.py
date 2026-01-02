@@ -61,7 +61,7 @@ def test_BackendSchema_schema():
 
     data = {"backend": "btrfs"}
     data = schema(data)
-    assert issubclass(data["backend"], BackendBase)
+    assert isinstance(data["backend"], BackendBase)  # Changed from issubclass
     assert len(data) == 1
 
     with pytest.raises(vlp.Invalid) as exc:
@@ -77,14 +77,14 @@ def test_BackendSchema_schema():
         schema(data)
     assert re.match("required key not provided @", str(exc.value))
 
-def test_BackendSchema_dict_promote_backend_name_to_backend_class():
+def test_BackendSchema_dict_promote_backend_name_to_backend_instance():
     data = {"backend": "btrfs"}
-    data = config.BackendSchema._dict_promote_backend_name_to_backend_class(data)
-    assert issubclass(data["backend"], BackendBase)
+    data = config.BackendSchema._dict_promote_backend_name_to_backend_instance(data)
+    assert isinstance(data["backend"], BackendBase)  # Changed from issubclass
     assert len(data) == 1
     with pytest.raises(KeyError):
         data = {"FOO": "BAR", "BAZ": "QUUX"}
-        config.BackendSchema._dict_promote_backend_name_to_backend_class(data)
+        config.BackendSchema._dict_promote_backend_name_to_backend_instance(data)
 
 def test_TimeframeSchema_has_required_settings():
     data = {"timeframes": ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]}
@@ -462,10 +462,10 @@ def test_BackupSchema_apply_sub_schemas(valid_raw_config, path_generator):
         backup_settings = backup_spec[backup_name]
         assert isinstance(backup_settings["src_dir"], Path) or isinstance(backup_settings["src_dir"], SSHTarget)
         assert isinstance(backup_settings["dst_dir"], Path) or isinstance(backup_settings["dst_dir"], SSHTarget)
-        assert issubclass(backup_settings["backend"], BackendBase)
+        assert isinstance(backup_settings["backend"], BackendBase)  # Changed from issubclass
         for tf in backup_settings["timeframes"]:
             assert isinstance(tf, Timeframe)
-    # failure tests
+            # failure tests
     for backup_name in sorted(valid_raw_config.keys()):
         backup_spec = copy.deepcopy({ backup_name : valid_raw_config[backup_name] })
         backup_spec[backup_name]["backend"] = "INVALIDBACKEND"

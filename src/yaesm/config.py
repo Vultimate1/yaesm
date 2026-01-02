@@ -21,6 +21,10 @@ def parse_config(config_file):
     only function that should be directly used from outside the yaesm.config module.
     If there are any configuration errors then a `ConfigErrors` exception is raised.
     """
+    config_file = Path(config_file)
+    if not config_file.is_file():
+        raise ConfigErrors(config_file, [f"config file does not exist: {config_file}"])
+
     with open(config_file, 'r') as f:
         try:
             config_data = yaml.safe_load(f)
@@ -126,7 +130,7 @@ class BackupSchema(Schema):
             try:
                 backup_settings = schema(backup_settings)
                 if schema_class == BackendSchema:
-                    backend_schema = backup_settings["backend"].config_schema()
+                    backend_schema = type(backup_settings["backend"]).config_schema()
                     backup_settings = backend_schema(backup_settings)
             except vlp.MultipleInvalid as exc:
                 errors += exc.errors
@@ -190,25 +194,25 @@ class BackendSchema(Schema):
                 [cls.name() for cls in backendbase.BackendBase.backend_classes()],
                 msg=BackendSchema.ErrMsg.INVALID_BACKEND_NAME
             )},
-            BackendSchema._dict_promote_backend_name_to_backend_class,
+            BackendSchema._dict_promote_backend_name_to_backend_instance,
             BackendSchema._apply_backend_specific_schema
             ), extra=vlp.ALLOW_EXTRA)
 
     @staticmethod
-    def _dict_promote_backend_name_to_backend_class(d:dict) -> dict:
-        """Promotes a backend name to its cooresponding backend class."""
+    def _dict_promote_backend_name_to_backend_instance(d:dict) -> dict:
+        """Promotes a backend name to its corresponding backend class instance."""
         backend_name = d["backend"]
         for backend_class in backendbase.BackendBase.backend_classes():
             if backend_name == backend_class.name():
-                d["backend"] = backend_class
+                d["backend"] = backend_class()  # Create an instance!
                 break
         return d
 
     @staticmethod
     def _apply_backend_specific_schema(d:dict) -> dict:
-        """TODO"""
-        backend_class = d["backend"]
-        backend_schema = backend_class.config_schema()
+        """"Apply the backend-specific configuration schema to the backup settings dict."""
+        backend_instance = d["backend"]
+        backend_schema = type(backend_instance).config_schema()
         d = backend_schema(d)
         return d
 
