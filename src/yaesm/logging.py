@@ -10,15 +10,17 @@ class LoggingNotInitializedException(Exception):
 
 _logging_initialized = False
 
-def init_logging(stderr=False, logfile=None, syslog=False, syslog_address="/dev/log", level=logging.INFO):
+def init_logging(stderr=True, logfile=None, syslog=False, syslog_address="/dev/log", level=logging.INFO):
     """Initialize logging for yaesm. Yaesm can log to any and all of stderr,
     syslog, and a file. If this function is called multiple times then it will
     fully re-initialize the logging. If none of 'stderr', 'logfile', or 'syslog'
     are True, then 'stderr' is set to True.
+
+    Note that yaesm supports only two levels of logging, INFO and DEBUG.
     """
     if not (stderr or logfile or syslog):
         stderr = True
-    formatter = logging.Formatter(fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    formatter = logging.Formatter(fmt="yaesm - %(asctime)s - %(name)s - %(levelname)s - %(message)s")
     handlers = []
     if syslog:
         syslog_handler = logging.handlers.SysLogHandler(address=syslog_address)
