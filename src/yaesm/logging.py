@@ -20,7 +20,7 @@ def init_logging(stderr=True, logfile=None, syslog=False, syslog_address="/dev/l
     """
     if not (stderr or logfile or syslog):
         stderr = True
-    formatter = logging.Formatter(fmt="yaesm - %(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    formatter = logging.Formatter("yaesm - %(asctime)s - %(levelname)s - %(message)s", "%Y-%m-%d %H:%M:%S")
     handlers = []
     if syslog:
         syslog_handler = logging.handlers.SysLogHandler(address=syslog_address)
@@ -45,7 +45,17 @@ def init_logging(stderr=True, logfile=None, syslog=False, syslog_address="/dev/l
         root_logger.addHandler(handler)
     global _logging_initialized
     _logging_initialized = True
-        
+
+def disable_logging():
+    """Disable all logging by removing all handlers and marking logging as uninitialized."""
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+        handler.close()
+    root_logger.setLevel(logging.CRITICAL + 1)
+    global _logging_initialized
+    _logging_initialized = False
+
 def logger(name=None):
     """Return a logger with the specified name. If name is None then it defaults
     to the name of the callers module. If logging has not yet been initialized

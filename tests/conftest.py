@@ -16,6 +16,18 @@ import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
 import yaesm.backend.backendbase as backendbase
+import yaesm.logging
+
+@pytest.fixture(scope="module", autouse=True)
+def with_stderr_debug_logging(request):
+    """Fixture that enables debug level logging to stderr for all test modules,
+    except the test_logging.py module."""
+    if request.module.__name__ != "test_logging":
+        yaesm.logging.init_logging(stderr=True, level='DEBUG')
+        yield
+        yaesm.logging.disable_logging()
+    else:
+        yield
 
 @pytest.fixture
 def loopback_generator(path_generator):

@@ -3,7 +3,7 @@ import logging
 import subprocess
 import re
 
-from yaesm.logging import logger, init_logging, LoggingNotInitializedException
+from yaesm.logging import logger, init_logging, disable_logging, LoggingNotInitializedException
 
 def test_raises_logging_not_initialized():
     with pytest.raises(LoggingNotInitializedException):
@@ -25,7 +25,7 @@ def test_init_logging():
 def test_stderr_logging(capsys):
     init_logging(stderr=True, level=logging.DEBUG)
     logger().debug("TEST LOG")
-    assert re.match(".+DEBUG.+TEST LOG$", capsys.readouterr().err)
+    assert re.match("^yaesm -.+DEBUG.+TEST LOG$", capsys.readouterr().err)
 
 def test_level_respected(capsys):
     init_logging(stderr=True) # level defaults to INFO
@@ -59,3 +59,10 @@ def test_multi_dest_logging(capsys, path_generator):
     logger().info("TEST LOG MULTI DEST")
     assert re.match(".+INFO.+TEST LOG MULTI DEST$", capsys.readouterr().err)
     assert re.match(".+INFO.+TEST LOG MULTI DEST$", logfile.read_text())
+
+def test_disable_logging(capsys):
+    init_logging(stderr=True)
+    disable_logging()
+    with pytest.raises(LoggingNotInitializedException):
+        logger().info("TEST LOG DISABLED")
+    assert "" == capsys.readouterr().err
