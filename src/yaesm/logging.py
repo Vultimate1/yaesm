@@ -7,6 +7,9 @@ import logging
 import logging.handlers
 import inspect
 
+class LoggingNotInitializedException(Exception):
+    ...
+
 class Logging:
     _logging_initialized = False
 
