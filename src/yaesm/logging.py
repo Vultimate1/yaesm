@@ -7,8 +7,14 @@ import logging
 import logging.handlers
 import inspect
 
+class LoggingNotInitializedException(Exception):
+    ...
+
 class Logging:
-    def __init__(self, stderr=False, logfile=None, syslog=False, syslog_address="/dev/log",
+    _logging_initialized = False
+
+    @staticmethod
+    def initialize(stderr=False, logfile=None, syslog=False, syslog_address="/dev/log",
                  level=logging.INFO):
         """Initialize logging for yaesm. Yaesm can log to any and all of stderr,
         syslog, and a file. If this function is called multiple times then it will
@@ -39,12 +45,16 @@ class Logging:
             root_logger.removeHandler(handler)
         for handler in handlers:
             root_logger.addHandler(handler)
+        Logging._logging_initialized = True
 
-    def get(self, name=None):
+    @staticmethod
+    def get(name=None):
         """Return a logger with the specified name. If name is None then it defaults
         to the name of the callers module. If logging has not yet been initialized
-        (i.e. init_logging() has not been invoked), then raise an exception.
-        """
+        (i.e. init_logging() has not been invoked), then raise an exception."""
+        if not Logging._logging_initialized:
+            raise LoggingNotInitializedException(
+                "trying to get logger but logging has not been initialized")
         if name is None:
             name = inspect.getmodule(inspect.stack()[1][0]).__name__
         return logging.getLogger(name)
