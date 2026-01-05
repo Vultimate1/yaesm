@@ -12,17 +12,19 @@ from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, Dai
 class Scheduler:
     def __init__(self):
         self._apscheduler = apscheduler.schedulers.blocking.BlockingScheduler()
-        logger('apscheduler').propagate = False; logger('apscheduler').setLevel('CRITICAL')
+        Logging.get('apscheduler').propagate = False
+        Logging.get('apscheduler').setLevel('CRITICAL')
         self._apscheduler.add_listener(
-            lambda event: logger().info(f"{self._job_name(event.job_id)} | successful backup"),
+            lambda event: Logging.get().info(f"{self._job_name(event.job_id)} | successful backup"),
             apscheduler.events.EVENT_JOB_EXECUTED
         )
         self._apscheduler.add_listener(
-            lambda event: logger().error(f"{self._job_name(event.job_id)} | {event.exception}"),
+            lambda event: Logging.get().error(
+                f"{self._job_name(event.job_id)} | {event.exception}"),
             apscheduler.events.EVENT_JOB_ERROR
         )
         self._apscheduler.add_listener(
-            lambda event: logger().error(f"{self._job_name(event.job_id)} | missed backup"),
+            lambda event: Logging.get().error(f"{self._job_name(event.job_id)} | missed backup"),
             apscheduler.events.EVENT_JOB_MISSED
         )
 
