@@ -13,7 +13,7 @@ import yaesm.config as config
 import yaesm.backup as bckp
 from yaesm.backend.backendbase import BackendBase
 from yaesm.sshtarget import SSHTarget
-from yaesm.timeframe import Timeframe, tframe_types, FiveMinuteTimeframe, HourlyTimeframe, \
+from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, \
     DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
 
 def test_Schema_schema_empty():
@@ -188,8 +188,8 @@ def test_TimeframeSchema_schema(valid_raw_config):
             if isinstance(backup_settings[key], list):
                 assert len(processed_backup[key]) == len(backup_settings[key])
 
-        tf_types = tframe_types()
-        tf_names = tframe_types(names=True)
+        tf_types = Timeframe.tframe_types()
+        tf_names = Timeframe.tframe_types(names=True)
         expected_tf_types = [tf_types[i]
                              for i in range(len(tf_names))
                              if tf_names[i] in backup_settings["timeframes"]]
@@ -533,7 +533,8 @@ def test_BackupSchema_schema(valid_raw_config, path_generator):
             backup_settings = raw_config_copy[backup_name]
             backup_settings["src_dir"] = path_generator("non-existent-dir", mkdir=False)
             schema({ backup_name: backup_settings })
-        assert str(exc.value).startswith(config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR)
+        assert str(exc.value).startswith(
+            config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR)
 
 def test_parse_config(path_generator, valid_config_file_generator):
     backups = config.parse_config(valid_config_file_generator())
@@ -543,7 +544,7 @@ def test_parse_config(path_generator, valid_config_file_generator):
 
     config_file_copy = path_generator("config-file-copy.yml", touch=False)
     shutil.copy(valid_config_file_generator(), config_file_copy)
-    with open(config_file_copy, 'a') as f:
+    with open(config_file_copy, "a", encoding="utf-8") as f:
         f.write("invalid yaml syntax")
     with pytest.raises(config.ConfigErrors) as exc:
         config.parse_config(config_file_copy)
@@ -556,7 +557,8 @@ def test_parse_config(path_generator, valid_config_file_generator):
     assert isinstance(exc.value, config.ConfigErrors)
 
     config_file_invalid = path_generator("config-file-invalid.yml", touch=True)
-    with open(valid_config_file_generator(num_backups=2), 'r') as fr, open(config_file_invalid, 'a') as fw:
+    with open(valid_config_file_generator(num_backups=2), "r", encoding="utf-8") as fr, \
+        open(config_file_invalid, "a", encoding="utf-8") as fw:
         for line in fr:
             if line.startswith("  src_dir:"):
                 invalid_path = path_generator("non-existent-path", touch=False)
@@ -567,7 +569,7 @@ def test_parse_config(path_generator, valid_config_file_generator):
                 fw.write("")
             else:
                 fw.write(line)
-    with open(config_file_invalid, 'r') as f:
+    with open(config_file_invalid, "r", encoding="utf-8") as f:
         print(f.read())
 
     with pytest.raises(config.ConfigErrors) as exc:
