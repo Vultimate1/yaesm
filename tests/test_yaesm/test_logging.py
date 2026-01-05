@@ -3,7 +3,13 @@
 import logging
 import re
 
-from yaesm.logging import Logging
+import pytest
+
+from yaesm.logging import Logging, LoggingNotInitializedException
+
+def test_raises_logging_not_initialized():
+    with pytest.raises(LoggingNotInitializedException):
+        Logging.get()
 
 def test_init_logging():
     Logging.initialize(stderr=True)

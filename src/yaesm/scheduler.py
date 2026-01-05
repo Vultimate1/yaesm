@@ -1,15 +1,19 @@
-import apscheduler.schedulers.blocking
-import apscheduler.events
+"""src/yaesm/scheduler.py"""
+
 from datetime import datetime, timedelta
 
-from yaesm.logging import logger
-from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe
+import apscheduler.schedulers.blocking
+import apscheduler.events
+
+from yaesm.logging import Logging
+from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, \
+    WeeklyTimeframe, MonthlyTimeframe
 
 class Scheduler:
     def __init__(self):
         self._apscheduler = apscheduler.schedulers.blocking.BlockingScheduler()
         self._apscheduler.add_listener(
-            lambda event: logger().error(str(event.exception)),
+            lambda event: Logging.get().error(str(event.exception)),
             apscheduler.events.EVENT_JOB_ERROR
         )
 

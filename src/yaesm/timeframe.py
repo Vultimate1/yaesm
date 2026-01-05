@@ -1,7 +1,6 @@
 """src/yaesm/timeframe.py"""
 import dataclasses
 
-@dataclasses.dataclass
 class Timeframe():
     """`Timeframe` is a base class for the different timeframe types. None of the
     Timeframe classes do validity checking on their initialization arguments.
@@ -10,19 +9,21 @@ class Timeframe():
 
     Also see test_timeframe.py for examples of how to use `Timeframe`'s."""
 
-def tframe_types(names=False) -> list:
-    """If `names` is `True`, return a list containing the names of all timeframe types
-    as strings. Otherwise return a list of all the timeframe type subclasses."""
-    if names:
-        return ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]
-    return [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe,
-            MonthlyTimeframe, YearlyTimeframe]
+    @staticmethod
+    def tframe_types(names=False) -> list:
+        """If `names` is `True`, return a list containing the names of all timeframe types
+        as strings. Otherwise return a list of all the timeframe type subclasses."""
+        if names:
+            return ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]
+        return [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe,
+                MonthlyTimeframe, YearlyTimeframe]
 
-def weekday_num(weekday):
-    # monday is first day to adhere to apscheduler
-    weekday_num_map = {"monday":0,"tuesday":1,"wednesday":2,"thursday":3,"friday":4,"saturday":5,
-                       "sunday":6}
-    return weekday_num_map[weekday]
+    @staticmethod
+    def weekday_num(weekday):
+        # monday is first day to adhere to apscheduler
+        weekday_num_map = {"monday":0, "tuesday":1, "wednesday":2, "thursday":3, "friday":4,
+                           "saturday":5, "sunday":6}
+        return weekday_num_map[weekday]
 
 @dataclasses.dataclass
 class FiveMinuteTimeframe(Timeframe):
