@@ -24,9 +24,9 @@ def with_stderr_debug_logging(request):
     """Fixture that enables debug level logging to stderr for all test modules,
     except the test_logging.py module."""
     if request.module.__name__ != "test_logging":
-        yaesm.logging.init_logging(stderr=True, level='DEBUG')
+        yaesm.logging.Logging.initialize(stderr=True, level='DEBUG')
         yield
-        yaesm.logging.disable_logging()
+        yaesm.logging.Logging.disable()
     else:
         yield
 
