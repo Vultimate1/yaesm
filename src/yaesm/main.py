@@ -1,50 +1,30 @@
 #!/usr/bin/env python3
+
 import sys
 import argparse
 import importlib.metadata
-import logging
+from pathlib import Path
 
 import yaesm.logging
 import yaesm.config
-import yaesm.scheduler
+from yaesm.subcommand.subcommandbase import SubcommandBase
 
-def main(argv=None):
-    """TODO"""
+def main(argv=None) -> int:
+    """This is the main function of yaesm."""
     if argv is None:
         argv = sys.argv[1:]
 
-    args = parse_args(argv)
+    subcommand_name_class_map = {cls.name(): cls for cls in SubcommandBase.__subclasses__()}
 
-    try:
-        backups = yaesm.config.parse_config(args.config)
-    except yaesm.config.ConfigErrors as exc:
-        for err in exc.errors:
-            print(f"yaesm: config error: {err}", file=sys.stderr)
-        return 1
-
-    yaesm.logging.init_logging(
-        logfile=args.logfile,
-        syslog=args.syslog,
-        syslog_address=args.syslog,
-        level=logging.DEBUG if args.verbose else logging.INFO
-    )
-
-    if args.subcommand == "run":
-        return main_run(backups)
-
-def main_run(backups):
-    """TODO"""
-    scheduler = yaesm.scheduler.Scheduler()
-    scheduler.add_backups(backups)
-    scheduler.start()
-
-def parse_args(argv):
-    """TODO"""
     parser = argparse.ArgumentParser(
         prog="yaesm",
-        description="A backup tool with support for multiple filesystems",
+        description="A backup tool with support for multiple file systems",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
+    subparsers = parser.add_subparsers(dest="subcommand", required=True)
+    for name, cls in subcommand_name_class_map.items():
+        subparser = subparsers.add_parser(name)
+        cls.add_argparser_arguments(subparser)
     parser.add_argument(
         "--version",
         action="version",
@@ -52,43 +32,58 @@ def parse_args(argv):
     )
     parser.add_argument(
         "-c", "--config",
-        default="/etc/yaesm/config.yaml",
+        type=Path,
+        default=Path("/etc/yaesm/config.yaml"),
         help="Path to configuration file"
     )
     parser.add_argument(
-        "--logfile",
-        metavar="PATH",
-        help="Log to file at PATH"
+        "--loglevel",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set the logging level",
     )
     parser.add_argument(
-        "--syslog",
+        "--log-stderr",
         action="store_true",
-        help="Log to syslog"
+        help="Log to STDERR"
     )
     parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Produce debug output"
+        "--log-file",
+        type=Path,
+        metavar="FILE",
+        help="Log to file FILE"
     )
     parser.add_argument(
-        "--syslog-address",
-        default="/dev/log",
-        help="Syslog socket address"
+        "--log-syslog",
+        nargs="?",
+        const=True,
+        default=False,
+        metavar="ADDRESS",
+        help=("Enable syslog logging. "
+              "Optionally specify syslog address "
+              "(default: /dev/log)"
+        )
+    )
+    parsed_args = parser.parse_args(argv)
+
+    try:
+        backups = yaesm.config.parse_config(parsed_args.config)
+    except yaesm.config.ConfigErrors as exc:
+        for err in exc.errors:
+            backup, err_msg = err
+            print(f"yaesm: config error: {backup}: {err_msg}", file=sys.stderr)
+        return 1
+
+    yaesm.logging.init_logging(
+        level=parsed_args.loglevel,
+        stderr=parsed_args.log_stderr,
+        syslog=bool(parsed_args.log_syslog),
+        syslog_address=parsed_args.log_syslog if isinstance(parsed_args.log_syslog, str) else "/dev/log"
     )
 
-    # subcommands
-    subparsers = parser.add_subparsers(dest='subcommand', help='subcommands')
-
-    run_parser = subparsers.add_parser(
-        "run",
-        help="Run yaesm scheduler (for use with init systems)"
-    )
-    run_parser.add_argument(
-        "--pidfile",
-        default="/var/run/yaesm.pid"
-    )
-
-    args = parser.parse_args(argv)
-    if not args.subcommand:
-        parser.error("must specify a subcommand")
-    return args
+    try:
+        exit_status = subcommand_name_class_map[parsed_args.subcommand]().main(backups, parsed_args)
+        return exit_status
+    except Exception as exc:
+        print(f"yaesm: error: {exc}", file=sys.stderr)
+        return 1
