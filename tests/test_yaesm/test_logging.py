@@ -25,7 +25,7 @@ def test_init_logging():
 def test_stderr_logging(capsys):
     init_logging(stderr=True, level=logging.DEBUG)
     logger().debug("TEST LOG")
-    assert re.match("^yaesm -.+DEBUG.+TEST LOG$", capsys.readouterr().err)
+    assert re.match("^yaesm |.+DEBUG.+TEST LOG$", capsys.readouterr().err)
 
 def test_level_respected(capsys):
     init_logging(stderr=True) # level defaults to INFO
