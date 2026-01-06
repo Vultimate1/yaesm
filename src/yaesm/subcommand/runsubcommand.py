@@ -8,9 +8,11 @@ import yaesm.cleanup
 import yaesm.scheduler
 
 class RunSubcommand(SubcommandBase):
-    """TODO"""
+    """The run subcommand runs the scheduler, blocks, and in most cases never terminates.
+
+    This subcommand should primarily be invoked from OS init system software.
+    """
     def main(self, backups, parsed_args) -> int:
-        """TODO"""
         self._setup_pidfile(parsed_args.pidfile)
 
         scheduler = yaesm.scheduler.Scheduler()
@@ -22,7 +24,6 @@ class RunSubcommand(SubcommandBase):
 
     @classmethod
     def add_argparser_arguments(cls, parser:argparse.ArgumentParser) -> None:
-        """TODO"""
         parser.add_argument(
             "--pidfile",
             type=Path,
