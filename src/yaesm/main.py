@@ -14,14 +14,15 @@ def main(argv=None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
+    # yaesm.subcommand modules are loaded eagerly from their __init__.py
     subcommand_name_class_map = {cls.name(): cls for cls in SubcommandBase.__subclasses__()}
 
     parser = argparse.ArgumentParser(
         prog="yaesm",
-        description="A backup tool with support for multiple file systems",
+        description="yaesm is a backup tool with support for multiple file systems",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    subparsers = parser.add_subparsers(dest="subcommand", required=True)
+    subparsers = parser.add_subparsers(title="subcommands", dest="subcommand", required=True)
     for name, cls in subcommand_name_class_map.items():
         subparser = subparsers.add_parser(name)
         cls.add_argparser_arguments(subparser)
@@ -34,24 +35,24 @@ def main(argv=None) -> int:
         "-c", "--config",
         type=Path,
         default=Path("/etc/yaesm/config.yaml"),
-        help="Path to configuration file"
+        help="path to configuration file"
     )
     parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Set the logging level",
+        help="set the logging level",
     )
     parser.add_argument(
         "--log-stderr",
         action="store_true",
-        help="Log to STDERR"
+        help="log to STDERR"
     )
     parser.add_argument(
         "--log-file",
         type=Path,
         metavar="FILE",
-        help="Log to file FILE"
+        help="log to file FILE"
     )
     parser.add_argument(
         "--log-syslog",
@@ -59,8 +60,8 @@ def main(argv=None) -> int:
         const=True,
         default=False,
         metavar="ADDRESS",
-        help=("Enable syslog logging. "
-              "Optionally specify syslog address "
+        help=("enable syslog logging and "
+              "optionally specify syslog address "
               "(default: /dev/log)"
         )
     )
