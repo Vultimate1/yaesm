@@ -76,7 +76,7 @@ def main(argv=None) -> int:
         return 1
 
     yaesm.logging.init_logging(
-        level=parsed_args.loglevel,
+        level=parsed_args.log_level,
         stderr=parsed_args.log_stderr,
         syslog=bool(parsed_args.log_syslog),
         syslog_address=parsed_args.log_syslog if isinstance(parsed_args.log_syslog, str) else "/dev/log"
