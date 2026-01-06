@@ -10,15 +10,15 @@ class Scheduler:
         self._apscheduler = apscheduler.schedulers.blocking.BlockingScheduler()
         logger('apscheduler').propagate = False; logger('apscheduler').setLevel('CRITICAL')
         self._apscheduler.add_listener(
-            lambda event: logger().info(f"{self._job_name(event.job_id)} - successful backup"),
+            lambda event: logger().info(f"{self._job_name(event.job_id)} | successful backup"),
             apscheduler.events.EVENT_JOB_EXECUTED
         )
         self._apscheduler.add_listener(
-            lambda event: logger().error(f"{self._job_name(event.job_id)} - {event.exception}"),
+            lambda event: logger().error(f"{self._job_name(event.job_id)} | {event.exception}"),
             apscheduler.events.EVENT_JOB_ERROR
         )
         self._apscheduler.add_listener(
-            lambda event: logger().error(f"{self._job_name(event.job_id)} - missed backup"),
+            lambda event: logger().error(f"{self._job_name(event.job_id)} | missed backup"),
             apscheduler.events.EVENT_JOB_MISSED
         )
 
@@ -27,10 +27,6 @@ class Scheduler:
         not return.
         """
         self._apscheduler.start()
-
-    def _job_name(self, job_id):
-        """Return name of APScheduler job with job id `job_id`."""
-        return self._apscheduler.get_job(job_id).name
 
     def stop(self, force=False):
         """Stop the scheduler gracefully."""
@@ -44,6 +40,10 @@ class Scheduler:
             for timeframe in backup.timeframes:
                 job_name = f"{backup.name} ({timeframe.name})"
                 self._add_job(job_name, lambda b=backup, t=timeframe: b.backend.do_backup(b,t), timeframe)
+
+    def _job_name(self, job_id):
+        """Return name of APScheduler job with job id `job_id`."""
+        return self._apscheduler.get_job(job_id).name
 
     def _add_job(self, name, func, timeframe):
         """Schedule an arbitrary function (`func`) to be run at times according to `timeframe`."""
