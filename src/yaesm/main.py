@@ -37,7 +37,7 @@ def main(argv=None) -> int:
         help="Path to configuration file"
     )
     parser.add_argument(
-        "--loglevel",
+        "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level",
