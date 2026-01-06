@@ -23,14 +23,16 @@ class Scheduler:
         )
 
     def start(self):
-        """Start the scheduler. Since the scheduler blocks this function will
-        not return.
+        """Start the scheduler if it has not already been started. Since the
+        scheduler blocks this function may not return.
         """
-        self._apscheduler.start()
+        if not self._apscheduler.running:
+            self._apscheduler.start()
 
     def stop(self, force=False):
-        """Stop the scheduler gracefully."""
-        self._apscheduler.shutdown(wait=not(force))
+        """If the scheduler is running, stop it gracefully."""
+        if self._apscheduler.running:
+            self._apscheduler.shutdown(wait=not(force))
 
     def add_backups(self, backups):
         """Schedule every Backup in `backups` to have their backend's `do_backup()`
@@ -42,7 +44,7 @@ class Scheduler:
                 self._add_job(job_name, lambda b=backup, t=timeframe: b.backend.do_backup(b,t), timeframe)
 
     def _job_name(self, job_id):
-        """Return name of APScheduler job with job id `job_id`."""
+        """Return name of the APScheduler job with id `job_id`."""
         return self._apscheduler.get_job(job_id).name
 
     def _add_job(self, name, func, timeframe):
