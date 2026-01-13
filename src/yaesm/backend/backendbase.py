@@ -1,22 +1,25 @@
+"""src/yaesm/backend/backendbase.py"""
+
 import abc
 from typing import final
 from pathlib import Path
-import voluptuous as vlp
 import importlib
 from functools import cache
 
+import voluptuous as vlp
+
 import yaesm.backup as bckp
-import yaesm.config as config
+from yaesm import config
 from yaesm.timeframe import Timeframe
 from yaesm.sshtarget import SSHTarget
 
 class BackendBase(abc.ABC):
     """Abstract base class for execution backend classes such as RsyncBackend
     and BtrfsBackend. An actual backend class inherits from BackendBase, and
-    implements the methods '_exec_backup_local_to_local()',
-    '_exec_backup_local_to_remote()', '_exec_backup_remote_to_local()',
-    '_delete_backups_local()', and '_delete_backups_remote()' . Any code using a
-    backend only needs to interact with the 'do_backup()' method, which is
+    implements the methods `_exec_backup_local_to_local()`,
+    `_exec_backup_local_to_remote()`, `_exec_backup_remote_to_local()`,
+    `_delete_backups_local()`, and `_delete_backups_remote()` . Any code using a
+    backend only needs to interact with the `do_backup()` method, which is
     defined in this class.
 
     It is important to note that it is expected that backup.dst_dir is an existing
@@ -27,7 +30,7 @@ class BackendBase(abc.ABC):
 
     @final
     def do_backup(self, backup:bckp.Backup, timeframe:Timeframe):
-        """Perform a backup of 'backup' for the Timeframe 'timeframe'. Note that
+        """Perform a backup of 'backup' for the Timeframe `timeframe`. Note that
         this function also cleans up old backups.
         """
         backup_basename = bckp.backup_basename_now(backup, timeframe)
@@ -52,7 +55,7 @@ class BackendBase(abc.ABC):
     def name(cls) -> str:
         """Automatically derive backend name from class name.
 
-        Converts 'BtrfsBackend' -> 'btrfs', 'RsyncBackend' -> 'rsync', etc.
+        Converts `BtrfsBackend` -> 'btrfs', `RsyncBackend` -> 'rsync', etc.
         """
         class_name = cls.__name__
         backend_name = class_name[:-7]  # Remove 'Backend' suffix
@@ -74,39 +77,37 @@ class BackendBase(abc.ABC):
         return config.Schema.schema_empty()
 
     @abc.abstractmethod
-    def _exec_backup_local_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
+    def _exec_backup_local_to_local(self, backup:bckp.Backup, backup_basename:str,
+                                    timeframe:Timeframe):
         """Execute a single local to local backup for the Backup `backup` in the
         Timeframe `timeframe`. The resulting backup will have basename
         `backup_basename`. Note that this function does not perform any cleanup.
         """
-        ...
 
     @abc.abstractmethod
-    def _exec_backup_local_to_remote(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
+    def _exec_backup_local_to_remote(self, backup:bckp.Backup, backup_basename:str,
+                                     timeframe:Timeframe):
         """Execute a single local to remote backup for the Backup `backup` in
         the Timeframe `timeframe`. The resulting backup backup will have
         basename `backup_basename`. Note that this function does not perform any
         cleanup.
         """
-        ...
 
     @abc.abstractmethod
-    def _exec_backup_remote_to_local(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
+    def _exec_backup_remote_to_local(self, backup:bckp.Backup, backup_basename:str,
+                                     timeframe:Timeframe):
         """Execute a single remote to local backup for the Backup `backup` in
         the Timeframe `timeframe`. The resulting backup will have basename
         `backup_basename`. Note that this function does not perform any cleanup.
         """
-        ...
 
     @abc.abstractmethod
     def _delete_backups_local(self, *backups):
         """Delete all the local backups in `*backups` (Paths)."""
-        ...
 
     @abc.abstractmethod
     def _delete_backups_remote(self, *backups):
         """Delete all the remote backups in `*backups` (SSHTargets)."""
-        ...
 
     @final
     @cache
