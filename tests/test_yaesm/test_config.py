@@ -1,20 +1,21 @@
 """tests/test_yaesm/test_config.py"""
 import copy
 
-import pytest
 import shutil
-import voluptuous as vlp
 from pathlib import Path
-import yaml
 import re
 import random
+
+import pytest
+import voluptuous as vlp
+import yaml
 
 import yaesm.config as config
 import yaesm.backup as bckp
 from yaesm.backend.backendbase import BackendBase
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, \
-    DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
+    DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe
 
 def test_Schema_schema_empty():
     schema = config.Schema.schema_empty()
@@ -231,7 +232,8 @@ def test_SrcDirDstDirSchema_is_dir_or_sshtarget_spec(path_generator):
     shutil.rmtree(tmpdir_str)
     with pytest.raises(vlp.Invalid) as exc:
         config.SrcDirDstDirSchema._is_dir_or_sshtarget_spec(tmpdir_str)
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR
+    assert str(exc.value) \
+        == config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR
 
 def test_SrcDirDstDirSchema_dict_max_one_sshtarget_spec(path_generator):
     src_dir_str = str(path_generator("src_dir", mkdir=True))
@@ -263,7 +265,8 @@ def test_SrcDirDstDirSchema_dict_ssh_key_required_if_ssh_target(path_generator):
     sshtarget_spec = "ssh://p22:root@localhost:/"
     ssh_key_str = str(path_generator("ssh_key", touch=True))
     data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str, "ssh_key": ssh_key_str}
-    assert config.SrcDirDstDirSchema._dict_ssh_key_required_if_ssh_target(data) == {**data, "ssh_key": Path(data["ssh_key"])}
+    assert config.SrcDirDstDirSchema._dict_ssh_key_required_if_ssh_target(data) \
+        == {**data, "ssh_key": Path(data["ssh_key"])}
 
     with pytest.raises(vlp.Invalid) as exc:
         data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str}
@@ -326,7 +329,8 @@ def test_SrcDirDstDirSchema_schema(path_generator):
     data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str}
     assert schema(data) == {"src_dir": Path(src_dir_str), "dst_dir": Path(dst_dir_str)}
 
-    data = {"src_dir": src_dir_str, "dst_dir": sshtarget_spec, "ssh_key": key, "ssh_config": ssh_config}
+    data = {"src_dir": src_dir_str, "dst_dir": sshtarget_spec, "ssh_key": key,
+            "ssh_config": ssh_config}
     data = schema(data)
     assert sorted(data) == ["dst_dir", "src_dir", "ssh_config", "ssh_key"]
     assert data["src_dir"] == Path(src_dir_str)
@@ -364,14 +368,18 @@ def test_SrcDirDstDirSchema_schema(path_generator):
     with pytest.raises(vlp.Invalid) as exc:
         data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str}
         schema(data)
-    assert re.match(config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR, str(exc.value))
+    assert re.match(
+        config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR,
+        str(exc.value))
     Path(src_dir_str).mkdir()
 
     Path(dst_dir_str).rmdir()
     with pytest.raises(vlp.Invalid) as exc:
         data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str}
         schema(data)
-    assert re.match(config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR, str(exc.value))
+    assert re.match(
+        config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR,
+        str(exc.value))
     Path(dst_dir_str).mkdir()
 
     Path(key).unlink()
@@ -461,16 +469,17 @@ def test_BackupSchema_apply_sub_schemas(valid_raw_config, path_generator):
         backup_spec = copy.deepcopy({ backup_name : valid_raw_config[backup_name] })
         backup_spec = config.BackupSchema._apply_sub_schemas(backup_spec)
         backup_settings = backup_spec[backup_name]
-        assert isinstance(backup_settings["src_dir"], Path) or isinstance(backup_settings["src_dir"], SSHTarget)
-        assert isinstance(backup_settings["dst_dir"], Path) or isinstance(backup_settings["dst_dir"], SSHTarget)
+        assert isinstance(backup_settings["src_dir"], (Path, SSHTarget))
+        assert isinstance(backup_settings["dst_dir"], (Path, SSHTarget))
         assert isinstance(backup_settings["backend"], BackendBase)  # Changed from issubclass
         for tf in backup_settings["timeframes"]:
             assert isinstance(tf, Timeframe)
-            # failure tests
+    # failure tests
     for backup_name in sorted(valid_raw_config.keys()):
         backup_spec = copy.deepcopy({ backup_name : valid_raw_config[backup_name] })
         backup_spec[backup_name]["backend"] = "INVALIDBACKEND"
-        backup_spec[backup_name]["src_dir"] = path_generator("non-existent-path", touch=False, mkdir=False)
+        backup_spec[backup_name]["src_dir"] = path_generator("non-existent-path", touch=False,
+                                                             mkdir=False)
         backup_spec[backup_name]["timeframes"].append("INVALIDTIMEFRAMENAME")
         with pytest.raises(vlp.MultipleInvalid) as exc:
             backup_spec = config.BackupSchema._apply_sub_schemas(backup_spec)
@@ -478,7 +487,8 @@ def test_BackupSchema_apply_sub_schemas(valid_raw_config, path_generator):
 
 def test_BackupSchema_promote_to_backup_object(valid_raw_config):
     backup_name = random.choice(list(valid_raw_config.keys()))
-    backup = config.BackupSchema._promote_to_backup_object({backup_name : valid_raw_config[backup_name]})
+    backup = config.BackupSchema._promote_to_backup_object(
+        {backup_name : valid_raw_config[backup_name]})
     assert isinstance(backup, bckp.Backup)
 
 def test_BackupSchema_schema(valid_raw_config, path_generator):
@@ -503,7 +513,8 @@ def test_BackupSchema_schema(valid_raw_config, path_generator):
             assert isinstance(backup.dst_dir, Path)
         raw_config_copy = copy.deepcopy(valid_raw_config)
         raw_config_copy[backup_name]["INVALIDSETTING"] = "foo"
-        assert schema({ backup_name : raw_config_copy[backup_name] }) # no error for invalid setting
+        # no error for invalid setting
+        assert schema({backup_name : raw_config_copy[backup_name]})
     # failure tests
     with pytest.raises(vlp.Invalid) as exc:
         schema({})
