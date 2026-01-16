@@ -1,12 +1,10 @@
-import pytest
+"""tests/test_yaesm/test_scheduler.py"""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-import logging
 
 import yaesm.scheduler
 import yaesm.timeframe
-import yaesm.logging
 
 def test_add_job_5minute_timeframe():
     scheduler = yaesm.scheduler.Scheduler()
@@ -60,7 +58,7 @@ def test_add_job_daily_timeframe():
     scheduler._add_job("foo-name", lambda: 1, timeframe)
     jobs = scheduler._apscheduler.get_jobs()
     assert len(jobs) == 2
-    
+
     # Test first job (9:00)
     job1 = jobs[0]
     assert job1.name == "foo-name"
@@ -77,7 +75,7 @@ def test_add_job_daily_timeframe():
     for expected in expected_times:
         assert next_time == expected
         next_time = job1.trigger.get_next_fire_time(next_time, next_time)
-    
+
     # Test second job (17:30)
     job2 = jobs[1]
     assert job2.name == "foo-name"
@@ -97,11 +95,12 @@ def test_add_job_daily_timeframe():
 
 def test_add_job_weekly_timeframe():
     scheduler = yaesm.scheduler.Scheduler()
-    timeframe = yaesm.timeframe.WeeklyTimeframe(keep=4, times=[(10, 0), (18, 30)], weekdays=["monday", "friday"])
+    timeframe = yaesm.timeframe.WeeklyTimeframe(keep=4, times=[(10, 0), (18, 30)],
+                                                weekdays=["monday", "friday"])
     scheduler._add_job("foobar-name", lambda: 1, timeframe)
     jobs = scheduler._apscheduler.get_jobs()
     assert len(jobs) == 2  # 2 times, each with monday,friday in day_of_week
-    
+
     # Test job 1: Monday and Friday at 10:00
     job1 = jobs[0]
     assert job1.name == "foobar-name"
@@ -118,7 +117,7 @@ def test_add_job_weekly_timeframe():
     for expected in expected_times:
         assert next_time == expected
         next_time = job1.trigger.get_next_fire_time(next_time, next_time)
-    
+
     # Test job 2: Monday and Friday at 18:30
     job2 = jobs[1]
     assert job2.name == "foobar-name"
@@ -138,11 +137,12 @@ def test_add_job_weekly_timeframe():
 
 def test_add_job_monthly_timeframe():
     scheduler = yaesm.scheduler.Scheduler()
-    timeframe = yaesm.timeframe.MonthlyTimeframe(keep=12, times=[(9, 0), (21, 0)], monthdays=[1, 15])
+    timeframe = yaesm.timeframe.MonthlyTimeframe(keep=12, times=[(9, 0), (21, 0)],
+                                                 monthdays=[1, 15])
     scheduler._add_job("foo-name", lambda: 1, timeframe)
     jobs = scheduler._apscheduler.get_jobs()
     assert len(jobs) == 4  # 2 monthdays * 2 times = 4 jobs
-    
+
     # Test job 1: 1st of month at 9:00
     job1 = jobs[0]
     assert job1.name == "foo-name"
@@ -159,7 +159,7 @@ def test_add_job_monthly_timeframe():
     for expected in expected_times:
         assert next_time == expected
         next_time = job1.trigger.get_next_fire_time(next_time, next_time)
-    
+
     # Test job 2: 1st of month at 21:00
     job2 = jobs[1]
     assert job2.name == "foo-name"
@@ -176,7 +176,7 @@ def test_add_job_monthly_timeframe():
     for expected in expected_times:
         assert next_time == expected
         next_time = job2.trigger.get_next_fire_time(next_time, next_time)
-    
+
     # Test job 3: 15th of month at 9:00
     job3 = jobs[2]
     assert job3.name == "foo-name"
@@ -193,7 +193,7 @@ def test_add_job_monthly_timeframe():
     for expected in expected_times:
         assert next_time == expected
         next_time = job3.trigger.get_next_fire_time(next_time, next_time)
-    
+
     # Test job 4: 15th of month at 21:00
     job4 = jobs[3]
     assert job4.name == "foo-name"
@@ -214,11 +214,12 @@ def test_add_job_monthly_timeframe():
 def test_add_job_yearly_timeframe():
     scheduler = yaesm.scheduler.Scheduler()
     # Yearday 1 = Jan 1, Yearday 32 = Feb 1, Yearday 365 = Dec 31
-    timeframe = yaesm.timeframe.YearlyTimeframe(keep=5, times=[(0, 0), (12, 0)], yeardays=[1, 32, 365])
+    timeframe = yaesm.timeframe.YearlyTimeframe(keep=5, times=[(0, 0), (12, 0)],
+                                                yeardays=[1, 32, 365])
     scheduler._add_job("foo-name", lambda: 1, timeframe)
     jobs = scheduler._apscheduler.get_jobs()
     assert len(jobs) == 6  # 3 yeardays * 2 times = 6 jobs
-    
+
     # Test job 1: Jan 1 at 0:00
     job1 = jobs[0]
     assert job1.name == "foo-name"
@@ -233,7 +234,7 @@ def test_add_job_yearly_timeframe():
     for expected in expected_times:
         assert next_time == expected
         next_time = job1.trigger.get_next_fire_time(next_time, next_time)
-    
+
     # Test job 2: Jan 1 at 12:00
     job2 = jobs[1]
     assert job2.name == "foo-name"
@@ -248,7 +249,7 @@ def test_add_job_yearly_timeframe():
     for expected in expected_times:
         assert next_time == expected
         next_time = job2.trigger.get_next_fire_time(next_time, next_time)
-    
+
     # Test job 3: Feb 1 at 0:00
     job3 = jobs[2]
     assert job3.name == "foo-name"
@@ -263,7 +264,7 @@ def test_add_job_yearly_timeframe():
     for expected in expected_times:
         assert next_time == expected
         next_time = job3.trigger.get_next_fire_time(next_time, next_time)
-    
+
     # Test job 4: Feb 1 at 12:00
     job4 = jobs[3]
     assert job4.name == "foo-name"
@@ -278,7 +279,7 @@ def test_add_job_yearly_timeframe():
     for expected in expected_times:
         assert next_time == expected
         next_time = job4.trigger.get_next_fire_time(next_time, next_time)
-    
+
     # Test job 5: Dec 31 at 0:00
     job5 = jobs[4]
     assert job5.name == "foo-name"
@@ -293,7 +294,7 @@ def test_add_job_yearly_timeframe():
     for expected in expected_times:
         assert next_time == expected
         next_time = job5.trigger.get_next_fire_time(next_time, next_time)
-    
+
     # Test job 6: Dec 31 at 12:00
     job6 = jobs[5]
     assert job6.name == "foo-name"
@@ -311,7 +312,7 @@ def test_add_job_yearly_timeframe():
 
 def test_add_backups_single_backup_single_timeframe(random_backup):
     scheduler = yaesm.scheduler.Scheduler()
-    
+
     random_backup.timeframes = [yaesm.timeframe.FiveMinuteTimeframe(keep=10)]
 
     scheduler.add_backups([random_backup])
@@ -321,7 +322,7 @@ def test_add_backups_single_backup_single_timeframe(random_backup):
 
 def test_add_backups_single_backup_multiple_timeframes(random_backup):
     scheduler = yaesm.scheduler.Scheduler()
-    
+
     random_backup.timeframes = [
         yaesm.timeframe.FiveMinuteTimeframe(keep=10),
         yaesm.timeframe.HourlyTimeframe(keep=24, minutes=[0, 30]),
@@ -335,7 +336,7 @@ def test_add_backups_single_backup_multiple_timeframes(random_backup):
 
 def test_add_backups_multiple_backups(random_backup_generator):
     scheduler = yaesm.scheduler.Scheduler()
-    
+
     mock_backup1 = random_backup_generator()
     mock_backup1.timeframes = [yaesm.timeframe.FiveMinuteTimeframe(keep=10)]
 
@@ -348,7 +349,7 @@ def test_add_backups_multiple_backups(random_backup_generator):
 
 def test_add_backups_multiple_backups_multiple_timeframes(random_backup_generator):
     scheduler = yaesm.scheduler.Scheduler()
-    
+
     mock_backup1 = random_backup_generator()
     mock_backup1.timeframes = [
         yaesm.timeframe.FiveMinuteTimeframe(keep=10),
@@ -381,10 +382,8 @@ def test_job_fail_logs_instead_of_crashes(caplog):
         call_count[0] += 1
         if call_count[0] <= 3:
             raise Exception("TEST EXCEPTION")
-        else:
-            scheduler.stop(force=True)
+        scheduler.stop(force=True)
     # Schedule a job to run immediately and repeatedly
-    from datetime import datetime, timedelta
     start_date = datetime.now() + timedelta(seconds=0.5)
     scheduler._apscheduler.add_job(
         fail_func,

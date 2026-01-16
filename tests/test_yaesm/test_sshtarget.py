@@ -1,12 +1,14 @@
-import pytest
-from yaesm.sshtarget import SSHTarget, SSHTargetException
+"""tests/test_yaesm/test_sshtarget.py"""
+
 import subprocess
 from pathlib import Path
+
+from yaesm.sshtarget import SSHTarget
 
 def test_sshtarget_constructor():
     key = Path("/a/path/to/a/key")
 
-    target = SSHTarget(f"ssh://p2222:larry@localhost:/a/random/path", key)
+    target = SSHTarget("ssh://p2222:larry@localhost:/a/random/path", key)
     assert target.port == 2222
     assert target.user == "larry"
     assert target.host == "localhost"
@@ -14,31 +16,32 @@ def test_sshtarget_constructor():
     assert target.key  == key
 
     # port specification is optional
-    target = SSHTarget(f"ssh://larry@localhost:/a/random/path", key)
-    assert target.port == None
+    target = SSHTarget("ssh://larry@localhost:/a/random/path", key)
+    assert target.port is None
     assert target.user == "larry"
     assert target.host == "localhost"
     assert target.path == Path("/a/random/path")
     assert target.key  == key
 
     # port specification is optional
-    target = SSHTarget(f"ssh://patrickhost:/a/random/path", key)
-    assert target.port == None
-    assert target.user == None
+    target = SSHTarget("ssh://patrickhost:/a/random/path", key)
+    assert target.port is None
+    assert target.user is None
     assert target.host == "patrickhost"
     assert target.path == Path("/a/random/path")
     assert target.key  == key
 
     # port specification is optional
-    target = SSHTarget(f"ssh://p4444:larryhost:/a/random/path", key)
+    target = SSHTarget("ssh://p4444:larryhost:/a/random/path", key)
     assert target.port == 4444
-    assert target.user == None
+    assert target.user is None
     assert target.host == "larryhost"
     assert target.path == Path("/a/random/path")
     assert target.key  == key
 
 def test_openssh_cmd(sshtarget):
-    p = subprocess.run(sshtarget.openssh_cmd("whoami && printf '%s\\n' foo 1>&2 && exit 73"), shell=True, capture_output=True, encoding="utf-8")
+    p = subprocess.run(sshtarget.openssh_cmd("whoami && printf '%s\\n' foo 1>&2 && exit 73"),
+                       shell=True, capture_output=True, encoding="utf-8", check=False)
     returncode = p.returncode
     stdout = p.stdout
     stderr = p.stderr
@@ -46,8 +49,10 @@ def test_openssh_cmd(sshtarget):
     assert stdout == f"{sshtarget.user}\n"
     assert stderr == "foo\n"
 
-    openssh_cmd = sshtarget.openssh_cmd("printf '%s\\n' foo && printf '%s\\n' bar && printf '%s\\n' baz && 1>&2 printf '%s\\n' quux")
-    p = subprocess.run(f"{openssh_cmd} | grep ba; exit 42", shell=True, capture_output=True, encoding="utf-8")
+    openssh_cmd = sshtarget.openssh_cmd("printf '%s\\n' foo && printf '%s\\n' \
+bar && printf '%s\\n' baz && 1>&2 printf '%s\\n' quux")
+    p = subprocess.run(f"{openssh_cmd} | grep ba; exit 42", shell=True, capture_output=True,
+                       encoding="utf-8", check=False)
     returncode = p.returncode
     stdout = p.stdout
     stderr = p.stderr

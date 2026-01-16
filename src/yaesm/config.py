@@ -1,4 +1,5 @@
 """src/yaesm/config.py"""
+import dataclasses
 from typing import final
 import re
 from pathlib import Path
@@ -11,10 +12,10 @@ import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
 
+@dataclasses.dataclass
 class ConfigErrors(Exception):
-    def __init__(self, config_file, errors):
-        self.config_file = config_file
-        self.errors = errors # list of pairs of backup-name, vlp.Invalid
+    config_file: int | str | Path
+    errors: list[str | Exception]
 
 def parse_config(config_file):
     """Parse the file `config_file` into a list of `Backup` objects. This is the
@@ -25,11 +26,11 @@ def parse_config(config_file):
     if not config_file.is_file():
         raise ConfigErrors(config_file, [f"config file does not exist: {config_file}"])
 
-    with open(config_file, 'r') as f:
+    with open(config_file, "r", encoding="utf-8") as f:
         try:
             config_data = yaml.safe_load(f)
         except yaml.YAMLError as exc:
-            raise ConfigErrors(config_file, [exc])
+            raise ConfigErrors(config_file, [exc]) from exc
     backup_names = sorted(list(config_data.keys())) if config_data else []
     if not backup_names:
         raise ConfigErrors(config_file, ["no backups specified"])
@@ -50,6 +51,7 @@ def parse_config(config_file):
 class Schema():
     """Base class for all yaesm configuration schema classes."""
 
+    @dataclasses.dataclass
     class ErrMsg:
         LOCAL_DIR_INVALID = "Not a complete path to an existing directory"
         LOCAL_FILE_INVALID = "Not a complete path to an existing file"
@@ -57,16 +59,13 @@ class Schema():
     @staticmethod
     def schema() -> vlp.Schema:
         """The base schema is responsible for doing basic validation and for
-        coercing freshly parsed yaml into usable types.
-        """
-        ...
+        coercing freshly parsed yaml into usable types."""
 
     @staticmethod
     def schema_extra() -> vlp.Schema:
         """Extra schema is only run in some circumstances. More complicated
         validation (like testing SSH connectivity) should happen in this schema.
-        This schema should only be applied to data after first applying the 'base_schema'.
-        """
+        This schema should only be applied to data after first applying the 'base_schema'."""
         return Schema.schema_empty()
 
     @staticmethod
@@ -76,20 +75,18 @@ class Schema():
         return vlp.Schema(lambda x: x)
 
     @staticmethod
-    def is_file(s:(Path | str)) -> Path:
-        """Validator to ensure 's' is a string or Path representing a full path
-        to a regular file (not directory) on the system, and if so returns 's'
-        as a Path.
-        """
+    def is_file(s: (Path | str)) -> Path:
+        """Validator to ensure `s` is a string or Path representing a full path
+        to a regular file (not directory) on the system, and if so returns `s`
+        as a Path."""
         if not s or str(s)[0] != "/" or not Path(s).is_file():
             raise vlp.Invalid(Schema.ErrMsg.LOCAL_FILE_INVALID)
         return Path(s)
 
     @staticmethod
-    def is_dir(s:(Path | str)) -> Path:
-        """Validator to ensure 's' is a string or Path representing a full path
-        to an existing directory on the system, and if so returns 's' as a Path.
-        """
+    def is_dir(s: (Path | str)) -> Path:
+        """Validator to ensure `s` is a string or Path representing a full path
+        to an existing directory on the system, and if so returns `s` as a Path."""
         if not s or str(s)[0] != "/" or not Path(s).is_dir():
             raise vlp.Invalid(Schema.ErrMsg.LOCAL_DIR_INVALID)
         return Path(s)
@@ -97,6 +94,7 @@ class Schema():
 class BackupSchema(Schema):
     """BackupSchema is the top-level concrete Schema class."""
 
+    @dataclasses.dataclass
     class ErrMsg:
         NOT_1_BACKUP="Not given exactly 1 backup"
         INVALID_BACKUP_NAME="Not a valid backup name"
@@ -105,8 +103,7 @@ class BackupSchema(Schema):
     def schema() -> vlp.Schema:
         """Voluptuous schema that combines together all the other sub-schemas
         to produce an actual `Backup` object. This is the only schema that is
-        directly used by the `parse_config` function.
-        """
+        directly used by the `parse_config` function."""
         return vlp.Schema(vlp.All(
             dict,
             BackupSchema._ensure_single_backup,
@@ -116,13 +113,12 @@ class BackupSchema(Schema):
         )
 
     @staticmethod
-    def _apply_sub_schemas(d:dict) -> dict:
+    def _apply_sub_schemas(d: dict) -> dict:
         """Apply all of the sub schemas (TimeframeSchema, SrcDirDstDirSchema, etc)
-        to `d`, mutating d. Collects all errors, and raises a vlp.MultipleInvalid
+        to `d`, mutating d. Collects all errors, and raises a `vlp.MultipleInvalid`
         exception with all found errors, if any. This function is also
         responsible for applying the proper backend-specific schema. Only call
-        this function after ensuring `d` contains just a single backup.
-        """
+        this function after ensuring `d` contains just a single backup."""
         backup_name = list(d.keys())[0]
         backup_settings = d[backup_name]
         errors = []
@@ -143,11 +139,10 @@ class BackupSchema(Schema):
         return d
 
     @staticmethod
-    def _promote_to_backup_object(d:dict) -> bckp.Backup:
+    def _promote_to_backup_object(d: dict) -> bckp.Backup:
         """Promote the backup spec dictionary `d` to an actual `Backup`
         object. This function should only be called after all other validation
-        has taken place to ensure we have a valid backup spec.
-        """
+        has taken place to ensure we have a valid backup spec."""
         backup_name = list(d.keys())[0]
         backup_settings = d[backup_name]
         backend_obj = backup_settings["backend"]
@@ -159,17 +154,16 @@ class BackupSchema(Schema):
         return bckp.Backup(backup_name, backend_obj, src_dir, dst_dir, timeframes)
 
     @staticmethod
-    def _ensure_single_backup(d:dict):
+    def _ensure_single_backup(d: dict):
         """Validator to ensure that `d` is a dict with a single key (i.e. just one backup)."""
         if not 1 == len(d):
             raise vlp.Invalid(BackupSchema.ErrMsg.NOT_1_BACKUP)
         return d
 
     @staticmethod
-    def _ensure_backup_name_valid(d:dict):
+    def _ensure_backup_name_valid(d: dict):
         """Ensure that the single key in the dict `d` is a string denoting a valid
-        backup name. Should only be called after first calling `_ensure_single_backup`.
-        """
+        backup name. Should only be called after first calling `_ensure_single_backup`."""
         backup_name = list(d.keys())[0]
         if not bckp.backup_name_valid(backup_name):
             raise vlp.Invalid(BackupSchema.ErrMsg.INVALID_BACKUP_NAME)
@@ -177,8 +171,9 @@ class BackupSchema(Schema):
 
 class BackendSchema(Schema):
     """Schema for ensuring a valid backend was specified, and if so promoting the
-    backend name to an actual backend class.
-    """
+    backend name to an actual backend class."""
+
+    @dataclasses.dataclass
     class ErrMsg:
         INVALID_BACKEND_NAME="Not a valid backend name"
 
@@ -188,8 +183,7 @@ class BackendSchema(Schema):
         that is a string dentoting a valid backend name (like 'btrfs' or 'rsync').
 
         This schema Outputs a dict with the backend name promoted to its
-        corresponding backend class.
-        """
+        corresponding backend class."""
         return vlp.Schema(vlp.All({
             vlp.Required("backend"): vlp.In(
                 [cls.name() for cls in backendbase.BackendBase.backend_classes()],
@@ -220,6 +214,7 @@ class BackendSchema(Schema):
 class TimeframeSchema(Schema):
     """Voluptuous schema and validator for timeframe configuration."""
 
+    @dataclasses.dataclass
     class ErrMsg:
         SETTING_MISSING = "A setting required by one of your timeframe types is missing"
         TIME_MALFORMED = "Not a valid time specification"
@@ -245,7 +240,7 @@ class TimeframeSchema(Schema):
         This Schema is meant to be applied to a `dict` containing the freshly parsed values
         for the backup. This returns a `dict` which preserves the keys, but will modify any
         '*_times' settings to a pair of `int` representing the hour and minute. Assuming all
-        prior tests pass, the ''timeframes' key will have its value replaced with a list of
+        prior tests pass, the 'timeframes' key will have its value replaced with a list of
         `Timeframe`.
 
         This schema implements the following checks:
@@ -341,28 +336,32 @@ class TimeframeSchema(Schema):
     @staticmethod
     def _promote_timeframes_spec_to_list_of_timeframes(spec: dict) -> dict:
         """Maintains the 'timeframes' key, but replaces its value with a list of
-        `yaesm.Timeframe`.
+        `yaesm.timeframe.Timeframe`.
 
         The value paired with 'timeframes' in `spec` is assumed to be entirely valid."""
         timeframe_dict = dict(zip(Timeframe.tframe_types(names=True), Timeframe.tframe_types()))
         timeframes = []
         for timeframe_name in spec["timeframes"]:
-            timeframe_obj = timeframe_dict[timeframe_name](*[spec[s] for s in TimeframeSchema.REQUIRED_SETTINGS[timeframe_name]])
+            timeframe_obj = timeframe_dict[timeframe_name]\
+                (*[spec[s] for s in TimeframeSchema.REQUIRED_SETTINGS[timeframe_name]])
             timeframes.append(timeframe_obj)
         spec["timeframes"] = timeframes # mutation
         return spec
 
 class SrcDirDstDirSchema(Schema):
-    """Voluptuous schema and validator functions for a src_dir and dst_dir configuration."""
+    """Voluptuous schema and validator functions for a 'src_dir' and 'dst_dir' configuration."""
 
+    @dataclasses.dataclass
     class ErrMsg:
         REMOTE_DIR_INVALID = "Not a path to an existing directory at the SSH target remote path"
         REMOTE_FILE_INVALID = "Not a path to an existing file at the SSH target remote path"
         SSH_TARGET_SPEC_INVALID = "Not a valid SSH target spec"
-        NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR = "Not an existing directory or a valid SSH target spec"
+        NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR = "Not an existing directory or a valid" \
+            "SSH target spec"
         MULTIPLE_SSH_TARGET_SPECS = "Both 'src_dir' and 'dst_dir' are SSH target specs"
         SSH_KEY_MISSING = "Failed to specify a 'ssh_key' which is required when using a SSH target"
-        SSH_CONNECTION_FAILED_TO_ESTABLISH = "Could not establish an SSH connection to the SSH target"
+        SSH_CONNECTION_FAILED_TO_ESTABLISH = "Could not establish an SSH connection to the SSH" \
+            "target"
 
     @staticmethod
     def schema() -> vlp.Schema:
@@ -385,8 +384,7 @@ class SrcDirDstDirSchema(Schema):
               which is an existing local file.
 
             * Promotes strings denoting file paths to Path objects, and promotes
-              SSH target spec strings to SSHTarget objects.
-        """
+              SSH target spec strings to SSHTarget objects."""
         return vlp.Schema(
             vlp.All(
                 { vlp.Required("src_dir"): SrcDirDstDirSchema._is_dir_or_sshtarget_spec,
@@ -403,25 +401,22 @@ class SrcDirDstDirSchema(Schema):
     @staticmethod
     def schema_extra() -> vlp.Schema:
         """Ensure that if we are using an SSH target, that we can connect to it,
-        and the remote directory being targeted exists on the remote server.
-        """
+        and the remote directory being targeted exists on the remote server."""
         return vlp.Schema(vlp.All(SrcDirDstDirSchema._dict_ssh_target_connectable))
 
     @staticmethod
-    def _is_sshtarget_spec(spec:str) -> str:
-        """Validator to ensure 'spec' is a string representing a valid SSHTarget
-        spec as per the function 'SSHTarget.is_sshtarget_spec()', and if so just
-        returns 'spec' back directly.
-        """
+    def _is_sshtarget_spec(spec: str) -> str:
+        """Validator to ensure `spec` is a string representing a valid SSHTarget
+        spec as per the function `SSHTarget.is_sshtarget_spec()`, and if so just
+        returns `spec` back directly."""
         if not spec or not SSHTarget.is_sshtarget_spec(spec):
             raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.SSH_TARGET_SPEC_INVALID)
         return spec
 
     @staticmethod
-    def _is_dir_or_sshtarget_spec(s:str) -> (Path | str):
-        """Validator to ensure 's' is a string representing either an existing
-        directory on the system, or a valid SSH target spec.
-        """
+    def _is_dir_or_sshtarget_spec(s: str) -> (Path | str):
+        """Validator to ensure `s` is a string representing either an existing
+        directory on the system, or a valid SSH target spec."""
         validator = vlp.Any(
             SrcDirDstDirSchema._is_sshtarget_spec,
             Schema.is_dir,
@@ -430,21 +425,19 @@ class SrcDirDstDirSchema(Schema):
         return validator(s)
 
     @staticmethod
-    def _dict_max_one_sshtarget_spec(d:dict) -> dict:
-        """Ensure that the dict 'd' contains two keys, 'src_dir' and 'dst_dir'
+    def _dict_max_one_sshtarget_spec(d: dict) -> dict:
+        """Ensure that the dict `d` contains two keys, 'src_dir' and 'dst_dir'
         that both associate to Path's or SSH target specs, but ensure at most
-        one of them is and SSH target spec.
-        """
+        one of them is and SSH target spec."""
         if SSHTarget.is_sshtarget_spec(d["src_dir"]) and SSHTarget.is_sshtarget_spec(d["dst_dir"]):
             raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.MULTIPLE_SSH_TARGET_SPECS)
         return d
 
     @staticmethod
-    def _dict_ssh_key_required_if_ssh_target(d:dict) -> dict:
+    def _dict_ssh_key_required_if_ssh_target(d: dict) -> dict:
         """Ensure that if either the key 'src_dir' or 'dst_dir' associates to
         an SSH target spec that we also have a key 'ssh_key' that associates to
-        an existing file.
-        """
+        an existing file."""
         if SSHTarget.is_sshtarget_spec(d["src_dir"]) or SSHTarget.is_sshtarget_spec(d["dst_dir"]):
             if not d.get("ssh_key"):
                 raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.SSH_KEY_MISSING)
@@ -452,7 +445,7 @@ class SrcDirDstDirSchema(Schema):
         return d
 
     @staticmethod
-    def _dict_promote_ssh_target_spec_to_ssh_target(d:dict) -> dict:
+    def _dict_promote_ssh_target_spec_to_ssh_target(d: dict) -> dict:
         """Promotes an SSH target spec string to an actual SSHTarget object.
         This validator should only be called in a schema, after first calling
         `_dict_ssh_key_required_if_ssh_target` in a schema."""
@@ -475,13 +468,12 @@ class SrcDirDstDirSchema(Schema):
         return d
 
     @staticmethod
-    def _dict_ssh_target_connectable(d:dict) -> dict:
+    def _dict_ssh_target_connectable(d: dict) -> dict:
         """Ensure that if an SSH target is being used, that we can establish a
         connection to the specified SSH server, and the target directory exists
         on the server. This validator should be called as a part of
         `schema_extra`, meaning it is only called on the output of the base
-        schema.
-        """
+        schema."""
         sshtarget = None
         dir_key = None
 
