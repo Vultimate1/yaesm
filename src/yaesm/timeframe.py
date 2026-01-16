@@ -11,7 +11,7 @@ class Timeframe():
 
     @staticmethod
     def tframe_types(names=False) -> list:
-        """If `names` is `True`, return a list containing the names of all timeframe types
+        """If `names` is True, return a list containing the names of all timeframe types
         as strings. Otherwise return a list of all the timeframe type subclasses."""
         if names:
             return ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]

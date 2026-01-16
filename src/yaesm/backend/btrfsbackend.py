@@ -9,11 +9,11 @@ from yaesm.backend.backendbase import BackendBase
 from yaesm.timeframe import Timeframe
 
 class BtrfsBackend(BackendBase):
-    """The btrfs backup execution backend. See BackendBase for more details on
+    """The btrfs backup execution backend. See `BackendBase` for more details on
     backup execution backends in general.
 
     Btrfs backups are performed with a simple 'btrfs subvolume snapshot -r'
-    command when possible, otherwise we use incremental backups via
+    command when possible, otherwise with incremental backups via
     'btrfs send -p ... | btrfs receive ...'. This makes btrfs backups fast and
     efficient.
 
@@ -64,9 +64,9 @@ class BtrfsBackend(BackendBase):
         _btrfs_delete_subvolumes_remote(*backups)
 
 def _btrfs_take_snapshot_local(src_dir:Path, snapshot:Path, check=True):
-    """Take a readonly local btrfs snapshot of 'src_dir', and place it at
-    'snapshot'. The name of the created snapshot will be exactly 'snapshot'.
-    Passes 'check' along to subprocess.run(). Returns a pair containing the
+    """Take a readonly local btrfs snapshot of `src_dir`, and place it at
+    `snapshot`. The name of the created snapshot will be exactly `snapshot`.
+    Passes `check` along to `subprocess.run()`. Returns a pair containing the
     btrfs subvolume snapshot command returncode, and the name of the created (or
     attempted to create) snapshot.
     """
@@ -74,13 +74,13 @@ def _btrfs_take_snapshot_local(src_dir:Path, snapshot:Path, check=True):
     return p.returncode, snapshot
 
 def _btrfs_take_snapshot_remote(src_dir:SSHTarget, snapshot:SSHTarget,check=True):
-    """Take a readonly btrfs snapshot of the remote 'src_dir' and place it at
-    'snapshot'. The name of the created snapshot will be exactly
-    'snapshot.path'. Passes 'check' along to subprocess.run(). Returns a pair
+    """Take a readonly btrfs snapshot of the remote `src_dir` and place it at
+    `snapshot`. The name of the created snapshot will be exactly
+    `snapshot.path`. Passes `check` along to `subprocess.run()`. Returns a pair
     containing the btrfs subvolume snapshot command returncode, and an SSHTarget
     with its .path pointing to the created (or attempted to create) snapshot.
 
-    Note that it is assumed that 'src_dir' and 'snapshot' refer to the same SSH
+    Note that it is assumed that `src_dir` and `snapshot` refer to the same SSH
     server. Also note that the 'btrfs subvolume snapshot' command is executed
     with sudo, so the remote user must have passwordless sudo access to execute
     'btrfs subvolume snapshot'.
@@ -91,8 +91,8 @@ def _btrfs_take_snapshot_remote(src_dir:SSHTarget, snapshot:SSHTarget,check=True
     return p.returncode, snapshot
 
 def _btrfs_delete_subvolumes_local(*subvolumes, check=True):
-    """Delete all the local btrfs subvolumes in '*subvolumes' (a list of Paths).
-    The 'check' arg is passed along to subprocess.run(). Returns a pair
+    """Delete all the local btrfs subvolumes in `subvolumes` (a list of Paths).
+    The `check arg is passed along to `subprocess.run()`. Returns a pair
     containing the 'btrfs subvolume delete' commands returncode, and a list of all
     the deleted subvolumes (a list of Paths).
     """
@@ -100,12 +100,12 @@ def _btrfs_delete_subvolumes_local(*subvolumes, check=True):
     return p.returncode, list(subvolumes)
 
 def _btrfs_delete_subvolumes_remote(*subvolumes, check=True):
-    """Delete all the remote btrfs subvolumes in '*subvolumes' (a list of SSHTargets).
-    The 'check' arg is passed along to subprocess.run(). Returns a pair
+    """Delete all the remote btrfs subvolumes in `subvolumes` (a list of SSHTargets).
+    The `check` arg is passed along to `subprocess.run()`. Returns a pair
     containing the 'btrfs subvolume delete' commands returncode, and a list of all
     the deleted subvolumes (a list of SSHTargets).
 
-    Note that it is assumed that all the SSHTargets in '*subvolumes' refer to
+    Note that it is assumed that all the SSHTargets in `subvolumes` refer to
     the same SSH server. Also note that the 'btrfs subvolume delete' command is
     run with sudo, so the remote user must have passwordless sudo access to
     execute 'btrfs subvolume delete'.
@@ -118,9 +118,9 @@ def _btrfs_delete_subvolumes_remote(*subvolumes, check=True):
     return p.returncode, list(subvolumes)
 
 def _btrfs_send_receive_local_to_local(snapshot:Path, dst_dir:Path, parent=None, check=True):
-    """Perform a btrfs send/receive sending the local snapshot 'snapshot' to the
-    directory 'dst_dir'. If supplied a 'parent' arg, then uses btrfs send
-    '-p parent' for an incremental backup. Passes along 'check' to subprocess.run().
+    """Perform a btrfs send/receive sending the local snapshot `snapshot` to the
+    directory `dst_dir`. If supplied a `parent` arg, then uses btrfs to send
+    '-p parent' for an incremental backup. Passes along `check` to `subprocess.run()`.
     """
     parent_opt = "" if parent is None else f"-p '{parent}'"
     p = subprocess.run(f"btrfs send {parent_opt} '{snapshot}' | btrfs receive '{dst_dir}'",
@@ -128,9 +128,9 @@ def _btrfs_send_receive_local_to_local(snapshot:Path, dst_dir:Path, parent=None,
     return p.returncode, dst_dir.joinpath(snapshot.name)
 
 def _btrfs_send_receive_local_to_remote(snapshot:Path, dst_dir:SSHTarget, parent=None, check=True):
-    """Perform a btrfs send/receive sending the local snapshot 'snapshot' to the
-    remote SSHTarger 'dst_dir'. If supplied a 'parent' arg, then uses btrfs send
-    '-p parent' for an incremental backup. Passes along 'check' to subprocess.run().
+    """Perform a btrfs send/receive sending the local snapshot `snapshot` to the
+    remote SSHTarger `dst_dir`. If supplied a 'parent' arg, then uses btrfs send
+    '-p parent' for an incremental backup. Passes along `check` to `subprocess.run()`.
 
     Note that the 'btrfs receive' command is run through sudo on the remote server,
     so the remote user must have passwordless sudo access to 'btrfs receive'.
@@ -142,14 +142,14 @@ def _btrfs_send_receive_local_to_remote(snapshot:Path, dst_dir:SSHTarget, parent
     return p.returncode, dst_dir.with_path(dst_dir.path.joinpath(snapshot.name))
 
 def _btrfs_send_receive_remote_to_local(snapshot:SSHTarget, dst_dir:Path, parent=None, check=True):
-    """Perform a btrfs send/receive sending the remote snapshot 'snapshot' to the
-    local dir 'dst_dir'. If supplied a 'parent' arg, then uses btrfs send
-    '-p parent' for an incremental backup. Passes along 'check' to subprocess.run().
+    """Perform a btrfs send/receive sending the remote snapshot `snapshot` to the
+    local dir `dst_dir`. If supplied a `parent` arg, then uses btrfs send
+    '-p parent' for an incremental backup. Passes along `check` to `subprocess.run()`.
 
     Note that the 'btrfs send' command is run through sudo on the remote server,
     so the remote user must have passwordless sudo access to 'btrfs send'. Also
-    note that if 'parent' is supplied, then it is assumed to be an SSHTarget
-    refering to the same SSH server as 'snapshot'.
+    note that if `parent` is supplied, then it is assumed to be an SSHTarget
+    refering to the same SSH server as `snapshot`.
     """
     parent_opt = "" if parent is None else f"-p '{parent.path}'"
     p = subprocess.run(snapshot.openssh_cmd(f"sudo -n btrfs send {parent_opt} '{snapshot.path}'") \

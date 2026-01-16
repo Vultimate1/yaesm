@@ -14,23 +14,22 @@ from yaesm.timeframe import Timeframe
 from yaesm.sshtarget import SSHTarget
 
 class BackendBase(abc.ABC):
-    """Abstract base class for execution backend classes such as RsyncBackend
-    and BtrfsBackend. An actual backend class inherits from BackendBase, and
-    implements the methods `_exec_backup_local_to_local()`,
-    `_exec_backup_local_to_remote()`, `_exec_backup_remote_to_local()`,
-    `_delete_backups_local()`, and `_delete_backups_remote()` . Any code using a
-    backend only needs to interact with the `do_backup()` method, which is
-    defined in this class.
+    """Abstract base class for execution backend classes such as `RsyncBackend`
+    and `BtrfsBackend`. Backend implementations are expected to overload
+    `_exec_backup_local_to_local()`, `_exec_backup_local_to_remote()`,
+    `_exec_backup_remote_to_local()`, `_delete_backups_local()`, and
+    `_delete_backups_remote()`. Any code using a backend only needs to interact
+    with the `do_backup()` method, which is defined in this class.
 
-    It is important to note that it is expected that backup.dst_dir is an existing
-    directory (regardless of if it is a Path or SSHTarget).
+    It is important to note that it is expected that `backup.dst_dir` is an existing
+    directory (Path or SSHTarget).
     """
     def __init__(self, extra_opts=None):
         self.extra_opts = extra_opts
 
     @final
     def do_backup(self, backup:bckp.Backup, timeframe:Timeframe):
-        """Perform a backup of 'backup' for the Timeframe `timeframe`. Note that
+        """Perform a `backup` for a given `timeframe`. Note that
         this function also cleans up old backups.
         """
         backup_basename = bckp.backup_basename_now(backup, timeframe)
@@ -115,7 +114,7 @@ class BackendBase(abc.ABC):
     def backend_classes():
         """Returns a list of all the backend classes.
 
-        We are only able to do this because we use a naming convention for backend
+        This is made possible with the use of a naming convention for backend
         classes. Backend modules named "yaesm.backend.${BACKEND_NAME_LOWERCASE}backend".
         Within each backend module there is a class named "${BACKEND_NAME_CAPITALIZED}Backend".
         """
