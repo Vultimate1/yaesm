@@ -34,13 +34,13 @@ class Backup:
             raise BackupError(f"backup {self.name} has both src_dir and dst_dir as ssh targets")
 
 def backup_name_valid(backup_name:str) -> bool:
-    """Return True if 'backup_name' is a valid backup name, otherwise return False."""
+    """Return True if `backup_name` is a valid backup name, otherwise return False."""
     return bool(re.match("^[a-z][-_:@a-z0-9]*$", backup_name, re.IGNORECASE))
 
 def backup_basename_re(backup=None, timeframe=None):
-    """Returns a re compiled regex to match a yaesm backup basename. If 'backup'
-    is given, then only match a basename for 'backup'. If 'timeframe' is given,
-    then only match a basename for 'timeframe'.
+    """Returns a re compiled regex to match a yaesm backup basename. If `backup`
+    is given, then only match a basename for `backup`. If `timeframe` is given,
+    then only match a basename for `timeframe`.
     """
     backup_name_re_component = ".+" if backup is None else backup.name
     timeframe_name_re_component = ".+" if timeframe is None else timeframe.name
@@ -83,8 +83,8 @@ def backups_sorted(backups):
     return sorted_backups
 
 def backups_collect(backup, timeframe=None):
-    """This function collects all the yaesm backups for the Backup 'backup'.
-    If the Timeframe 'timeframe' is given, then only collect the backups in this
+    """This function collects all the yaesm backups for the Backup `backup`.
+    If the Timeframe `timeframe` is given, then only collect the backups in this
     given Timeframe. Remember that all the backups for all the timeframes are
     stored in the same directory.
     """

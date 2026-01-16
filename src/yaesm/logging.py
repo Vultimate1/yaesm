@@ -1,6 +1,6 @@
 """src/yaesm/logging.py
 
-This module is a wrapper over pythons logging module. All logging in yaesm
+This module is a wrapper over Python's logging module. All logging in yaesm
 should happen through the functions defined in this module."""
 
 import logging
@@ -52,9 +52,9 @@ class Logging:
 
     @staticmethod
     def get(name=None):
-        """Return a logger with the specified name. If name is None then it defaults
-        to the name of the callers module. If logging has not yet been initialized
-        (i.e. init_logging() has not been invoked), then raise an exception."""
+        """Return a logger with the specified name. Defaults to the name of the callers
+        module. If logging has not yet been initialized (i.e. init_logging() has not
+        been invoked), then raise an exception."""
         if not Logging._logging_initialized:
             raise LoggingNotInitializedException(
                 "trying to get logger but logging has not been initialized")

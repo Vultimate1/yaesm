@@ -14,6 +14,7 @@ class RsyncBackend(BackendBase):
     """The rysnc backup execution backend. See BackendBase for more details on
     backup execution backends in general.
     """
+    @staticmethod
     def config_schema() -> vlp.Schema:
         """Rsync backups allow user to specify arbitrary extra options via a
         'rsync_extra_opts' setting. This setting can associate to a string
@@ -62,7 +63,7 @@ class RsyncBackend(BackendBase):
 
     def _delete_backups_remote(self, *backups):
         """Note that the remote user must have passwordless sudo access to rm.
-        Also note that all the backups in `*backups` are assumed to be SSHTarget's
+        Also note that all the backups in `backups` are assumed to be SSHTarget's
         all at the same host.
         """
         for backup in backups:

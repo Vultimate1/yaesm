@@ -12,9 +12,9 @@ class SSHTargetException(Exception):
 class SSHTarget:
     """The SSHTarget class manages connections to SSH servers using openssh.
     An SSHTarget is defined by its "target spec" which is a string of the form
-    ssh://p$PORT:$HOST:$PATH. $HOST can either be a host defined in a
-    .ssh/config file, or can be a host specification of the form $USER@$HOST.
-    The p$PORT: token is optional. To initialize a SSHTarget you must pass the
+    'ssh://p$PORT:$HOST:$PATH'. '$HOST' can either be a host defined in a
+    .ssh/config file, or can be a host specification of the form '$USER@$HOST'.
+    The 'p$PORT:' token is optional. To initialize a SSHTarget you must pass the
     constructor both a target spec, and the path to a private key that will be
     used for authentication to the server. Optionally, you can also pass an
     sshconfig which points to an existing file that will be passed to all ssh
@@ -54,7 +54,7 @@ class SSHTarget:
         return result
 
     def with_path(self, path:Path):
-        """Returns a copy of 'self' (via copy.deepcopy()) but with path 'path'."""
+        """Returns a copy of `self` (via `copy.deepcopy()`) but with Path `path`."""
         sshtarget = copy.deepcopy(self)
         sshtarget.path = Path(path)
         return sshtarget
@@ -63,7 +63,7 @@ class SSHTarget:
         """Returns a string containing OpenSSH options to enforce key-based
         authentication, ssh multiplexing, and strict host-key checking. Also
         ensures the proper port and configuration file is used. Extra OpenSSH
-        options can be added by setting 'extra_opts' to a string containing
+        options can be added by setting `extra_opts` to a string containing
         OpenSSH options.
         """
         configfile_opt = "" if self.sshconfig is None else f"-F '{self.sshconfig}'"
@@ -75,12 +75,12 @@ class SSHTarget:
 
     def openssh_cmd(self, cmd, extra_opts="", quote_cmd=True):
         """Returns a string of an OpenSSH command that executes 'cmd' on the
-        SSHTargets remote server. See 'openssh_opts()' for details on the OpenSSH
+        SSHTargets remote server. See `openssh_opts()` for details on the OpenSSH
         options that are used.
 
-        If 'quote_cmd' is true then the 'cmd' arg is quoted with shlex.quote().
+        If `quote_cmd` is true then the `cmd` arg is quoted with shlex.quote().
 
-        The caller can pass extra openssh opts by setting 'extra_opts' to a string
+        The caller can pass extra openssh opts by setting `extra_opts` to a string
         containing OpenSSH options.
 
         Example usage::
@@ -100,8 +100,8 @@ class SSHTarget:
         return 0 == subprocess.run(self.openssh_cmd("exit 0"), shell=True, check=False).returncode
 
     def is_dir(self, d=None):
-        """Return True if 'd' is an existing directory on the remote SSH server.
-        If 'd' is None then default to checking 'self.path'.
+        """Return True if `d` is an existing directory on the remote SSH server.
+        If `d` is None then default to checking `self.path`.
         """
         if d is None:
             d = self.path
@@ -109,8 +109,8 @@ class SSHTarget:
                                    check=False).returncode
 
     def is_file(self, f=None):
-        """Return True if 'f' is an existing file on the remote SSH server. If
-        'f' is None then default to checking 'self.path'
+        """Return True if `f` is an existing file on the remote SSH server. If
+        `f` is None then default to checking `self.path`.
         """
         if f is None:
             f = self.path
@@ -118,9 +118,9 @@ class SSHTarget:
                                    check=False).returncode
 
     def mkdir(self, d=None, parents=False, check=True):
-        """Mkdir the directory 'd' on the remote SSH server. If 'd' is None,
-        then default to 'self.path'. If 'parents' is True then use the mkdir
-        '-p' flag. The 'check' arg is passed along to subprocess.run(). Return
+        """Mkdir the directory `d` on the remote SSH server. If `d` is None,
+        then default to `self.path`. If `parents` is True then use the mkdir
+        '-p' flag. The `check` arg is passed along to `subprocess.run()`. Return
         True if the mkdir command succeeded, otherwise return False.
         """
         if d is None:
@@ -131,8 +131,8 @@ class SSHTarget:
                              shell=True, check=check).returncode
 
     def touch(self, f=None, check=True):
-        """Touch the file 'f' on the remote SSH server. If 'f' is None then default
-        to 'self.path'. The 'check' arg is passed along to subprocess.run(). Return
+        """Touch the file `f` on the remote SSH server. If `f` is None then default
+        to `self.path`. The `check` arg is passed along to `subprocess.run()`. Return
         True if the touch command succeeded, otherwise return False.
         """
         if f is None:

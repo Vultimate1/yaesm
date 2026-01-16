@@ -76,17 +76,17 @@ class Schema():
 
     @staticmethod
     def is_file(s: (Path | str)) -> Path:
-        """Validator to ensure `s` is a string or `Path` representing a full path
+        """Validator to ensure `s` is a string or Path representing a full path
         to a regular file (not directory) on the system, and if so returns `s`
-        as a `Path`."""
+        as a Path."""
         if not s or str(s)[0] != "/" or not Path(s).is_file():
             raise vlp.Invalid(Schema.ErrMsg.LOCAL_FILE_INVALID)
         return Path(s)
 
     @staticmethod
     def is_dir(s: (Path | str)) -> Path:
-        """Validator to ensure 's' is a string or Path representing a full path
-        to an existing directory on the system, and if so returns 's' as a Path."""
+        """Validator to ensure `s` is a string or Path representing a full path
+        to an existing directory on the system, and if so returns `s` as a Path."""
         if not s or str(s)[0] != "/" or not Path(s).is_dir():
             raise vlp.Invalid(Schema.ErrMsg.LOCAL_DIR_INVALID)
         return Path(s)
@@ -115,7 +115,7 @@ class BackupSchema(Schema):
     @staticmethod
     def _apply_sub_schemas(d: dict) -> dict:
         """Apply all of the sub schemas (TimeframeSchema, SrcDirDstDirSchema, etc)
-        to `d`, mutating d. Collects all errors, and raises a vlp.MultipleInvalid
+        to `d`, mutating d. Collects all errors, and raises a `vlp.MultipleInvalid`
         exception with all found errors, if any. This function is also
         responsible for applying the proper backend-specific schema. Only call
         this function after ensuring `d` contains just a single backup."""
@@ -240,7 +240,7 @@ class TimeframeSchema(Schema):
         This Schema is meant to be applied to a `dict` containing the freshly parsed values
         for the backup. This returns a `dict` which preserves the keys, but will modify any
         '*_times' settings to a pair of `int` representing the hour and minute. Assuming all
-        prior tests pass, the ''timeframes' key will have its value replaced with a list of
+        prior tests pass, the 'timeframes' key will have its value replaced with a list of
         `Timeframe`.
 
         This schema implements the following checks:
@@ -336,7 +336,7 @@ class TimeframeSchema(Schema):
     @staticmethod
     def _promote_timeframes_spec_to_list_of_timeframes(spec: dict) -> dict:
         """Maintains the 'timeframes' key, but replaces its value with a list of
-        `yaesm.Timeframe`.
+        `yaesm.timeframe.Timeframe`.
 
         The value paired with 'timeframes' in `spec` is assumed to be entirely valid."""
         timeframe_dict = dict(zip(Timeframe.tframe_types(names=True), Timeframe.tframe_types()))
@@ -349,7 +349,7 @@ class TimeframeSchema(Schema):
         return spec
 
 class SrcDirDstDirSchema(Schema):
-    """Voluptuous schema and validator functions for a src_dir and dst_dir configuration."""
+    """Voluptuous schema and validator functions for a 'src_dir' and 'dst_dir' configuration."""
 
     @dataclasses.dataclass
     class ErrMsg:
@@ -406,16 +406,16 @@ class SrcDirDstDirSchema(Schema):
 
     @staticmethod
     def _is_sshtarget_spec(spec: str) -> str:
-        """Validator to ensure 'spec' is a string representing a valid SSHTarget
-        spec as per the function 'SSHTarget.is_sshtarget_spec()', and if so just
-        returns 'spec' back directly."""
+        """Validator to ensure `spec` is a string representing a valid SSHTarget
+        spec as per the function `SSHTarget.is_sshtarget_spec()`, and if so just
+        returns `spec` back directly."""
         if not spec or not SSHTarget.is_sshtarget_spec(spec):
             raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.SSH_TARGET_SPEC_INVALID)
         return spec
 
     @staticmethod
     def _is_dir_or_sshtarget_spec(s: str) -> (Path | str):
-        """Validator to ensure 's' is a string representing either an existing
+        """Validator to ensure `s` is a string representing either an existing
         directory on the system, or a valid SSH target spec."""
         validator = vlp.Any(
             SrcDirDstDirSchema._is_sshtarget_spec,
@@ -426,7 +426,7 @@ class SrcDirDstDirSchema(Schema):
 
     @staticmethod
     def _dict_max_one_sshtarget_spec(d: dict) -> dict:
-        """Ensure that the dict 'd' contains two keys, 'src_dir' and 'dst_dir'
+        """Ensure that the dict `d` contains two keys, 'src_dir' and 'dst_dir'
         that both associate to Path's or SSH target specs, but ensure at most
         one of them is and SSH target spec."""
         if SSHTarget.is_sshtarget_spec(d["src_dir"]) and SSHTarget.is_sshtarget_spec(d["dst_dir"]):
