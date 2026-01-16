@@ -1,8 +1,11 @@
-import pytest
+"""tests/test_yaesm/test_backend/test_rsyncbackend.py"""
+
 from datetime import datetime, timedelta
-from freezegun import freeze_time
 from pathlib import Path
 import filecmp
+
+from freezegun import freeze_time
+import pytest
 import voluptuous as vlp
 
 import yaesm.backend.rsyncbackend as rsync
@@ -32,7 +35,8 @@ def test_config_schema():
         schema(d)
     assert str(exc.value).startswith("expected str for dictionary value @")
 
-def test_exec_backup(rsync_backend, path_generator, random_backup_generator, yaesm_test_users_group, random_filesystem_modifier):
+def test_exec_backup(rsync_backend, path_generator, random_backup_generator,
+                     random_filesystem_modifier):
     src_dir = path_generator("rsync_src_dir", mkdir=True)
     for backup_type in ["local_to_local", "local_to_remote,", "remote_to_local"]:
         backup = random_backup_generator(backend_type="rsync", backup_type=backup_type)
@@ -49,7 +53,8 @@ def test_exec_backup(rsync_backend, path_generator, random_backup_generator, yae
         for i in range(5):
             new_files, deleted_files, modified_files = random_filesystem_modifier(src_dir)
             with freeze_time(now + timedelta(hours=i)):
-                backups.insert(0, rsync_backend._exec_backup(backup, bckp.backup_basename_now(backup, timeframe), timeframe))
+                backups.insert(0, rsync_backend._exec_backup(
+                    backup, bckp.backup_basename_now(backup, timeframe), timeframe))
             if i >= 1:
                 new_backup = backups[0]
                 prev_backup = backups[1]
