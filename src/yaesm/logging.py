@@ -24,8 +24,8 @@ class Logging:
         Note that yaesm supports only two levels of logging, INFO and DEBUG."""
         if not (stderr or logfile or syslog):
             stderr = True
-        formatter = logging.Formatter("yaesm | PID %(process)d | %(asctime)s | %(levelname)s | \
-                                      %(message)s", "%Y-%m-%d %H:%M:%S")
+        formatter = logging.Formatter("yaesm - %(asctime)s - %(levelname)s - %(message)s",
+                                      "%Y-%m-%d %H:%M:%S")
         handlers = []
         if syslog:
             syslog_handler = logging.handlers.SysLogHandler(address=syslog_address)
