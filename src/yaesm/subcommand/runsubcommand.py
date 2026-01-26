@@ -28,7 +28,6 @@ class RunSubcommand(SubcommandBase):
 
         try:
             scheduler.start() # blocks
-            return 0
         except (KeyboardInterrupt, SystemExit):
             logger().info("scheduler stopped gracefully")
             return 0
