@@ -114,8 +114,8 @@ class BackendBase(abc.ABC):
     def backend_classes():
         """Returns a list of all the backend classes.
 
-        We are only able to do this because we use a naming convention for backend
-        classes. Backend modules named "yaesm.backend.${BACKEND_NAME_LOWERCASE}backend".
+        We use a naming convention for backend classes that this function relies
+        on. Backend modules named "yaesm.backend.${BACKEND_NAME_LOWERCASE}backend".
         Within each backend module there is a class named "${BACKEND_NAME_CAPITALIZED}Backend".
         """
         backend_dir = Path(__file__).parent
