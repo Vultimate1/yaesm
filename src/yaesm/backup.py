@@ -88,8 +88,8 @@ def backups_collect(backup, timeframe=None):
     backup_basename_re_ = backup_basename_re(backup=backup, timeframe=timeframe)
     if backup.backup_type == "local_to_remote":
         sshtarget = backup.dst_dir
-        collect_sh_cmd = f"for f in $(ls -1 '{sshtarget.path}'); do if [ -d \"{sshtarget.path}/$f\" ]; then printf '%s/%s\\n' '{sshtarget.path}' \"$f\"; fi done"
-        p = subprocess.run(sshtarget.openssh_cmd(collect_sh_cmd), shell=True, check=True, capture_output=True, encoding="utf-8")
+        collect_sh_cmd = f"for f in $(ls -1 '{sshtarget.path}'); do if [ -d \"{sshtarget.path}/$f\" ]; then printf '%s/%s\n' '{sshtarget.path}' \"$f\"; fi done"
+        p = subprocess.run(sshtarget.openssh_cmd(collect_sh_cmd), check=True, capture_output=True, encoding="utf-8")
         for backup in p.stdout.splitlines():
             backup = Path(backup)
             if backup_basename_re_.match(backup.name):

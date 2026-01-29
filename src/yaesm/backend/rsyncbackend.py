@@ -61,7 +61,7 @@ class RsyncBackend(BackendBase):
         all at the same host.
         """
         for backup in backups:
-            subprocess.run(backup.openssh_cmd(f"sudo -n rm -r -f '{backup.path}'"), shell=True, check=True)
+            subprocess.run(backup.openssh_cmd(f"sudo -n rm -r -f '{backup.path}'"), check=True)
         return backups
         
     def _exec_backup(self, backup:bckp.Backup, backup_basename:str, timeframe:Timeframe):
@@ -84,13 +84,13 @@ class RsyncBackend(BackendBase):
             rsync_cmd += [f"--link-dest={newest_backup}"]
 
         if backup.backup_type == "local_to_remote":
-            rsync_cmd += ["-e", "ssh " + backup.dst_dir.openssh_opts()]
+            rsync_cmd += ["-e", "ssh " + backup.dst_dir.openssh_opts(string=True)]
             dst_dir = _rsync_translate_sshtarget(backup.dst_dir)
         else:
             dst_dir = backup.dst_dir
 
         if backup.backup_type == "remote_to_local":
-            rsync_cmd += ["-e", "ssh " + backup.src_dir.openssh_opts()]
+            rsync_cmd += ["-e", "ssh " + backup.src_dir.openssh_opts(string=True)]
             src_dir = _rsync_translate_sshtarget(backup.src_dir)
         else:
             src_dir = backup.src_dir
