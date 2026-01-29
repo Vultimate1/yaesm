@@ -37,23 +37,32 @@ def test_sshtarget_constructor():
     assert target.path == Path("/a/random/path")
     assert target.key  == key
 
-def test_openssh_cmd(sshtarget):
-    p = subprocess.run(sshtarget.openssh_cmd("whoami && printf '%s\\n' foo 1>&2 && exit 73"), shell=True, capture_output=True, encoding="utf-8")
-    returncode = p.returncode
-    stdout = p.stdout
-    stderr = p.stderr
-    assert returncode == 73
-    assert stdout == f"{sshtarget.user}\n"
-    assert stderr == "foo\n"
+def test_openssh_opts(sshtarget):
+    opts = sshtarget.openssh_opts()
+    assert isinstance(opts, list)
+    opts = sshtarget.openssh_opts(string=True)
+    assert isinstance(opts, str)
+    opts = sshtarget.openssh_opts()
+    assert len(opts)
+    assert not opts[0] == "ssh"
+    assert "-i" in opts
 
-    openssh_cmd = sshtarget.openssh_cmd("printf '%s\\n' foo && printf '%s\\n' bar && printf '%s\\n' baz && 1>&2 printf '%s\\n' quux")
-    p = subprocess.run(f"{openssh_cmd} | grep ba; exit 42", shell=True, capture_output=True, encoding="utf-8")
-    returncode = p.returncode
-    stdout = p.stdout
-    stderr = p.stderr
-    assert returncode == 42
-    assert stdout == "bar\nbaz\n"
-    assert stderr == "quux\n"
+def test_openssh_cmd(sshtarget):
+    p = subprocess.run(sshtarget.openssh_cmd("whoami && printf '%s\\n' foo 1>&2 && exit 73"), capture_output=True, encoding="utf-8")
+    assert p.returncode == 73
+    assert p.stdout == f"{sshtarget.user}\n"
+    assert p.stderr == "foo\n"
+    assert Path.home().joinpath(".ssh", f"yaesm-controlmaster-{sshtarget.user}@{sshtarget.host}:{sshtarget.port}").exists()
+
+    p = subprocess.run(sshtarget.openssh_cmd("(printf '%s\n' foo && printf '%s\n' bar && printf '%s\n' baz && 1>&2 printf '%s\n' quux) | grep ba; exit 42"), capture_output=True, encoding="utf-8")
+    assert p.returncode == 42
+    assert p.stdout == "bar\nbaz\n"
+    assert p.stderr == "quux\n"
+
+    p = subprocess.run(sshtarget.openssh_cmd("printf '%s\n%s\n' 'hello from remote' 'bar' && 1>&2 printf '%s\n' 'hello stderr'", string=True) + " | grep hello; exit 12", shell=True, capture_output=True, encoding="utf-8")
+    assert p.returncode == 12
+    assert p.stdout == "hello from remote\n"
+    assert p.stderr == "hello stderr\n"
 
 def test_with_path(sshtarget):
     new_sshtarget = sshtarget.with_path(Path("/foo"))
