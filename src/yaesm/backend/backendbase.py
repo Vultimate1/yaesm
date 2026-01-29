@@ -47,8 +47,8 @@ class BackendBase(abc.ABC):
             else:
                 self._delete_backups_local(*to_delete)
 
-    @final
     @classmethod
+    @final
     def name(cls) -> str:
         """Automatically derive backend name from class name.
 
@@ -108,9 +108,9 @@ class BackendBase(abc.ABC):
         """Delete all the remote backups in `*backups` (SSHTargets)."""
         ...
 
+    @staticmethod
     @final
     @cache
-    @staticmethod
     def backend_classes():
         """Returns a list of all the backend classes.
 

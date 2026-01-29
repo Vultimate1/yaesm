@@ -10,8 +10,8 @@ class Timeframe():
 
     Also see test_timeframe.py for more examples of how to use Timeframes.
     """
-    @final
     @staticmethod
+    @final
     def tframe_types(names=False):
         """If 'names' is True, then return a list containing strings that represent
         the names of valid timeframes. If 'names' is False, then return a list of
@@ -22,8 +22,8 @@ class Timeframe():
         else:
             return [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe]
 
-    @final
     @staticmethod
+    @final
     def weekday_num(weekday):
         # monday is first day to adhere to apscheduler
         weekday_num_map = {"monday":0,"tuesday":1,"wednesday":2,"thursday":3,"friday":4,"saturday":5,"sunday":6}
