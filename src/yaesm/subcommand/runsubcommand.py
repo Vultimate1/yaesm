@@ -18,8 +18,8 @@ class RunSubcommand(SubcommandBase):
             lock_fd = os.open(parsed_args.lockfile, os.O_WRONLY | os.O_CREAT, 0o644)
             fcntl.lockf(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self._lock_fd = lock_fd
-        except OSError:
-            logger().error(f"could not acquire scheduler lock: {parsed_args.lockfile}")
+        except OSError as e:
+            logger().error(f"could not acquire scheduler lock: {parsed_args.lockfile}: {e}")
             return 1
 
         scheduler = yaesm.scheduler.Scheduler()
