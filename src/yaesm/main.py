@@ -15,7 +15,7 @@ def main(argv=None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
-    # yaesm.subcommand modules are loaded eagerly from their __init__.py
+    # yaesm.subcommand modules are loaded eagerly from the yaesm.subcommand __init__.py
     subcommand_name_class_map = {cls.name(): cls for cls in SubcommandBase.__subclasses__()}
 
     parser = argparse.ArgumentParser(
