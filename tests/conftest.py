@@ -394,7 +394,7 @@ def random_timeframe_timespecs_generator():
             while timespec is None or timespec in timespecs:
                 hour = str(random.randint(0,23)).zfill(2)
                 minute = str(random.randint(0,59)).zfill(2)
-                timespec = f"{hour}:{minute}"
+                timespec = f"{hour}-{minute}"
             timespecs.append(timespec)
         return timespecs
     return generator
@@ -404,7 +404,7 @@ def random_timeframe_times_generator(random_timeframe_timespecs_generator):
     """Fixture to generate a list of random timeframe times."""
     def generator(num=3):
         timespecs = random_timeframe_timespecs_generator(num=num)
-        times = list(map(lambda x: tuple(map(int, x.split(':'))), timespecs))
+        times = list(map(lambda x: tuple(map(int, x.split('-'))), timespecs))
         return times
     return generator
 
