@@ -254,7 +254,7 @@ class TimeframeSchema(Schema):
               provided
             * all '*_keep' settings are an `int` and no less than 0
             * 'hourly_minutes' (if given) contains `int`'s within the range of 0-59, inclusive
-            * all '*_times' settings contain correctly formatted timespecs (`hh:mm`), each with
+            * all '*_times' settings contain correctly formatted timespecs (`hh-mm`), each with
               valid hour and minute part (this tool uses military time)
             * 'weekly_days' (if given) contains only valid weekdays (not case sensitive)
             * 'monthly_days' (if given) contains only days found within *any* month, that is,
