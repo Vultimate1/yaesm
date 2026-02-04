@@ -109,16 +109,16 @@ def test_TimeframeSchema_has_required_settings():
         + "\n\thourly: ['hourly_keep']"
 
 def test_TimeframeSchema_are_valid_timespecs():
-    valid_specs = ["12-34", "1-2", "23-59", "00-00", "99-99"]
-    valid_expected = [[12, 34], [1, 2], [23, 59], [0, 0], [99, 99]]
+    valid_specs = ["12:34", "23:59", "00:00", "99:99"]
+    valid_expected = [[12, 34], [23, 59], [0, 0], [99, 99]]
     assert config.TimeframeSchema.are_valid_timespecs(valid_specs) == valid_expected
 
-    invalid_specs = ["12:34", "1:23", "12:3", "ab-cd", "1234", ""]
+    invalid_specs = ["1:23", "12:3", "ab:cd", "1234", ""]
     for spec in invalid_specs:
         with pytest.raises(vlp.Invalid) as exc:
             config.TimeframeSchema.are_valid_timespecs([spec])
         assert str(exc.value) == config.TimeframeSchema.ErrMsg.TIME_MALFORMED \
-            + f"\n\tExpected format 'hh-mm', got {spec}"
+            + f"\n\tExpected format 'hh:mm', got {spec}"
 
 def test_TimeframeSchema_are_valid_hours():
     valid_specs = [[12, 34], [23, 59], [0, 0], [3, -1]]

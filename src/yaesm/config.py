@@ -300,7 +300,7 @@ class TimeframeSchema(Schema):
 
     @staticmethod
     def are_valid_timespecs(spec: list[str]) -> list[list[int, int]]:
-        """Takes a list of supposed timespecs. Returns a list of hour-minute pairings if
+        """Takes a list of supposed timespecs. Returns a list of hour:minute pairings if
         successful. This does NOT check if the hour and minute parts are valid, use
         `are_valid_hours` and `are_valid_minutes` to do this.
 
@@ -308,12 +308,12 @@ class TimeframeSchema(Schema):
         hour parts cannot be converted to `int`."""
         res = []
         for timespec in spec:
-            timespec_re = re.compile("^([0-9][0-9]?)-([0-9][0-9]?)$")
+            timespec_re = re.compile("([0-9]{2}):([0-9]{2})")
             if re_result := timespec_re.match(timespec):
                 res.append([int(re_result.group(1)), int(re_result.group(2))])
             else:
                 raise vlp.Invalid(TimeframeSchema.ErrMsg.TIME_MALFORMED
-                                  + f"\n\tExpected format 'hh-mm', got {timespec}")
+                                  + f"\n\tExpected format 'hh:mm', got {timespec}")
         return res
 
     @staticmethod
