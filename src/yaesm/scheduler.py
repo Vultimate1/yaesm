@@ -6,7 +6,7 @@ import apscheduler.schedulers.blocking
 import apscheduler.events
 
 from yaesm.logging import Logging
-from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, \
+from yaesm.timeframe import weekday_num, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, \
     WeeklyTimeframe, MonthlyTimeframe
 
 class Scheduler:
@@ -28,10 +28,11 @@ class Scheduler:
             apscheduler.events.EVENT_JOB_MISSED)
 
     def start(self):
-        """Start the scheduler. Since the scheduler blocks this function will
-        not return.
+        """Start the scheduler if it has not already been started. Since the
+        scheduler blocks this function may not return.
         """
-        self._apscheduler.start()
+        if not self._apscheduler.running:
+            self._apscheduler.start()
 
     def stop(self, force=False):
         """Stop the scheduler gracefully."""
@@ -48,7 +49,7 @@ class Scheduler:
                               lambda b=backup, t=timeframe: b.backend.do_backup(b,t), timeframe)
 
     def _job_name(self, job_id):
-        """Return name of APScheduler job with job id `job_id`."""
+        """Return name of the APScheduler job with id `job_id`."""
         return self._apscheduler.get_job(job_id).name
 
     def _add_job(self, name, func, timeframe):
@@ -63,7 +64,7 @@ class Scheduler:
                 hour, minute = time
                 self._apscheduler.add_job(func, "cron", minute=minute, hour=hour, name=name)
         elif isinstance(timeframe, WeeklyTimeframe):
-            weekday_str = ",".join(str(Timeframe.weekday_num(d)) for d in timeframe.weekdays)
+            weekday_str = ",".join(str(weekday_num(d)) for d in timeframe.weekdays)
             for time in timeframe.times:
                 hour, minute = time
                 self._apscheduler.add_job(func, "cron", minute=minute, hour=hour,
