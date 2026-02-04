@@ -1,6 +1,6 @@
 """tests/test_yaesm/test_timeframe.py"""
 
-from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, \
+from yaesm.timeframe import tframe_types, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, \
     WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
 
 def test_FiveMinuteTimeframe():
@@ -42,7 +42,7 @@ def test_YearlyTimeframe():
     assert tf.yeardays == [1,2,365]
 
 def test_tframe_types():
-    assert Timeframe.tframe_types() == [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe,
+    assert tframe_types() == [FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe,
                               WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe]
     assert tframe_types(names=True) == ["5minute", "hourly", "daily", "weekly", "monthly",
                                         "yearly"]
