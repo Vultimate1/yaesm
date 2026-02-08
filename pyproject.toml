@@ -47,6 +47,18 @@ dev = [
     "ruff>=0.15.0",
 ]
 
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "B",    # flake8-bugbear
+    "SIM",  # flacke8-simplify
+    "I",    # isort
+]
+ignore = [
+    "D101",  # undocumented-public-class
+]
+
 [project.urls]
 Homepage = "https://github.com/Vultimate1/yaesm"
 Repository = "https://github.com/Vultimate1/yaesm"
