@@ -20,6 +20,7 @@ from yaesm.timeframe import (
     MonthlyTimeframe,
     Timeframe,
     WeeklyTimeframe,
+    tframe_types,
 )
 
 
@@ -87,12 +88,12 @@ def test_BackendSchema_schema():
 
 def test_BackendSchema_dict_promote_backend_name_to_backend_instance():
     data = {"backend": "btrfs"}
-    data = config.BackendSchema._dict_promote_backend_name_to_backend_instance(data)
+    data = config.BackendSchema._dict_promote_backend_name_to_backend_class(data)
     assert isinstance(data["backend"], BackendBase)  # Changed from issubclass
     assert len(data) == 1
     with pytest.raises(KeyError):
         data = {"FOO": "BAR", "BAZ": "QUUX"}
-        config.BackendSchema._dict_promote_backend_name_to_backend_instance(data)
+        config.BackendSchema._dict_promote_backend_name_to_backend_class(data)
 
 def test_TimeframeSchema_has_required_settings():
     data = {"timeframes": ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]}
@@ -195,8 +196,8 @@ def test_TimeframeSchema_schema(valid_raw_config):
             if isinstance(backup_settings[key], list):
                 assert len(processed_backup[key]) == len(backup_settings[key])
 
-        tf_types = Timeframe.tframe_types()
-        tf_names = Timeframe.tframe_types(names=True)
+        tf_types = tframe_types()
+        tf_names = tframe_types(names=True)
         expected_tf_types = [tf_types[i]
                              for i in range(len(tf_names))
                              if tf_names[i] in backup_settings["timeframes"]]

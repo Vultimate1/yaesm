@@ -10,7 +10,7 @@ import yaml
 import yaesm.backup as bckp
 from yaesm.backend import backendbase
 from yaesm.sshtarget import SSHTarget
-from yaesm.timeframe import Timeframe
+from yaesm.timeframe import tframe_types
 
 
 @dataclasses.dataclass
@@ -190,7 +190,7 @@ class BackendSchema(Schema):
                 [cls.name() for cls in backendbase.BackendBase.backend_classes()],
                 msg=BackendSchema.ErrMsg.INVALID_BACKEND_NAME
             )},
-            BackendSchema._dict_promote_backend_name_to_backend_instance,
+            BackendSchema._dict_promote_backend_name_to_backend_class,
             BackendSchema._apply_backend_specific_schema
             ), extra=vlp.ALLOW_EXTRA)
 
@@ -340,7 +340,7 @@ class TimeframeSchema(Schema):
         `yaesm.timeframe.Timeframe`.
 
         The value paired with 'timeframes' in `spec` is assumed to be entirely valid."""
-        timeframe_dict = dict(zip(Timeframe.tframe_types(names=True), Timeframe.tframe_types()))
+        timeframe_dict = dict(zip(tframe_types(names=True), tframe_types()))
         timeframes = []
         for timeframe_name in spec["timeframes"]:
             timeframe_obj = timeframe_dict[timeframe_name]\
