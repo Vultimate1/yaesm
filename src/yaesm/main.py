@@ -5,7 +5,7 @@ import argparse
 import importlib.metadata
 from pathlib import Path
 
-import yaesm.logging
+from yaesm.logging import Logging
 import yaesm.config
 from yaesm.subcommand.subcommandbase import SubcommandBase
 
@@ -75,7 +75,7 @@ def main(argv=None) -> int:
             print(f"yaesm: config error: {backup}: {err_msg}", file=sys.stderr)
         return 1
 
-    yaesm.logging.init_logging(
+    Logging.initialize(
         level=parsed_args.log_level,
         stderr=parsed_args.log_stderr,
         syslog=bool(parsed_args.log_syslog),
