@@ -7,6 +7,7 @@ import pytest
 
 from yaesm.logging import Logging, LoggingNotInitializedException
 
+
 def test_raises_logging_not_initialized():
     with pytest.raises(LoggingNotInitializedException):
         Logging.get()
@@ -33,7 +34,7 @@ def test_stderr_logging(capsys):
 def test_level_respected(capsys):
     Logging.initialize(stderr=True) # level defaults to INFO
     Logging.get().debug("TEST LOG")
-    assert "" == capsys.readouterr().err
+    assert capsys.readouterr().err == ""
 
     Logging.get().error("TEST LOG")
     assert re.match(".+ERROR.+TEST LOG$", capsys.readouterr().err)
@@ -68,4 +69,4 @@ def test_disable_logging(capsys):
     Logging.disable()
     with pytest.raises(LoggingNotInitializedException):
         Logging.get().info("TEST LOG DISABLED")
-    assert "" == capsys.readouterr().err
+    assert capsys.readouterr().err == ""

@@ -1,21 +1,27 @@
 """tests/test_yaesm/test_config.py"""
 import copy
-
+import random
+import re
 import shutil
 from pathlib import Path
-import re
-import random
 
 import pytest
 import voluptuous as vlp
 import yaml
 
-import yaesm.config as config
 import yaesm.backup as bckp
+import yaesm.config as config
 from yaesm.backend.backendbase import BackendBase
 from yaesm.sshtarget import SSHTarget
-from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, \
-    DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe
+from yaesm.timeframe import (
+    DailyTimeframe,
+    FiveMinuteTimeframe,
+    HourlyTimeframe,
+    MonthlyTimeframe,
+    Timeframe,
+    WeeklyTimeframe,
+)
+
 
 def test_Schema_schema_empty():
     schema = config.Schema.schema_empty()
@@ -586,8 +592,8 @@ def test_parse_config(path_generator, valid_config_file_generator):
     with pytest.raises(config.ConfigErrors) as exc:
         config.parse_config(config_file_invalid)
     assert len(exc.value.errors) == 6
-    for exc in exc.value.errors:
-        backup_name, err = exc
+    for e in exc.value.errors:
+        backup_name, err = e
         assert backup_name.startswith("backup_")
         assert isinstance(err, vlp.Invalid)
 

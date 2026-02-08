@@ -7,6 +7,7 @@ import pytest
 
 from yaesm.cleanup import Cleanup
 
+
 @pytest.fixture(autouse=True)
 def reset_cleanup_state():
     """Reset cleanup module state between tests."""

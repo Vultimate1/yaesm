@@ -1,10 +1,11 @@
 """src/yaesm/sshtarget.py"""
 
+import copy
 import re
 import shlex
 import subprocess
-import copy
 from pathlib import Path
+
 
 class SSHTargetException(Exception):
     ...
@@ -97,7 +98,7 @@ class SSHTarget:
         """Return True if we can establish a connection to the SSH target server
         and return False otherwise.
         """
-        return 0 == subprocess.run(self.openssh_cmd("exit 0"), shell=True, check=False).returncode
+        return subprocess.run(self.openssh_cmd("exit 0"), shell=True, check=False).returncode == 0
 
     def is_dir(self, d=None):
         """Return True if `d` is an existing directory on the remote SSH server.
@@ -105,8 +106,8 @@ class SSHTarget:
         """
         if d is None:
             d = self.path
-        return 0 == subprocess.run(self.openssh_cmd(f"[ -d '{d}' ]; exit $?"), shell=True,
-                                   check=False).returncode
+        return subprocess.run(self.openssh_cmd(f"[ -d '{d}' ]; exit $?"), shell=True,
+                                   check=False).returncode == 0
 
     def is_file(self, f=None):
         """Return True if `f` is an existing file on the remote SSH server. If
@@ -114,8 +115,8 @@ class SSHTarget:
         """
         if f is None:
             f = self.path
-        return 0 == subprocess.run(self.openssh_cmd(f"[ -f '{f}' ]; exit $?"), shell=True,
-                                   check=False).returncode
+        return subprocess.run(self.openssh_cmd(f"[ -f '{f}' ]; exit $?"), shell=True,
+                                   check=False).returncode == 0
 
     def mkdir(self, d=None, parents=False, check=True):
         """Mkdir the directory `d` on the remote SSH server. If `d` is None,
@@ -126,9 +127,9 @@ class SSHTarget:
         if d is None:
             d = self.path
         p_flag = "-p" if parents else ""
-        return 0 == subprocess.run(
+        return subprocess.run(
             self.openssh_cmd(f"if ! [ -d '{d}' ]; then mkdir {p_flag} '{d}'; fi"),
-                             shell=True, check=check).returncode
+                             shell=True, check=check).returncode == 0
 
     def touch(self, f=None, check=True):
         """Touch the file `f` on the remote SSH server. If `f` is None then default
@@ -137,5 +138,5 @@ class SSHTarget:
         """
         if f is None:
             f = self.path
-        return 0 == subprocess.run(self.openssh_cmd(f"touch '{f}'"), shell=True,
-                                   check=check).returncode
+        return subprocess.run(self.openssh_cmd(f"touch '{f}'"), shell=True,
+                                   check=check).returncode == 0

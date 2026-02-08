@@ -6,6 +6,7 @@ import sys
 
 from yaesm.logging import Logging
 
+
 class Cleanup:
     _functions = []
     _initialized = False

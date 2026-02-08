@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 
-import sys
 import argparse
 import importlib.metadata
+import sys
 from pathlib import Path
 
-from yaesm.logging import Logging
 import yaesm.config
+from yaesm.logging import Logging
 from yaesm.subcommand.subcommandbase import SubcommandBase
+
 
 def main(argv=None) -> int:
     """This is the main function of yaesm."""
@@ -79,7 +80,8 @@ def main(argv=None) -> int:
         level=parsed_args.log_level,
         stderr=parsed_args.log_stderr,
         syslog=bool(parsed_args.log_syslog),
-        syslog_address=parsed_args.log_syslog if isinstance(parsed_args.log_syslog, str) else "/dev/log"
+        syslog_address=parsed_args.log_syslog if isinstance(parsed_args.log_syslog, str)
+            else "/dev/log"
     )
 
     try:

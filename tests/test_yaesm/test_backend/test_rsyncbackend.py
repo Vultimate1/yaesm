@@ -1,16 +1,17 @@
 """tests/test_yaesm/test_backend/test_rsyncbackend.py"""
 
+import filecmp
 from datetime import datetime, timedelta
 from pathlib import Path
-import filecmp
 
-from freezegun import freeze_time
 import pytest
 import voluptuous as vlp
+from freezegun import freeze_time
 
 import yaesm.backend.rsyncbackend as rsync
 import yaesm.backup as bckp
 from yaesm.sshtarget import SSHTarget
+
 
 @pytest.fixture(scope="session")
 def rsync_backend():
@@ -41,14 +42,11 @@ def test_exec_backup(rsync_backend, path_generator, random_backup_generator,
     for backup_type in ["local_to_local", "local_to_remote,", "remote_to_local"]:
         backup = random_backup_generator(backend_type="rsync", backup_type=backup_type)
         timeframe = backup.timeframes[0]
-        if isinstance(backup.src_dir, SSHTarget):
-            src_dir = backup.src_dir.path
-        else:
-            src_dir = backup.src_dir
+        src_dir = backup.src_dir.path if isinstance(backup.src_dir, SSHTarget) else backup.src_dir
         if backup_type == "local_to_remote":
             src_dir.chmod(0o777)
         now = datetime.now()
-        assert 0 == len(bckp.backups_collect(backup, timeframe))
+        assert len(bckp.backups_collect(backup, timeframe)) == 0
         backups = []
         for i in range(5):
             new_files, deleted_files, modified_files = random_filesystem_modifier(src_dir)
@@ -82,7 +80,7 @@ def test_exec_backup(rsync_backend, path_generator, random_backup_generator,
                     assert new_f.is_file()
                     assert prev_f.is_file()
                     assert not filecmp.cmp(new_f, prev_f, shallow=False)
-        assert 5 == len(backups)
+        assert len(backups) == 5
         if backup_type == "local_to_remote":
             assert all(isinstance(x, SSHTarget) for x in backups)
         else:

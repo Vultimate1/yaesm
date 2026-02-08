@@ -1,7 +1,15 @@
 """tests/test_yaesm/test_timeframe.py"""
 
-from yaesm.timeframe import tframe_types, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, \
-    WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
+from yaesm.timeframe import (
+    DailyTimeframe,
+    FiveMinuteTimeframe,
+    HourlyTimeframe,
+    MonthlyTimeframe,
+    WeeklyTimeframe,
+    YearlyTimeframe,
+    tframe_types,
+)
+
 
 def test_FiveMinuteTimeframe():
     tf = FiveMinuteTimeframe(10)

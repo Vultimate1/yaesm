@@ -5,6 +5,7 @@ from pathlib import Path
 
 from yaesm.sshtarget import SSHTarget
 
+
 def test_sshtarget_constructor():
     key = Path("/a/path/to/a/key")
 

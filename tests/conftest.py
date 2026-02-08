@@ -3,24 +3,32 @@
 conftest.py is implicitly imported into all pytest test files. This file
 can be thought of as a collection of globally available pytest fixtures."""
 
-import subprocess
+import grp
 import os
 import pwd
-import grp
-import shutil
 import random
-from string import ascii_lowercase
+import shutil
+import subprocess
 from pathlib import Path
+from string import ascii_lowercase
 
 import pytest
 import yaml
 
 import yaesm.backup as bckp
-from yaesm.sshtarget import SSHTarget
-from yaesm.timeframe import Timeframe, FiveMinuteTimeframe, HourlyTimeframe, \
-    DailyTimeframe, WeeklyTimeframe, MonthlyTimeframe, YearlyTimeframe
-from yaesm.backend import backendbase
 import yaesm.logging
+from yaesm.backend import backendbase
+from yaesm.sshtarget import SSHTarget
+from yaesm.timeframe import (
+    DailyTimeframe,
+    FiveMinuteTimeframe,
+    HourlyTimeframe,
+    MonthlyTimeframe,
+    Timeframe,
+    WeeklyTimeframe,
+    YearlyTimeframe,
+)
+
 
 @pytest.fixture(scope="module", autouse=True)
 def with_stderr_debug_logging(request):
@@ -76,8 +84,8 @@ def localhost_server_generator(ssh_key_generator, tmp_user_generator):
         pubkey = privkey.with_suffix(".pub")
         with open(pubkey, "r", encoding="utf-8") as fr, \
              open(authorized_keys, "a", encoding="utf-8") as fw:
-            for l in fr:
-                fw.write(l)
+            for line in fr:
+                fw.write(line)
         os.chmod(authorized_keys, 0o600)
         os.chown(authorized_keys, user.pw_uid, user.pw_gid)
         return {"user":user, "key":privkey}
@@ -231,7 +239,7 @@ def random_filesystem_modifier(path_generator, random_string_generator):
             if mod < 5: # new file
                 p = path
                 depth = random.randint(0, 5)
-                for i in range(depth):
+                for _ in range(depth):
                     p = path_generator("dir", base_dir=p, mkdir=True)
                 f = None
                 while f is None or f.is_file():

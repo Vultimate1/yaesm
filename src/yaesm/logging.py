@@ -3,9 +3,10 @@
 This module is a wrapper over Python's logging module. All logging in yaesm
 should happen through the functions defined in this module."""
 
+import inspect
 import logging
 import logging.handlers
-import inspect
+
 
 class LoggingNotInitializedException(Exception):
     ...

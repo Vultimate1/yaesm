@@ -4,9 +4,10 @@ import subprocess
 from pathlib import Path
 
 import yaesm.backup as bckp
-from yaesm.sshtarget import SSHTarget
 from yaesm.backend.backendbase import BackendBase
+from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
+
 
 class BtrfsBackend(BackendBase):
     """The btrfs backup execution backend. See `BackendBase` for more details on
@@ -27,7 +28,7 @@ class BtrfsBackend(BackendBase):
         src_dir = backup.src_dir
         backup_path = backup.dst_dir.joinpath(bckp.backup_basename_now(backup, timeframe))
         returncode, _ = _btrfs_take_snapshot_local(src_dir, backup_path, check=False)
-        if 0 != returncode:
+        if returncode != 0:
             bootstrap_snapshot = _btrfs_bootstrap_local_to_local(src_dir, backup_path.parent)
             _, tmp_snapshot = _btrfs_take_snapshot_local(src_dir, src_dir.joinpath(backup_basename))
             _btrfs_send_receive_local_to_local(tmp_snapshot, backup_path.parent,

@@ -3,12 +3,14 @@
 import subprocess
 from pathlib import Path
 from shutil import rmtree
+
 import voluptuous as vlp
 
 import yaesm.backup as bckp
+from yaesm.backend.backendbase import BackendBase
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
-from yaesm.backend.backendbase import BackendBase
+
 
 class RsyncBackend(BackendBase):
     """The rysnc backup execution backend. See BackendBase for more details on

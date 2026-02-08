@@ -2,12 +2,19 @@
 
 from datetime import datetime, timedelta
 
-import apscheduler.schedulers.blocking
 import apscheduler.events
+import apscheduler.schedulers.blocking
 
 from yaesm.logging import Logging
-from yaesm.timeframe import weekday_num, FiveMinuteTimeframe, HourlyTimeframe, DailyTimeframe, \
-    WeeklyTimeframe, MonthlyTimeframe
+from yaesm.timeframe import (
+    DailyTimeframe,
+    FiveMinuteTimeframe,
+    HourlyTimeframe,
+    MonthlyTimeframe,
+    WeeklyTimeframe,
+    weekday_num,
+)
+
 
 class Scheduler:
     def __init__(self):

@@ -1,10 +1,12 @@
 """tests/test_yaesm/test_scheduler.py"""
 
 from datetime import datetime, timedelta
+
 from zoneinfo import ZoneInfo
 
 import yaesm.scheduler
 import yaesm.timeframe
+
 
 def test_add_job_5minute_timeframe():
     scheduler = yaesm.scheduler.Scheduler()

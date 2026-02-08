@@ -1,16 +1,17 @@
 """src/yaesm/config.py"""
 import dataclasses
-from typing import final
 import re
 from pathlib import Path
+from typing import final
 
-import yaml
 import voluptuous as vlp
+import yaml
 
-from yaesm.backend import backendbase
 import yaesm.backup as bckp
+from yaesm.backend import backendbase
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
+
 
 @dataclasses.dataclass
 class ConfigErrors(Exception):
@@ -156,7 +157,7 @@ class BackupSchema(Schema):
     @staticmethod
     def _ensure_single_backup(d: dict):
         """Validator to ensure that `d` is a dict with a single key (i.e. just one backup)."""
-        if not 1 == len(d):
+        if not len(d) == 1:
             raise vlp.Invalid(BackupSchema.ErrMsg.NOT_1_BACKUP)
         return d
 
@@ -286,7 +287,7 @@ class TimeframeSchema(Schema):
         Raises a `voluptuous.Invalid` if not all the settings for the given timeframe
         types are present."""
         for tf_type in spec["timeframes"]:
-            missing_settings = list(filter(lambda s: s not in spec.keys(),
+            missing_settings = list(filter(lambda s: s not in spec,
                                            TimeframeSchema.REQUIRED_SETTINGS[tf_type]))
             if len(missing_settings) > 0:
                 raise vlp.Invalid(TimeframeSchema.ErrMsg.SETTING_MISSING
