@@ -44,8 +44,7 @@ test = [
     "freezegun>=1.5.1",
 ]
 dev = [
-    "pylint>=3.3.1",
-    "pylint-pytest>=1.1.8",
+    "ruff>=0.15.0",
 ]
 
 [project.urls]
