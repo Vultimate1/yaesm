@@ -52,7 +52,7 @@ required-version = "==0.15.0"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["D" "E4", "E7", "E9", "F", "UP", "B", "SIM", "I", "E501"]
+select = ["D", "E4", "E7", "E9", "F", "UP", "B", "SIM", "I", "E501"]
 ignore = ["D1"]
 
 [tool.ruff.format]
