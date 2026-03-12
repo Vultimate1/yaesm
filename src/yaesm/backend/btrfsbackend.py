@@ -1,5 +1,6 @@
 """src/yaesm/backend/btrfsbackend.py."""
 
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -102,7 +103,6 @@ def _btrfs_take_snapshot_remote(src_dir: SSHTarget, snapshot: SSHTarget, check=T
         src_dir.openssh_cmd(
             f"sudo -n btrfs subvolume snapshot -r '{src_dir.path}' '{snapshot.path}'"
         ),
-        shell=True,
         check=check,
     )
     return p.returncode, snapshot
@@ -134,7 +134,6 @@ def _btrfs_delete_subvolumes_remote(*subvolumes, check=True):
         _subvolumes = f"{_subvolumes} '{subvolume.path}'"
     p = subprocess.run(
         subvolumes[0].openssh_cmd(f"sudo -n btrfs subvolume delete {_subvolumes}"),
-        shell=True,
         check=check,
     )
     return p.returncode, list(subvolumes)
@@ -145,9 +144,12 @@ def _btrfs_send_receive_local_to_local(snapshot: Path, dst_dir: Path, parent=Non
     directory `dst_dir`. If supplied a `parent` arg, then uses btrfs to send
     '-p parent' for an incremental backup. Passes along `check` to `subprocess.run()`.
     """
-    parent_opt = "" if parent is None else f"-p '{parent}'"
+    parent_opt = "" if parent is None else f"-p {shlex.quote(str(parent))}"
     p = subprocess.run(
-        f"btrfs send {parent_opt} '{snapshot}' | btrfs receive '{dst_dir}'", shell=True, check=check
+        f"btrfs send {parent_opt} {shlex.quote(str(snapshot))}"
+        f" | btrfs receive {shlex.quote(str(dst_dir))}",
+        shell=True,
+        check=check,
     )
     return p.returncode, dst_dir.joinpath(snapshot.name)
 
@@ -162,11 +164,11 @@ def _btrfs_send_receive_local_to_remote(
     Note that the 'btrfs receive' command is run through sudo on the remote server,
     so the remote user must have passwordless sudo access to 'btrfs receive'.
     """
-    parent_opt = "" if parent is None else f"-p '{parent}'"
+    parent_opt = "" if parent is None else f"-p {shlex.quote(str(parent))}"
+    cmd_local = f"btrfs send {parent_opt} {shlex.quote(str(snapshot))}"
+    cmd_remote = dst_dir.openssh_cmd(f"sudo -n btrfs receive '{dst_dir.path}'", string=True)
     p = subprocess.run(
-        f"btrfs send {parent_opt} '{snapshot}'"
-        + " | "
-        + dst_dir.openssh_cmd(f"sudo -n btrfs receive '{dst_dir.path}'"),
+        cmd_local + " | " + cmd_remote,
         shell=True,
         check=check,
     )
@@ -185,11 +187,12 @@ def _btrfs_send_receive_remote_to_local(
     note that if `parent` is supplied, then it is assumed to be an SSHTarget
     refering to the same SSH server as `snapshot`.
     """
-    parent_opt = "" if parent is None else f"-p '{parent.path}'"
+    parent_opt = "" if parent is None else f"-p {shlex.quote(str(parent.path))}"
+    cmd_remote = snapshot.openssh_cmd(
+        f"sudo -n btrfs send {parent_opt} '{snapshot.path}'", string=True
+    )
     p = subprocess.run(
-        snapshot.openssh_cmd(f"sudo -n btrfs send {parent_opt} '{snapshot.path}'")
-        + " | "
-        + f"btrfs receive '{dst_dir}'",
+        cmd_remote + " | " + f"btrfs receive {shlex.quote(str(dst_dir))}",
         shell=True,
         check=check,
     )

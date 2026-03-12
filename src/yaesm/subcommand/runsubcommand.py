@@ -1,4 +1,5 @@
 import argparse
+import fcntl
 import os
 from pathlib import Path
 
@@ -9,45 +10,40 @@ from yaesm.subcommand.subcommandbase import SubcommandBase
 
 
 class RunSubcommand(SubcommandBase):
-    """The run subcommand runs the scheduler, blocks, and in most cases never terminates.
+    """The run subcommand runs the scheduler, which blocks, and in most cases never terminates.
 
     This subcommand should primarily be invoked from OS init system software.
     """
 
     def main(self, backups, parsed_args) -> int:
-        self._setup_pidfile(parsed_args.pidfile)
+        try:
+            lock_fd = os.open(parsed_args.lockfile, os.O_WRONLY | os.O_CREAT, 0o644)
+            fcntl.lockf(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self._lock_fd = lock_fd
+        except OSError as e:
+            Logging.get().error(f"could not acquire scheduler lock: {parsed_args.lockfile}: {e}")
+            return 1
 
         scheduler = yaesm.scheduler.Scheduler()
         scheduler.add_backups(backups)
         Cleanup.add_function(lambda s=scheduler: s.stop())
-        scheduler.start()  # blocks
+
+        try:
+            scheduler.start()  # blocks
+        except (KeyboardInterrupt, SystemExit):
+            Logging.get().info("scheduler stopped gracefully")
+            return 0
+        except Exception:
+            Logging.get().error("scheduler crashed", exc_info=True)
+            return 1
 
         return 0
 
     @classmethod
     def add_argparser_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
-            "--pidfile", type=Path, default=Path("/var/run/yaesm.pid"), help="path to PID file"
+            "--lockfile",
+            type=Path,
+            default=Path("/run/lock/yaesm-run.lock"),
+            help="path to lock file",
         )
-
-    def _setup_pidfile(self, pidfile: Path) -> bool:
-        """Create and register cleanup for pidfile.
-
-        Returns:
-            True if pidfile was successfully created, False if daemon is already running.
-
-        """
-        if pidfile.is_file():
-            with open(pidfile) as fr:
-                try:
-                    existing_pid = int(fr.read().strip())
-                    os.kill(existing_pid, 0)
-                    return False
-                except (ValueError, ProcessLookupError, OSError):
-                    Logging.get().warning(f"removing stale pidfile: {pidfile}")
-                    pidfile.unlink(missing_ok=True)
-        else:
-            with open(pidfile, "w") as fw:
-                fw.write(f"{os.getpid()}\n")
-            Cleanup.add_function(lambda pf=pidfile: pf.unlink(missing_ok=True))
-            return True

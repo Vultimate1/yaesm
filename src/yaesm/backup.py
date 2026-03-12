@@ -108,7 +108,6 @@ for f in $(ls -1 '{sshtarget.path}'); do
 done"""
         p = subprocess.run(
             sshtarget.openssh_cmd(collect_sh_cmd),
-            shell=True,
             check=True,
             capture_output=True,
             encoding="utf-8",

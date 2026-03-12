@@ -61,45 +61,59 @@ class SSHTarget:
         sshtarget.path = Path(path)
         return sshtarget
 
-    def openssh_opts(self, extra_opts=""):
-        """Returns a string containing OpenSSH options to enforce key-based
-        authentication, ssh multiplexing, and strict host-key checking. Also
-        ensures the proper port and configuration file is used. Extra OpenSSH
-        options can be added by setting `extra_opts` to a string containing
-        OpenSSH options.
+    def openssh_opts(self, string=False):
+        """Returns an exec list (`string=False`) or a string (`string=True`)
+        containing OpenSSH options to enforce key-based authentication, ssh
+        multiplexing, and strict host-key checking. Also ensures the proper port
+        and configuration file is used.
         """
-        configfile_opt = "" if self.sshconfig is None else f"-F '{self.sshconfig}'"
-        port_opt = "" if self.port is None else f"-p {self.port}"
-        return f"{extra_opts} -q -i '{self.key}' -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes -o PasswordAuthentication=no -o ControlMaster=auto \
-            -o 'ControlPath=~/.ssh/yaesm-controlmaster-%r@%h:%p' -o ControlPersist=310 \
-            {configfile_opt} {port_opt}"
+        configfile_opt = [] if self.sshconfig is None else ["-F", self.sshconfig]
+        port_opt = [] if self.port is None else ["-p", str(self.port)]
+        default_opts = [
+            "-q",
+            "-i",
+            self.key,
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "IdentitiesOnly=yes",
+            "-o",
+            "StrictHostKeyChecking=yes",
+            "-o",
+            "PasswordAuthentication=no",
+            "-o",
+            "ControlMaster=auto",
+            "-o",
+            "ControlPath=~/.ssh/yaesm-controlmaster-%r@%h:%p",
+            "-o",
+            "ControlPersist=310",
+        ]
+        opts = [*configfile_opt, *port_opt, *default_opts]
+        if string:
+            opts = " ".join([shlex.quote(str(opt)) for opt in opts])
+        return opts
 
-    def openssh_cmd(self, cmd, extra_opts="", quote_cmd=True):
-        """Returns a string of an OpenSSH command that executes 'cmd' on the
-        SSHTargets remote server. See `openssh_opts()` for details on the OpenSSH
-        options that are used.
-
-        If `quote_cmd` is true then the `cmd` arg is quoted with shlex.quote().
-
-        The caller can pass extra openssh opts by setting `extra_opts` to a string
-        containing OpenSSH options.
+    def openssh_cmd(self, cmd, string=False):
+        """Returns an exec list (`string=False`) or a string (`string=True`) of
+        an OpenSSH command that executes 'cmd' on the SSHTargets remote server.
+        See `openssh_opts()` for details on the OpenSSH options that are used.
 
         Example usage::
-            p = subprocess.run(sshtarget.openssh_cmd("btrfs send /home/fred/snapshots/snapshot12") \
-                + " | " + "btrfs receive /fred-home-backups/", shell=True, check=True, \
-                capture_output=True, encoding="utf-8")
+            cmd = sshtarget.openssh_cmd("btrfs send /home/fred/snapshots/snapshot12", string=True)
+            p = subprocess.run(cmd + " | btrfs receive /fred-home-backups/",
+                shell=True, check=True, capture_output=True, encoding="utf-8")
         """
-        if quote_cmd:
-            cmd = shlex.quote(cmd)
         host = self.host if self.user is None else f"{self.user}@{self.host}"
-        return f"ssh {self.openssh_opts(extra_opts)} '{host}' {cmd}"
+        cmd = ["ssh", *self.openssh_opts(), host, cmd]
+        if string:
+            cmd = " ".join([shlex.quote(str(opt)) for opt in cmd])
+        return cmd
 
     def can_connect(self):
         """Return True if we can establish a connection to the SSH target server
         and return False otherwise.
         """
-        return subprocess.run(self.openssh_cmd("exit 0"), shell=True, check=False).returncode == 0
+        return subprocess.run(self.openssh_cmd("exit 0"), check=False).returncode == 0
 
     def is_dir(self, d=None):
         """Return True if `d` is an existing directory on the remote SSH server.
@@ -108,10 +122,7 @@ class SSHTarget:
         if d is None:
             d = self.path
         return (
-            subprocess.run(
-                self.openssh_cmd(f"[ -d '{d}' ]; exit $?"), shell=True, check=False
-            ).returncode
-            == 0
+            subprocess.run(self.openssh_cmd(f"[ -d '{d}' ]; exit $?"), check=False).returncode == 0
         )
 
     def is_file(self, f=None):
@@ -121,10 +132,7 @@ class SSHTarget:
         if f is None:
             f = self.path
         return (
-            subprocess.run(
-                self.openssh_cmd(f"[ -f '{f}' ]; exit $?"), shell=True, check=False
-            ).returncode
-            == 0
+            subprocess.run(self.openssh_cmd(f"[ -f '{f}' ]; exit $?"), check=False).returncode == 0
         )
 
     def mkdir(self, d=None, parents=False, check=True):
@@ -139,7 +147,6 @@ class SSHTarget:
         return (
             subprocess.run(
                 self.openssh_cmd(f"if ! [ -d '{d}' ]; then mkdir {p_flag} '{d}'; fi"),
-                shell=True,
                 check=check,
             ).returncode
             == 0
@@ -152,7 +159,4 @@ class SSHTarget:
         """
         if f is None:
             f = self.path
-        return (
-            subprocess.run(self.openssh_cmd(f"touch '{f}'"), shell=True, check=check).returncode
-            == 0
-        )
+        return subprocess.run(self.openssh_cmd(f"touch '{f}'"), check=check).returncode == 0
