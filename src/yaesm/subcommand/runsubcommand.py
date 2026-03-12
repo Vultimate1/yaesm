@@ -2,9 +2,9 @@ import argparse
 import os
 from pathlib import Path
 
-import yaesm.cleanup
 import yaesm.scheduler
-from yaesm.logging import logger
+from yaesm.cleanup import Cleanup
+from yaesm.logging import Logging
 from yaesm.subcommand.subcommandbase import SubcommandBase
 
 
@@ -19,7 +19,7 @@ class RunSubcommand(SubcommandBase):
 
         scheduler = yaesm.scheduler.Scheduler()
         scheduler.add_backups(backups)
-        yaesm.cleanup.add_cleanup_function(lambda s=scheduler: s.stop())
+        Cleanup.add_function(lambda s=scheduler: s.stop())
         scheduler.start()  # blocks
 
         return 0
@@ -44,10 +44,10 @@ class RunSubcommand(SubcommandBase):
                     os.kill(existing_pid, 0)
                     return False
                 except (ValueError, ProcessLookupError, OSError):
-                    logger().warning(f"removing stale pidfile: {pidfile}")
+                    Logging.get().warning(f"removing stale pidfile: {pidfile}")
                     pidfile.unlink(missing_ok=True)
         else:
             with open(pidfile, "w") as fw:
                 fw.write(f"{os.getpid()}\n")
-            yaesm.cleanup.add_cleanup_function(lambda pf=pidfile: pf.unlink(missing_ok=True))
+            Cleanup.add_function(lambda pf=pidfile: pf.unlink(missing_ok=True))
             return True

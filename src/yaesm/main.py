@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import yaesm.config
+from yaesm.cleanup import Cleanup
 from yaesm.logging import Logging
 from yaesm.subcommand.subcommandbase import SubcommandBase
 
@@ -71,6 +72,7 @@ def main(argv=None) -> int:
         if isinstance(parsed_args.log_syslog, str)
         else "/dev/log",
     )
+    Cleanup.initialize()
 
     try:
         exit_status = subcommand_name_class_map[parsed_args.subcommand]().main(backups, parsed_args)

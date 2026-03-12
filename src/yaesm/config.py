@@ -218,7 +218,7 @@ class BackendSchema(Schema):
 
     @staticmethod
     def _dict_promote_backend_name_to_backend_class(d: dict) -> dict:
-        """Promotes a backend name to its cooresponding backend class."""
+        """Promotes a backend name to its corresponding backend class."""
         backend_name = d["backend"]
         for backend_class in backendbase.BackendBase.backend_classes():
             if backend_name == backend_class.name():
@@ -424,7 +424,7 @@ class SrcDirDstDirSchema(Schema):
         REMOTE_FILE_INVALID = "Not a path to an existing file at the SSH target remote path"
         SSH_TARGET_SPEC_INVALID = "Not a valid SSH target spec"
         NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR = (
-            "Not an existing directory or a validSSH target spec"
+            "Not an existing directory or a valid SSH target spec"
         )
         MULTIPLE_SSH_TARGET_SPECS = "Both 'src_dir' and 'dst_dir' are SSH target specs"
         SSH_KEY_MISSING = "Failed to specify a 'ssh_key' which is required when using a SSH target"

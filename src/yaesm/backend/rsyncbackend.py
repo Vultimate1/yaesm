@@ -90,7 +90,7 @@ class RsyncBackend(BackendBase):
         """
         rsync_cmd = ["rsync", "--verbose", "--archive", "--numeric-ids", "--delete"]
         if self.extra_opts:
-            rsync_cmd += backup.extra_opts
+            rsync_cmd += self.extra_opts
 
         backups = bckp.backups_collect(backup)  # note that we dont pass timeframe here
         if backups:
