@@ -1,4 +1,4 @@
-"""tests/test_yaesm/test_backend/test_rsyncbackend.py"""
+"""tests/test_yaesm/test_backend/test_rsyncbackend.py."""
 
 import filecmp
 from datetime import datetime, timedelta
@@ -16,6 +16,7 @@ from yaesm.sshtarget import SSHTarget
 @pytest.fixture(scope="session")
 def rsync_backend():
     return rsync.RsyncBackend()
+
 
 def test_config_schema():
     schema = rsync.RsyncBackend.config_schema()
@@ -36,8 +37,10 @@ def test_config_schema():
         schema(d)
     assert str(exc.value).startswith("expected str for dictionary value @")
 
-def test_exec_backup(rsync_backend, path_generator, random_backup_generator,
-                     random_filesystem_modifier):
+
+def test_exec_backup(
+    rsync_backend, path_generator, random_backup_generator, random_filesystem_modifier
+):
     src_dir = path_generator("rsync_src_dir", mkdir=True)
     for backup_type in ["local_to_local", "local_to_remote,", "remote_to_local"]:
         backup = random_backup_generator(backend_type="rsync", backup_type=backup_type)
@@ -51,8 +54,12 @@ def test_exec_backup(rsync_backend, path_generator, random_backup_generator,
         for i in range(5):
             new_files, deleted_files, modified_files = random_filesystem_modifier(src_dir)
             with freeze_time(now + timedelta(hours=i)):
-                backups.insert(0, rsync_backend._exec_backup(
-                    backup, bckp.backup_basename_now(backup, timeframe), timeframe))
+                backups.insert(
+                    0,
+                    rsync_backend._exec_backup(
+                        backup, bckp.backup_basename_now(backup, timeframe), timeframe
+                    ),
+                )
             if i >= 1:
                 new_backup = backups[0]
                 prev_backup = backups[1]
@@ -86,6 +93,7 @@ def test_exec_backup(rsync_backend, path_generator, random_backup_generator,
         else:
             assert all(isinstance(x, Path) for x in backups)
 
+
 def test_delete_backups_local(rsync_backend, path_generator):
     dst_dir = path_generator("rsync_test_dst_dir", mkdir=True)
     backups = []
@@ -95,7 +103,8 @@ def test_delete_backups_local(rsync_backend, path_generator):
         backups.append(backup)
     assert all(x.is_dir() for x in backups)
     rsync_backend._delete_backups_local(*backups)
-    assert all(not(x.is_dir()) for x in backups)
+    assert all(not (x.is_dir()) for x in backups)
+
 
 def test_delete_backups_remote(rsync_backend, sshtarget, path_generator, rm_sudo_access):
     dst_dir = path_generator("rsync_test_dst_dir", mkdir=True)
@@ -108,5 +117,5 @@ def test_delete_backups_remote(rsync_backend, sshtarget, path_generator, rm_sudo
     backups = backups[1:]
     assert all(x.is_dir() for x in backups)
     rsync_backend._delete_backups_remote(*backups)
-    assert all(not(x.is_dir()) for x in backups)
+    assert all(not (x.is_dir()) for x in backups)
     assert saved_backup.is_dir()

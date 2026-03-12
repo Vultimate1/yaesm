@@ -1,4 +1,5 @@
-"""tests/test_yaesm/test_config.py"""
+"""tests/test_yaesm/test_config.py."""
+
 import copy
 import random
 import re
@@ -31,6 +32,7 @@ def test_Schema_schema_empty():
     assert schema(12) == 12
     assert schema({"foo": "bar", "baz": 12}) == {"foo": "bar", "baz": 12}
 
+
 def test_Schema_is_file(path_generator):
     tmpfile_str = str(path_generator("tmpfile", touch=True))
     assert config.Schema.is_file(tmpfile_str) == Path(tmpfile_str)
@@ -48,6 +50,7 @@ def test_Schema_is_file(path_generator):
         config.SrcDirDstDirSchema.is_file(tmpfile_relative_str)
     assert str(exc.value) == config.Schema.ErrMsg.LOCAL_FILE_INVALID
 
+
 def test_Schema_is_dir(path_generator):
     tmpdir_str = str(path_generator("tmpdir", mkdir=True))
     assert config.SrcDirDstDirSchema.is_dir(tmpdir_str) == Path(tmpdir_str)
@@ -64,6 +67,7 @@ def test_Schema_is_dir(path_generator):
         assert Path(tmpdir_relative_str).is_dir()
         config.SrcDirDstDirSchema.is_dir(tmpdir_relative_str)
     assert str(exc.value) == config.Schema.ErrMsg.LOCAL_DIR_INVALID
+
 
 def test_BackendSchema_schema():
     schema = config.BackendSchema.schema()
@@ -86,6 +90,7 @@ def test_BackendSchema_schema():
         schema(data)
     assert re.match("required key not provided @", str(exc.value))
 
+
 def test_BackendSchema_dict_promote_backend_name_to_backend_instance():
     data = {"backend": "btrfs"}
     data = config.BackendSchema._dict_promote_backend_name_to_backend_class(data)
@@ -95,11 +100,25 @@ def test_BackendSchema_dict_promote_backend_name_to_backend_instance():
         data = {"FOO": "BAR", "BAZ": "QUUX"}
         config.BackendSchema._dict_promote_backend_name_to_backend_class(data)
 
+
 def test_TimeframeSchema_has_required_settings():
     data = {"timeframes": ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]}
-    setting_keys = ["5minute_keep", "hourly_keep", "hourly_minutes", "daily_keep", "daily_times",
-                    "weekly_keep", "weekly_times", "weekly_days", "monthly_keep", "monthly_times",
-                    "monthly_days", "yearly_keep", "yearly_times", "yearly_days"]
+    setting_keys = [
+        "5minute_keep",
+        "hourly_keep",
+        "hourly_minutes",
+        "daily_keep",
+        "daily_times",
+        "weekly_keep",
+        "weekly_times",
+        "weekly_days",
+        "monthly_keep",
+        "monthly_times",
+        "monthly_days",
+        "yearly_keep",
+        "yearly_times",
+        "yearly_days",
+    ]
     # The value is irrelevant for this method
     data.update(dict.fromkeys(setting_keys))
     assert config.TimeframeSchema.has_required_settings(data) == data
@@ -107,15 +126,20 @@ def test_TimeframeSchema_has_required_settings():
     data.pop("hourly_keep")
     with pytest.raises(vlp.Invalid) as exc:
         config.TimeframeSchema.has_required_settings(data)
-    assert str(exc.value) == config.TimeframeSchema.ErrMsg.SETTING_MISSING \
-        + "\n\thourly: ['hourly_keep']"
+    assert (
+        str(exc.value)
+        == config.TimeframeSchema.ErrMsg.SETTING_MISSING + "\n\thourly: ['hourly_keep']"
+    )
 
     # For the time being, this will only return the first error
     data.pop("weekly_times")
     with pytest.raises(vlp.Invalid) as exc:
         config.TimeframeSchema.has_required_settings(data)
-    assert str(exc.value) == config.TimeframeSchema.ErrMsg.SETTING_MISSING \
-        + "\n\thourly: ['hourly_keep']"
+    assert (
+        str(exc.value)
+        == config.TimeframeSchema.ErrMsg.SETTING_MISSING + "\n\thourly: ['hourly_keep']"
+    )
+
 
 def test_TimeframeSchema_are_valid_timespecs():
     valid_specs = ["12:34", "23:59", "00:00", "99:99"]
@@ -126,8 +150,12 @@ def test_TimeframeSchema_are_valid_timespecs():
     for spec in invalid_specs:
         with pytest.raises(vlp.Invalid) as exc:
             config.TimeframeSchema.are_valid_timespecs([spec])
-        assert str(exc.value) == config.TimeframeSchema.ErrMsg.TIME_MALFORMED \
+        assert (
+            str(exc.value)
+            == config.TimeframeSchema.ErrMsg.TIME_MALFORMED
             + f"\n\tExpected format 'hh:mm', got {spec}"
+        )
+
 
 def test_TimeframeSchema_are_valid_hours():
     valid_specs = [[12, 34], [23, 59], [0, 0], [3, -1]]
@@ -137,8 +165,8 @@ def test_TimeframeSchema_are_valid_hours():
     for spec in invalid_specs:
         with pytest.raises(vlp.Invalid) as exc:
             config.TimeframeSchema.are_valid_hours([spec])
-        assert str(exc.value) == config.TimeframeSchema.ErrMsg.HOUR_OUT_OF_RANGE \
-            + f"\n\tGot {spec}"
+        assert str(exc.value) == config.TimeframeSchema.ErrMsg.HOUR_OUT_OF_RANGE + f"\n\tGot {spec}"
+
 
 def test_TimeframeSchema_are_valid_minutes():
     valid_specs = [[12, 34], [23, 59], [0, 0], [-1, 30]]
@@ -148,15 +176,18 @@ def test_TimeframeSchema_are_valid_minutes():
     for spec in invalid_specs:
         with pytest.raises(vlp.Invalid) as exc:
             config.TimeframeSchema.are_valid_minutes([spec])
-        assert str(exc.value) == config.TimeframeSchema.ErrMsg.MINUTE_OUT_OF_RANGE \
-            + f"\n\tGot {spec}"
+        assert (
+            str(exc.value) == config.TimeframeSchema.ErrMsg.MINUTE_OUT_OF_RANGE + f"\n\tGot {spec}"
+        )
+
 
 def test_TimeframeSchema_promote_timeframes_spec_to_list_of_timeframes(valid_raw_config):
     for backup_name in sorted(valid_raw_config.keys()):
         backup_settings = valid_raw_config[backup_name]
         orig_timeframes = backup_settings["timeframes"]
         backup_spec = config.TimeframeSchema._promote_timeframes_spec_to_list_of_timeframes(
-            valid_raw_config[backup_name])
+            valid_raw_config[backup_name]
+        )
         assert len(orig_timeframes) == len(backup_spec["timeframes"])
         for timeframe in backup_spec["timeframes"]:
             assert isinstance(timeframe, Timeframe)
@@ -181,11 +212,12 @@ def test_TimeframeSchema_promote_timeframes_spec_to_list_of_timeframes(valid_raw
                 assert timeframe.keep == backup_spec["monthly_keep"]
                 assert timeframe.times == backup_spec["monthly_times"]
                 assert timeframe.monthdays == backup_spec["monthly_days"]
-            else: # isinstance(timeframe, YearlyTimeframe):
+            else:  # isinstance(timeframe, YearlyTimeframe):
                 assert timeframe.name == "yearly"
                 assert timeframe.keep == backup_spec["yearly_keep"]
                 assert timeframe.times == backup_spec["yearly_times"]
                 assert timeframe.yeardays == backup_spec["yearly_days"]
+
 
 def test_TimeframeSchema_schema(valid_raw_config):
     for backup_name in sorted(valid_raw_config.keys()):
@@ -198,13 +230,24 @@ def test_TimeframeSchema_schema(valid_raw_config):
 
         tf_types = tframe_types()
         tf_names = tframe_types(names=True)
-        expected_tf_types = [tf_types[i]
-                             for i in range(len(tf_names))
-                             if tf_names[i] in backup_settings["timeframes"]]
+        expected_tf_types = [
+            tf_types[i]
+            for i in range(len(tf_names))
+            if tf_names[i] in backup_settings["timeframes"]
+        ]
         actual_tf_types = list(map(type, processed_backup["timeframes"]))
-        unmodified_setting_keys = ["5minute_keep", "hourly_keep", "hourly_minutes", "daily_keep",
-                                   "weekly_keep", "weekly_days", "monthly_keep", "monthly_days",
-                                   "yearly_keep", "yearly_days"]
+        unmodified_setting_keys = [
+            "5minute_keep",
+            "hourly_keep",
+            "hourly_minutes",
+            "daily_keep",
+            "weekly_keep",
+            "weekly_days",
+            "monthly_keep",
+            "monthly_days",
+            "yearly_keep",
+            "yearly_days",
+        ]
         times_settings = ["daily_times", "weekly_times", "monthly_times", "yearly_times"]
         for tf_type in expected_tf_types:
             assert tf_type in actual_tf_types
@@ -213,8 +256,10 @@ def test_TimeframeSchema_schema(valid_raw_config):
                 assert processed_backup[setting] == backup_settings[setting]
         for setting in times_settings:
             if setting in backup_settings:
-                assert [isinstance(item, int)
-                        for time in processed_backup[setting] for item in time]
+                assert [
+                    isinstance(item, int) for time in processed_backup[setting] for item in time
+                ]
+
 
 def test_SrcDirDstDirSchema_is_sshtarget_spec():
     sshtarget_spec = "ssh://p22:root@localhost:/"
@@ -228,6 +273,7 @@ def test_SrcDirDstDirSchema_is_sshtarget_spec():
         config.SrcDirDstDirSchema._is_sshtarget_spec("")
     assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_TARGET_SPEC_INVALID
 
+
 def test_SrcDirDstDirSchema_is_dir_or_sshtarget_spec(path_generator):
     sshtarget_spec = "ssh://p22:root@localhost:/"
     assert config.SrcDirDstDirSchema._is_dir_or_sshtarget_spec(sshtarget_spec) == sshtarget_spec
@@ -239,8 +285,11 @@ def test_SrcDirDstDirSchema_is_dir_or_sshtarget_spec(path_generator):
     shutil.rmtree(tmpdir_str)
     with pytest.raises(vlp.Invalid) as exc:
         config.SrcDirDstDirSchema._is_dir_or_sshtarget_spec(tmpdir_str)
-    assert str(exc.value) \
+    assert (
+        str(exc.value)
         == config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR
+    )
+
 
 def test_SrcDirDstDirSchema_dict_max_one_sshtarget_spec(path_generator):
     src_dir_str = str(path_generator("src_dir", mkdir=True))
@@ -262,6 +311,7 @@ def test_SrcDirDstDirSchema_dict_max_one_sshtarget_spec(path_generator):
         config.SrcDirDstDirSchema._dict_max_one_sshtarget_spec(data)
     assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.MULTIPLE_SSH_TARGET_SPECS
 
+
 def test_SrcDirDstDirSchema_dict_ssh_key_required_if_ssh_target(path_generator):
     src_dir_str = str(path_generator("src_dir", mkdir=True))
     dst_dir_str = str(path_generator("dst_dir", mkdir=True))
@@ -272,8 +322,10 @@ def test_SrcDirDstDirSchema_dict_ssh_key_required_if_ssh_target(path_generator):
     sshtarget_spec = "ssh://p22:root@localhost:/"
     ssh_key_str = str(path_generator("ssh_key", touch=True))
     data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str, "ssh_key": ssh_key_str}
-    assert config.SrcDirDstDirSchema._dict_ssh_key_required_if_ssh_target(data) \
-        == {**data, "ssh_key": Path(data["ssh_key"])}
+    assert config.SrcDirDstDirSchema._dict_ssh_key_required_if_ssh_target(data) == {
+        **data,
+        "ssh_key": Path(data["ssh_key"]),
+    }
 
     with pytest.raises(vlp.Invalid) as exc:
         data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str}
@@ -285,6 +337,7 @@ def test_SrcDirDstDirSchema_dict_ssh_key_required_if_ssh_target(path_generator):
         data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str, "ssh_key": ssh_key_str}
         config.SrcDirDstDirSchema._dict_ssh_key_required_if_ssh_target(data)
     assert str(exc.value) == config.Schema.ErrMsg.LOCAL_FILE_INVALID
+
 
 def test_SrcDirDstDirSchema_dict_promote_ssh_target_spec_to_ssh_target(path_generator):
     src_dir = path_generator("src_dir", mkdir=True)
@@ -301,6 +354,7 @@ def test_SrcDirDstDirSchema_dict_promote_ssh_target_spec_to_ssh_target(path_gene
     data = {"src_dir": src_dir, "dst_dir": sshtarget_spec, "ssh_key": fake_key}
     data = config.SrcDirDstDirSchema._dict_promote_ssh_target_spec_to_ssh_target(data)
     assert isinstance(data["dst_dir"], SSHTarget)
+
 
 def test_SrcDirDstDirSchema_dict_ssh_target_connectable(sshtarget_generator, path_generator):
     sshtarget = sshtarget_generator()
@@ -324,6 +378,7 @@ def test_SrcDirDstDirSchema_dict_ssh_target_connectable(sshtarget_generator, pat
         config.SrcDirDstDirSchema._dict_ssh_target_connectable(data)
     assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.REMOTE_DIR_INVALID
 
+
 def test_SrcDirDstDirSchema_schema(path_generator):
     schema = config.SrcDirDstDirSchema.schema()
 
@@ -336,8 +391,12 @@ def test_SrcDirDstDirSchema_schema(path_generator):
     data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str}
     assert schema(data) == {"src_dir": Path(src_dir_str), "dst_dir": Path(dst_dir_str)}
 
-    data = {"src_dir": src_dir_str, "dst_dir": sshtarget_spec, "ssh_key": key,
-            "ssh_config": ssh_config}
+    data = {
+        "src_dir": src_dir_str,
+        "dst_dir": sshtarget_spec,
+        "ssh_key": key,
+        "ssh_config": ssh_config,
+    }
     data = schema(data)
     assert sorted(data) == ["dst_dir", "src_dir", "ssh_config", "ssh_key"]
     assert data["src_dir"] == Path(src_dir_str)
@@ -359,7 +418,7 @@ def test_SrcDirDstDirSchema_schema(path_generator):
     assert data["ssh_key"] == Path(key)
 
     data = {"foo": "bar", "src_dir": src_dir_str, "dst_dir": dst_dir_str}
-    schema(data) # doesn't raise error for extra keys
+    schema(data)  # doesn't raise error for extra keys
 
     with pytest.raises(vlp.Invalid) as exc:
         data = {"src_dir": src_dir_str}
@@ -377,7 +436,8 @@ def test_SrcDirDstDirSchema_schema(path_generator):
         schema(data)
     assert re.match(
         config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR,
-        str(exc.value))
+        str(exc.value),
+    )
     Path(src_dir_str).mkdir()
 
     Path(dst_dir_str).rmdir()
@@ -386,7 +446,8 @@ def test_SrcDirDstDirSchema_schema(path_generator):
         schema(data)
     assert re.match(
         config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR,
-        str(exc.value))
+        str(exc.value),
+    )
     Path(dst_dir_str).mkdir()
 
     Path(key).unlink()
@@ -412,6 +473,7 @@ def test_SrcDirDstDirSchema_schema(path_generator):
         data = {"src_dir": src_dir_str, "dst_dir": sshtarget_spec}
         schema(data)
     assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_KEY_MISSING
+
 
 def test_SrcDirDstDirSchema_schema_extra(sshtarget_generator, path_generator):
     schema_extra = config.SrcDirDstDirSchema.schema_extra()
@@ -444,12 +506,13 @@ def test_SrcDirDstDirSchema_schema_extra(sshtarget_generator, path_generator):
         schema_extra(data)
     assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.REMOTE_DIR_INVALID
 
+
 def test_BackupSchema_ensure_single_backup():
-    d = {'foo': 1}
+    d = {"foo": 1}
     assert d == config.BackupSchema._ensure_single_backup(d)
-    d = {'foo': {'bar': 1, 'baz': 2}}
+    d = {"foo": {"bar": 1, "baz": 2}}
     assert d == config.BackupSchema._ensure_single_backup(d)
-    d = {'foo': 1, 'bar': 2}
+    d = {"foo": 1, "bar": 2}
     with pytest.raises(vlp.Invalid) as exc:
         config.BackupSchema._ensure_single_backup(d)
     assert str(exc.value) == config.BackupSchema.ErrMsg.NOT_1_BACKUP
@@ -458,22 +521,24 @@ def test_BackupSchema_ensure_single_backup():
         config.BackupSchema._ensure_single_backup(d)
     assert str(exc.value) == config.BackupSchema.ErrMsg.NOT_1_BACKUP
 
+
 def test_BackupSchema_ensure_backup_name_valid():
-    d = {'foo': {'bar': 1, 'baz': 2}}
+    d = {"foo": {"bar": 1, "baz": 2}}
     assert d == config.BackupSchema._ensure_backup_name_valid(d)
-    d = {'': {'bar': 1, 'baz': 2}}
+    d = {"": {"bar": 1, "baz": 2}}
     with pytest.raises(vlp.Invalid) as exc:
         config.BackupSchema._ensure_backup_name_valid(d)
     assert str(exc.value) == config.BackupSchema.ErrMsg.INVALID_BACKUP_NAME
-    d = {'foo/bar': {'bar': 1, 'baz': 2}}
+    d = {"foo/bar": {"bar": 1, "baz": 2}}
     with pytest.raises(vlp.Invalid) as exc:
         config.BackupSchema._ensure_backup_name_valid(d)
     assert str(exc.value) == config.BackupSchema.ErrMsg.INVALID_BACKUP_NAME
 
+
 def test_BackupSchema_apply_sub_schemas(valid_raw_config, path_generator):
     # success tests
     for backup_name in sorted(valid_raw_config.keys()):
-        backup_spec = copy.deepcopy({ backup_name : valid_raw_config[backup_name] })
+        backup_spec = copy.deepcopy({backup_name: valid_raw_config[backup_name]})
         backup_spec = config.BackupSchema._apply_sub_schemas(backup_spec)
         backup_settings = backup_spec[backup_name]
         assert isinstance(backup_settings["src_dir"], (Path, SSHTarget))
@@ -483,26 +548,30 @@ def test_BackupSchema_apply_sub_schemas(valid_raw_config, path_generator):
             assert isinstance(tf, Timeframe)
     # failure tests
     for backup_name in sorted(valid_raw_config.keys()):
-        backup_spec = copy.deepcopy({ backup_name : valid_raw_config[backup_name] })
+        backup_spec = copy.deepcopy({backup_name: valid_raw_config[backup_name]})
         backup_spec[backup_name]["backend"] = "INVALIDBACKEND"
-        backup_spec[backup_name]["src_dir"] = path_generator("non-existent-path", touch=False,
-                                                             mkdir=False)
+        backup_spec[backup_name]["src_dir"] = path_generator(
+            "non-existent-path", touch=False, mkdir=False
+        )
         backup_spec[backup_name]["timeframes"].append("INVALIDTIMEFRAMENAME")
         with pytest.raises(vlp.MultipleInvalid) as exc:
             backup_spec = config.BackupSchema._apply_sub_schemas(backup_spec)
         assert len(exc.value.errors) == 3
 
+
 def test_BackupSchema_promote_to_backup_object(valid_raw_config):
     backup_name = random.choice(list(valid_raw_config.keys()))
     backup = config.BackupSchema._promote_to_backup_object(
-        {backup_name : valid_raw_config[backup_name]})
+        {backup_name: valid_raw_config[backup_name]}
+    )
     assert isinstance(backup, bckp.Backup)
+
 
 def test_BackupSchema_schema(valid_raw_config, path_generator):
     schema = config.BackupSchema.schema()
     # success tests
     for backup_name in sorted(valid_raw_config.keys()):
-        backup_spec = { backup_name : valid_raw_config[backup_name] }
+        backup_spec = {backup_name: valid_raw_config[backup_name]}
         backup = schema(backup_spec)
         assert isinstance(backup, bckp.Backup)
         assert backup.name == backup_name
@@ -515,13 +584,13 @@ def test_BackupSchema_schema(valid_raw_config, path_generator):
         elif backup.backup_type == "local_to_remote":
             assert isinstance(backup.src_dir, Path)
             assert isinstance(backup.dst_dir, SSHTarget)
-        else: # backup.backup_type == "remote_to_local"
+        else:  # backup.backup_type == "remote_to_local"
             assert isinstance(backup.src_dir, SSHTarget)
             assert isinstance(backup.dst_dir, Path)
         raw_config_copy = copy.deepcopy(valid_raw_config)
         raw_config_copy[backup_name]["INVALIDSETTING"] = "foo"
         # no error for invalid setting
-        assert schema({backup_name : raw_config_copy[backup_name]})
+        assert schema({backup_name: raw_config_copy[backup_name]})
     # failure tests
     with pytest.raises(vlp.Invalid) as exc:
         schema({})
@@ -532,27 +601,29 @@ def test_BackupSchema_schema(valid_raw_config, path_generator):
     for backup_name in sorted(valid_raw_config.keys()):
         raw_config_copy = copy.deepcopy(valid_raw_config)
         with pytest.raises(vlp.Invalid) as exc:
-            schema({ f"{backup_name} &" : valid_raw_config[backup_name] })
+            schema({f"{backup_name} &": valid_raw_config[backup_name]})
         assert str(exc.value) == config.BackupSchema.ErrMsg.INVALID_BACKUP_NAME
         with pytest.raises(vlp.Invalid) as exc:
             raw_config_copy = copy.deepcopy(valid_raw_config)
             backup_settings = raw_config_copy[backup_name]
             backup_settings["backend"] = "INVALIDBACKENDNAME"
-            schema({ backup_name: backup_settings })
+            schema({backup_name: backup_settings})
         assert str(exc.value).startswith(config.BackendSchema.ErrMsg.INVALID_BACKEND_NAME)
         with pytest.raises(vlp.Invalid) as exc:
             raw_config_copy = copy.deepcopy(valid_raw_config)
             backup_settings = raw_config_copy[backup_name]
             backup_settings["timeframes"].append("INVALIDTIMEFRAME")
-            schema({ backup_name: backup_settings })
+            schema({backup_name: backup_settings})
         assert str(exc.value).startswith("value must be one of ['5minute',")
         with pytest.raises(vlp.Invalid) as exc:
             raw_config_copy = copy.deepcopy(valid_raw_config)
             backup_settings = raw_config_copy[backup_name]
             backup_settings["src_dir"] = path_generator("non-existent-dir", mkdir=False)
-            schema({ backup_name: backup_settings })
+            schema({backup_name: backup_settings})
         assert str(exc.value).startswith(
-            config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR)
+            config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR
+        )
+
 
 def test_parse_config(path_generator, valid_config_file_generator):
     backups = config.parse_config(valid_config_file_generator())
@@ -575,8 +646,9 @@ def test_parse_config(path_generator, valid_config_file_generator):
     assert isinstance(exc.value, config.ConfigErrors)
 
     config_file_invalid = path_generator("config-file-invalid.yml", touch=True)
-    with open(valid_config_file_generator(num_backups=2), "r", encoding="utf-8") as fr, \
-        open(config_file_invalid, "a", encoding="utf-8") as fw:
+    with open(valid_config_file_generator(num_backups=2), encoding="utf-8") as fr, open(
+        config_file_invalid, "a", encoding="utf-8"
+    ) as fw:
         for line in fr:
             if line.startswith("  src_dir:"):
                 invalid_path = path_generator("non-existent-path", touch=False)
@@ -587,7 +659,7 @@ def test_parse_config(path_generator, valid_config_file_generator):
                 fw.write("")
             else:
                 fw.write(line)
-    with open(config_file_invalid, "r", encoding="utf-8") as f:
+    with open(config_file_invalid, encoding="utf-8") as f:
         print(f.read())
 
     with pytest.raises(config.ConfigErrors) as exc:

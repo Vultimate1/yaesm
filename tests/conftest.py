@@ -1,7 +1,8 @@
-"""tests/conftest.py
+"""tests/conftest.py.
 
 conftest.py is implicitly imported into all pytest test files. This file
-can be thought of as a collection of globally available pytest fixtures."""
+can be thought of as a collection of globally available pytest fixtures.
+"""
 
 import grp
 import os
@@ -34,25 +35,32 @@ from yaesm.timeframe import (
 @pytest.fixture(scope="module", autouse=True)
 def with_stderr_debug_logging(request):
     """Fixture that enables debug level logging to stderr for all test modules,
-    except the test_logging.py module."""
+    except the test_logging.py module.
+    """
     if request.module.__name__ != "test_logging":
-        yaesm.logging.Logging.initialize(stderr=True, level='DEBUG')
+        yaesm.logging.Logging.initialize(stderr=True, level="DEBUG")
         yield
         yaesm.logging.Logging.disable()
     else:
         yield
 
+
 @pytest.fixture
 def loopback_generator(path_generator):
     """Fixture to generate loopback devices."""
     loops = []
+
     def generator():
         loopfile = None
         while loopfile is None or loopfile.is_file():
             loopfile = path_generator("yaesm-test-loopfile")
         subprocess.run(["truncate", "--size", "1G", loopfile], check=True)
-        losetup = subprocess.run(["losetup", "--find", "--show", loopfile], check=True,
-                                 capture_output=True, encoding="utf-8")
+        losetup = subprocess.run(
+            ["losetup", "--find", "--show", loopfile],
+            check=True,
+            capture_output=True,
+            encoding="utf-8",
+        )
         loop = Path(losetup.stdout.removesuffix("\n"))
         loops.append(loop)
         return loop
@@ -62,6 +70,7 @@ def loopback_generator(path_generator):
     for loop in loops:
         subprocess.run(["losetup", "--detach", loop], check=True)
 
+
 @pytest.fixture
 def loopback(loopback_generator):
     """Fixture to generate a single loopback device. See the loopback_generator
@@ -69,13 +78,15 @@ def loopback(loopback_generator):
     """
     return loopback_generator()
 
+
 @pytest.fixture
 def localhost_server_generator(ssh_key_generator, tmp_user_generator):
-    """Fixture to setup mock ssh servers on the localhost. This fixture makes
-    key auth possible as it will create and add the ssh_key to the localhost
-    server users ~/.ssh/authorized_keys file to allow passwordless login.
-    The generator function returns a hash - {"user":pwd_object, "key":path_to_key}
+    """Fixture to setup mock ssh servers on the localhost.
+
+    Makes key auth possible by creating and adding the ssh_key to the localhost
+    server user's ~/.ssh/authorized_keys. Returns a hash - {"user":pwd_object, "key":path_to_key}
     """
+
     def generator():
         user = tmp_user_generator()
         os.makedirs(f"{user.pw_dir}/.ssh", mode=0o700)
@@ -83,32 +94,43 @@ def localhost_server_generator(ssh_key_generator, tmp_user_generator):
         authorized_keys = f"{user.pw_dir}/.ssh/authorized_keys"
         privkey = ssh_key_generator()
         pubkey = privkey.with_suffix(".pub")
-        with open(pubkey, "r", encoding="utf-8") as fr, \
-             open(authorized_keys, "a", encoding="utf-8") as fw:
+        with open(pubkey, encoding="utf-8") as fr, open(
+            authorized_keys, "a", encoding="utf-8"
+        ) as fw:
             for line in fr:
                 fw.write(line)
         os.chmod(authorized_keys, 0o600)
         os.chown(authorized_keys, user.pw_uid, user.pw_gid)
-        return {"user":user, "key":privkey}
+        return {"user": user, "key": privkey}
+
     return generator
+
 
 @pytest.fixture
 def localhost_server(localhost_server_generator):
     """Fixture to setup a single mock ssh server on the localhost. See
-    the localhost_server_generator fixture for more information."""
+    the localhost_server_generator fixture for more information.
+    """
     return localhost_server_generator()
+
 
 @pytest.fixture
 def ssh_key_generator(path_generator):
     """Fixture for generating ssh keys. Returns path to the generated private
     ssh key. The public key name is the private key name suffixed with '.pub'.
     """
+
     def generator():
         key = path_generator("id_rsa")
-        subprocess.run(["ssh-keygen", "-N", "", "-t", "rsa", "-b", "4096", "-f", key],
-                       check=True, capture_output=True)
+        subprocess.run(
+            ["ssh-keygen", "-N", "", "-t", "rsa", "-b", "4096", "-f", key],
+            check=True,
+            capture_output=True,
+        )
         return key
+
     return generator
+
 
 @pytest.fixture
 def ssh_key(ssh_key_generator):
@@ -116,6 +138,7 @@ def ssh_key(ssh_key_generator):
     for more information.
     """
     return ssh_key_generator()
+
 
 @pytest.fixture
 def yaesm_test_users_group():
@@ -130,12 +153,14 @@ def yaesm_test_users_group():
         group = grp.getgrnam(group_name)
     return group
 
+
 @pytest.fixture
 def tmp_user_generator(yaesm_test_users_group, random_string_generator):
     """Fixture to generate and cleanup temporary users on the system. Note that
     the created user has a locked password meaning only root can sign in as this
     user. The returned value is a pwd object for the created user.
     """
+
     def generator():
         username = None
         while True:
@@ -144,12 +169,15 @@ def tmp_user_generator(yaesm_test_users_group, random_string_generator):
                 pwd.getpwnam(username)
             except KeyError:
                 break
-        subprocess.run(["useradd", "-m", "-G", yaesm_test_users_group.gr_name, username],
-                       check=True)
+        subprocess.run(
+            ["useradd", "-m", "-G", yaesm_test_users_group.gr_name, username], check=True
+        )
         subprocess.run(["passwd", "--lock", username], check=True, capture_output=True)
         user = pwd.getpwnam(username)
         return user
+
     return generator
+
 
 @pytest.fixture
 def tmp_user(tmp_user_generator):
@@ -158,12 +186,16 @@ def tmp_user(tmp_user_generator):
     """
     return tmp_user_generator()
 
+
 @pytest.fixture
 def random_string_generator():
     """Fixture for generating random ascii lowercase strings of arbitrary length."""
+
     def generator(length=5):
         return "".join(random.choice(ascii_lowercase) for _ in range(length))
+
     return generator
+
 
 @pytest.fixture
 def path_generator(random_string_generator):
@@ -173,8 +205,10 @@ def path_generator(random_string_generator):
     removed during cleanup.
     """
     tmp_paths_to_cleanup = []
-    def generator(name_prefix, base_dir="/tmp", suffix_length=5, mkdir=False, touch=False,
-                  cleanup=False):
+
+    def generator(
+        name_prefix, base_dir="/tmp", suffix_length=5, mkdir=False, touch=False, cleanup=False
+    ):
         base_dir = Path(base_dir)
         tmp_path = None
         while tmp_path is None or tmp_path.exists():
@@ -196,17 +230,20 @@ def path_generator(random_string_generator):
         elif path.is_dir():
             shutil.rmtree(path)
 
+
 @pytest.fixture
 def random_backend_generator():
     """Fixture to provide a function for generating a random backend object."""
+
     def generator():
         backend_class = random.choice(backendbase.BackendBase.backend_classes())
         backend = backend_class()
         if backend_class.name() == "rsync":
             backend.extra_opts = ["--exclude", "SKIP*"]
-        elif backend_class.name() == "btrfs": # btrfs currently doesn't have any extra_opts
+        elif backend_class.name() == "btrfs":  # btrfs currently doesn't have any extra_opts
             ...
         return backend
+
     return generator
 
 
@@ -216,6 +253,7 @@ def random_backend(random_backend_generator):
     `random_backend_generator` fixture for more details.
     """
     return random_backend_generator()
+
 
 @pytest.fixture
 def random_filesystem_modifier(path_generator, random_string_generator):
@@ -227,6 +265,7 @@ def random_filesystem_modifier(path_generator, random_string_generator):
     The modifier function takes an option `strip_path` that when True (default)
     removes the input path prefix from the returned file lists.
     """
+
     def filesystem_modifier(path, strip_path=True):
         new_files = []
         deleted_files = []
@@ -237,7 +276,7 @@ def random_filesystem_modifier(path_generator, random_string_generator):
                 existing_files.append(Path(os.path.join(root, f)))
         for i in range(random.randint(5, 70)):
             mod = i % 10
-            if mod < 5: # new file
+            if mod < 5:  # new file
                 p = path
                 depth = random.randint(0, 5)
                 for _ in range(depth):
@@ -249,13 +288,13 @@ def random_filesystem_modifier(path_generator, random_string_generator):
                     fw.write(random_string_generator() + "\n")
                 new_files.append(f)
                 existing_files.append(f)
-            elif mod < 8: # modify file
+            elif mod < 8:  # modify file
                 f = random.choice(existing_files)
                 if f not in modified_files and f not in new_files:
                     with open(f, "a", encoding="utf-8") as fa:
                         fa.write(random_string_generator() + "\n")
                     modified_files.append(f)
-            else: # delete file
+            else:  # delete file
                 f = random.choice(existing_files)
                 if f and f not in new_files and f not in modified_files:
                     f.unlink()
@@ -276,16 +315,28 @@ def random_filesystem_modifier(path_generator, random_string_generator):
                 f = f[prefix_len:]
                 modified_files[i] = Path(f)
         return new_files, deleted_files, modified_files
+
     return filesystem_modifier
 
+
 @pytest.fixture
-def random_backup_generator(random_timeframes_generator, btrfs_fs_generator, sshtarget_generator,
-                            random_backend, path_generator, random_string_generator):
+def random_backup_generator(
+    random_timeframes_generator,
+    btrfs_fs_generator,
+    sshtarget_generator,
+    random_backend,
+    path_generator,
+    random_string_generator,
+):
     """Fixture for generating a single random `Backup`."""
     names = []
+
     def generator(backend_type=None, backup_type=None, num_timeframes=3):
-        backup_type = backup_type if backup_type is not None else random.choice(
-            ["local_to_local", "local_to_remote", "remote_to_local"])
+        backup_type = (
+            backup_type
+            if backup_type is not None
+            else random.choice(["local_to_local", "local_to_remote", "remote_to_local"])
+        )
         timeframes = random_timeframes_generator(num=num_timeframes)
 
         if backend_type is None:
@@ -313,12 +364,13 @@ def random_backup_generator(random_timeframes_generator, btrfs_fs_generator, ssh
             return bckp.Backup(name, random_backend, src_dir, dst_dir, timeframes)
         if backup_type == "local_to_remote":
             target = sshtarget_generator()
-            return bckp.Backup(name, random_backend, src_dir, target.with_path(dst_dir),
-                               timeframes)
+            return bckp.Backup(name, random_backend, src_dir, target.with_path(dst_dir), timeframes)
         # remote_to_local
         target = sshtarget_generator()
         return bckp.Backup(name, random_backend, target.with_path(src_dir), dst_dir, timeframes)
+
     return generator
+
 
 @pytest.fixture
 def random_backup(random_backup_generator):
@@ -327,11 +379,13 @@ def random_backup(random_backup_generator):
     """
     return random_backup_generator()
 
+
 @pytest.fixture
 def sshtarget_generator(localhost_server_generator):
     """Fixture for generating SSHTargets for mock localhost ssh servers. Note
     that the target path is the home directory of the localhost ssh server user.
     """
+
     def generator():
         localhost = localhost_server_generator()
         user = localhost["user"]
@@ -339,7 +393,9 @@ def sshtarget_generator(localhost_server_generator):
         target_spec = f"ssh://p22:{user.pw_name}@localhost:{user.pw_dir}"
         target = SSHTarget(target_spec, key)
         return target
+
     return generator
+
 
 @pytest.fixture
 def sshtarget(sshtarget_generator):
@@ -348,27 +404,47 @@ def sshtarget(sshtarget_generator):
     """
     return sshtarget_generator()
 
+
 @pytest.fixture
 def random_timeframe_generator(
-    random_timeframe_times_generator, random_timeframe_minutes_generator,
-    random_timeframe_weekdays_generator, random_timeframe_monthdays_generator,
-    random_timeframe_yeardays_generator):
+    random_timeframe_times_generator,
+    random_timeframe_minutes_generator,
+    random_timeframe_weekdays_generator,
+    random_timeframe_monthdays_generator,
+    random_timeframe_yeardays_generator,
+):
     """Fixture for generating random Timeframes."""
-    def generator(tframe_type=None, keep=None, minutes=None, times=None, weekdays=None,
-                  monthdays=None, yeardays=None) -> Timeframe:
-        tframe_type = random.choice(tframe_types()) \
-            if tframe_type is None else tframe_type
-        keep = random.randint(1,10) if keep is None else keep
-        minutes = random_timeframe_minutes_generator(random.randint(1,5)) \
-            if minutes is None else minutes
-        times = random_timeframe_times_generator(random.randint(1,5)) \
-            if times is None else times
-        weekdays = random_timeframe_weekdays_generator(random.randint(1,3)) \
-            if weekdays is None else weekdays
-        monthdays = random_timeframe_monthdays_generator(random.randint(1,3)) \
-            if monthdays is None else monthdays
-        yeardays = random_timeframe_yeardays_generator(random.randint(1,3)) \
-            if yeardays is None else yeardays
+
+    def generator(
+        tframe_type=None,
+        keep=None,
+        minutes=None,
+        times=None,
+        weekdays=None,
+        monthdays=None,
+        yeardays=None,
+    ) -> Timeframe:
+        tframe_type = random.choice(tframe_types()) if tframe_type is None else tframe_type
+        keep = random.randint(1, 10) if keep is None else keep
+        minutes = (
+            random_timeframe_minutes_generator(random.randint(1, 5)) if minutes is None else minutes
+        )
+        times = random_timeframe_times_generator(random.randint(1, 5)) if times is None else times
+        weekdays = (
+            random_timeframe_weekdays_generator(random.randint(1, 3))
+            if weekdays is None
+            else weekdays
+        )
+        monthdays = (
+            random_timeframe_monthdays_generator(random.randint(1, 3))
+            if monthdays is None
+            else monthdays
+        )
+        yeardays = (
+            random_timeframe_yeardays_generator(random.randint(1, 3))
+            if yeardays is None
+            else yeardays
+        )
         if tframe_type == FiveMinuteTimeframe:
             return FiveMinuteTimeframe(keep)
         if tframe_type == HourlyTimeframe:
@@ -381,7 +457,9 @@ def random_timeframe_generator(
             return MonthlyTimeframe(keep, times, monthdays)
         if tframe_type == YearlyTimeframe:
             return YearlyTimeframe(keep, times, yeardays)
+
     return generator
+
 
 @pytest.fixture
 def random_timeframe(random_timeframe_generator):
@@ -390,80 +468,104 @@ def random_timeframe(random_timeframe_generator):
     """
     return random_timeframe_generator()
 
+
 @pytest.fixture
 def random_timeframes_generator(random_timeframe_generator):
     """Fixture for generating a list of random Timeframes. See the fixture
-    random_timeframe_generator for more details."""
+    random_timeframe_generator for more details.
+    """
+
     def generator(num=3, **kwargs):
         timeframes = []
         tf_types = random.sample(tframe_types(), k=num)
         for tf_type in tf_types:
             timeframes.append(random_timeframe_generator(tframe_type=tf_type, **kwargs))
         return timeframes
+
     return generator
+
 
 @pytest.fixture
 def random_timeframe_minutes_generator():
     """Fixture to generate a list of random minutes."""
+
     def generator(num=3):
         minutes = []
         for _ in range(num):
             minute = None
             while minute is None or minute in minutes:
-                minute = random.randint(0,59)
+                minute = random.randint(0, 59)
             minutes.append(minute)
         return minutes
+
     return generator
+
 
 @pytest.fixture
 def random_timeframe_timespecs_generator():
     """Fixture to generate a list of random timeframe timespecs."""
+
     def generator(num=3):
         timespecs = []
         for _ in range(num):
             timespec = None
             while timespec is None or timespec in timespecs:
-                hour = str(random.randint(0,23)).zfill(2)
-                minute = str(random.randint(0,59)).zfill(2)
+                hour = str(random.randint(0, 23)).zfill(2)
+                minute = str(random.randint(0, 59)).zfill(2)
                 timespec = f"{hour}:{minute}"
             timespecs.append(timespec)
         return timespecs
+
     return generator
+
 
 @pytest.fixture
 def random_timeframe_times_generator(random_timeframe_timespecs_generator):
     """Fixture to generate a list of random timeframe times."""
+
     def generator(num=3):
         timespecs = random_timeframe_timespecs_generator(num=num)
-        times = list(map(lambda x: tuple(map(int, x.split(':'))), timespecs))
+        times = list(map(lambda x: tuple(map(int, x.split(":"))), timespecs))
         return times
+
     return generator
+
 
 @pytest.fixture
 def random_timeframe_weekdays_generator():
     """Fixture to generate a list of random timeframe weekdays."""
+
     def generator(num=3):
         weekdays = random.sample(
-            ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"], k=num)
+            ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"], k=num
+        )
         return weekdays
+
     return generator
+
 
 @pytest.fixture
 def random_timeframe_monthdays_generator():
     """Fixture to generate a list or random Timeframe monthdays."""
+
     def generator(num=3):
-        monthdays = random.sample(list(range(1,32)), k=num)
+        monthdays = random.sample(list(range(1, 32)), k=num)
         return monthdays
+
     return generator
+
 
 @pytest.fixture
 def random_timeframe_yeardays_generator():
     """Fixture to generate a list of random Timeframe yeardays."""
+
     def generator(num=3, include_leap=False):
         max_day = 366 if include_leap else 365
-        yeardays = random.sample(list(range(1,max_day+1)), k=num)
+        yeardays = random.sample(list(range(1, max_day + 1)), k=num)
         return yeardays
+
     return generator
+
 
 @pytest.fixture(scope="module")
 def btrfsbackend():
@@ -471,21 +573,29 @@ def btrfsbackend():
     backend = btrfsbackend.BtrfsBackend()
     return backend
 
+
 @pytest.fixture
 def btrfs_fs_generator(path_generator, loopback_generator):
     """Fixture to generate a btrfs filesystem on a loopback device."""
+
     def generator():
         mountpoint = path_generator("test-yaesm-btrfs-mountpoint", base_dir="/mnt", mkdir=True)
         loop = loopback_generator()
         subprocess.run(["mkfs", "-t", "btrfs", loop], check=True, capture_output=True)
         subprocess.run(["mount", loop, mountpoint], check=True, capture_output=True)
-        subprocess.run(["btrfs", "subvolume", "create", f"{mountpoint}/@"], check=True,
-                       capture_output=True)
+        subprocess.run(
+            ["btrfs", "subvolume", "create", f"{mountpoint}/@"], check=True, capture_output=True
+        )
         subprocess.run(["umount", mountpoint], check=True, capture_output=True)
-        subprocess.run(["mount", loop, "-o", "rw,noatime,subvol=@", mountpoint], check=True,
-                       capture_output=True)
+        subprocess.run(
+            ["mount", loop, "-o", "rw,noatime,subvol=@", mountpoint],
+            check=True,
+            capture_output=True,
+        )
         return mountpoint
+
     return generator
+
 
 @pytest.fixture
 def btrfs_fs(btrfs_fs_generator):
@@ -493,6 +603,7 @@ def btrfs_fs(btrfs_fs_generator):
     the 'btrfs_fs_generator' fixture for more details.
     """
     return btrfs_fs_generator()
+
 
 @pytest.fixture
 def btrfs_sudo_access(yaesm_test_users_group):
@@ -505,7 +616,7 @@ def btrfs_sudo_access(yaesm_test_users_group):
         f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {btrfs} subvolume snapshot -r *",
         f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {btrfs} subvolume delete *",
         f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {btrfs} send *",
-        f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {btrfs} receive *"
+        f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {btrfs} receive *",
     ]
     sudo_rule_file = Path("/etc/sudoers.d/yaesm-test-btrfs-sudo-rule")
     if not sudo_rule_file.is_file():
@@ -513,6 +624,7 @@ def btrfs_sudo_access(yaesm_test_users_group):
             for rule in sudoers_rules:
                 f.write(rule + "\n")
     return True
+
 
 @pytest.fixture
 def valid_raw_config_generator(random_backup_generator):
@@ -523,6 +635,7 @@ def valid_raw_config_generator(random_backup_generator):
 
     TODO: backend specific config settings
     """
+
     def generator(num_backups=3):
         backups = []
         for _ in range(num_backups):
@@ -540,7 +653,7 @@ def valid_raw_config_generator(random_backup_generator):
                 backup_settings["ssh_key"] = str(backup.dst_dir.key)
                 if backup.dst_dir.sshconfig:
                     backup_settings["ssh_config"] = str(backup.dst_dir.sshconfig)
-            else: # backup.backup_type == "remote_to_local":
+            else:  # backup.backup_type == "remote_to_local":
                 backup_settings["src_dir"] = backup.src_dir.spec
                 backup_settings["dst_dir"] = str(backup.dst_dir)
                 backup_settings["ssh_key"] = str(backup.src_dir.key)
@@ -568,7 +681,9 @@ def valid_raw_config_generator(random_backup_generator):
             backup_settings["timeframes"] = timeframes
             config[backup.name] = backup_settings
         return config
+
     return generator
+
 
 @pytest.fixture
 def valid_raw_config(valid_raw_config_generator):
@@ -577,11 +692,13 @@ def valid_raw_config(valid_raw_config_generator):
     """
     return valid_raw_config_generator()
 
+
 @pytest.fixture
 def valid_config_file_generator(path_generator, valid_raw_config_generator):
     """Fixture to generate random valid yaesm configuration files. Returns a
     Path to the generated config file.
     """
+
     def generator(num_backups=3):
         yaml_str = ""
         for _ in range(num_backups):
@@ -589,7 +706,9 @@ def valid_config_file_generator(path_generator, valid_raw_config_generator):
         config_file = path_generator("config-file.yml", touch=True)
         config_file.write_text(yaml_str)
         return config_file
+
     return generator
+
 
 @pytest.fixture
 def valid_config_file(valid_config_file_generator):
@@ -597,6 +716,7 @@ def valid_config_file(valid_config_file_generator):
     `valid_config_file_generator` fixture for more details.
     """
     return valid_config_file_generator()
+
 
 @pytest.fixture
 def rm_sudo_access(yaesm_test_users_group):

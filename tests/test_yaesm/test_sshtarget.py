@@ -1,4 +1,4 @@
-"""tests/test_yaesm/test_sshtarget.py"""
+"""tests/test_yaesm/test_sshtarget.py."""
 
 import subprocess
 from pathlib import Path
@@ -14,7 +14,7 @@ def test_sshtarget_constructor():
     assert target.user == "larry"
     assert target.host == "localhost"
     assert target.path == Path("/a/random/path")
-    assert target.key  == key
+    assert target.key == key
 
     # port specification is optional
     target = SSHTarget("ssh://larry@localhost:/a/random/path", key)
@@ -22,7 +22,7 @@ def test_sshtarget_constructor():
     assert target.user == "larry"
     assert target.host == "localhost"
     assert target.path == Path("/a/random/path")
-    assert target.key  == key
+    assert target.key == key
 
     # port specification is optional
     target = SSHTarget("ssh://patrickhost:/a/random/path", key)
@@ -30,7 +30,7 @@ def test_sshtarget_constructor():
     assert target.user is None
     assert target.host == "patrickhost"
     assert target.path == Path("/a/random/path")
-    assert target.key  == key
+    assert target.key == key
 
     # port specification is optional
     target = SSHTarget("ssh://p4444:larryhost:/a/random/path", key)
@@ -38,11 +38,17 @@ def test_sshtarget_constructor():
     assert target.user is None
     assert target.host == "larryhost"
     assert target.path == Path("/a/random/path")
-    assert target.key  == key
+    assert target.key == key
+
 
 def test_openssh_cmd(sshtarget):
-    p = subprocess.run(sshtarget.openssh_cmd("whoami && printf '%s\\n' foo 1>&2 && exit 73"),
-                       shell=True, capture_output=True, encoding="utf-8", check=False)
+    p = subprocess.run(
+        sshtarget.openssh_cmd("whoami && printf '%s\\n' foo 1>&2 && exit 73"),
+        shell=True,
+        capture_output=True,
+        encoding="utf-8",
+        check=False,
+    )
     returncode = p.returncode
     stdout = p.stdout
     stderr = p.stderr
@@ -50,16 +56,24 @@ def test_openssh_cmd(sshtarget):
     assert stdout == f"{sshtarget.user}\n"
     assert stderr == "foo\n"
 
-    openssh_cmd = sshtarget.openssh_cmd("printf '%s\\n' foo && printf '%s\\n' \
-bar && printf '%s\\n' baz && 1>&2 printf '%s\\n' quux")
-    p = subprocess.run(f"{openssh_cmd} | grep ba; exit 42", shell=True, capture_output=True,
-                       encoding="utf-8", check=False)
+    openssh_cmd = sshtarget.openssh_cmd(
+        "printf '%s\\n' foo && printf '%s\\n' \
+bar && printf '%s\\n' baz && 1>&2 printf '%s\\n' quux"
+    )
+    p = subprocess.run(
+        f"{openssh_cmd} | grep ba; exit 42",
+        shell=True,
+        capture_output=True,
+        encoding="utf-8",
+        check=False,
+    )
     returncode = p.returncode
     stdout = p.stdout
     stderr = p.stderr
     assert returncode == 42
     assert stdout == "bar\nbaz\n"
     assert stderr == "quux\n"
+
 
 def test_with_path(sshtarget):
     new_sshtarget = sshtarget.with_path(Path("/foo"))
@@ -68,11 +82,13 @@ def test_with_path(sshtarget):
     assert new_sshtarget.host == sshtarget.host
     assert new_sshtarget.key == sshtarget.key
 
+
 def test_can_connect(sshtarget, tmp_user):
     new_sshtarget = sshtarget.with_path(Path("/foo"))
     assert new_sshtarget.can_connect()
     new_sshtarget.user = tmp_user.pw_name
     assert not new_sshtarget.can_connect()
+
 
 def test_is_dir(sshtarget, path_generator):
     path1 = path_generator("foo")
@@ -87,6 +103,7 @@ def test_is_dir(sshtarget, path_generator):
     assert not target2.is_dir()
     assert target2.is_dir(path1)
 
+
 def test_is_file(sshtarget, path_generator):
     path1 = path_generator("foo", cleanup=True)
     path2 = path_generator("bar", cleanup=True)
@@ -99,6 +116,7 @@ def test_is_file(sshtarget, path_generator):
     assert not target1.is_file()
     assert target2.is_file()
     assert target1.is_file(path2)
+
 
 def test_mkdir(sshtarget, path_generator):
     path = path_generator("foo", cleanup=True)
@@ -115,6 +133,7 @@ def test_mkdir(sshtarget, path_generator):
     assert not path.is_dir()
     newtarget.mkdir()
     assert path.is_dir()
+
 
 def test_touch(sshtarget, path_generator):
     path = path_generator("foo", cleanup=True)

@@ -1,4 +1,4 @@
-"""src/yaesm/backup.py"""
+"""src/yaesm/backup.py."""
 
 import dataclasses
 import os
@@ -11,8 +11,8 @@ from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
 
 
-class BackupError(Exception):
-    ...
+class BackupError(Exception): ...
+
 
 @dataclasses.dataclass
 class Backup:
@@ -31,12 +31,14 @@ class Backup:
             self.backup_type = "local_to_remote"
         elif src_is_sshtarget and not dst_is_sshtarget:
             self.backup_type = "remote_to_local"
-        else: # remote_to_remote
+        else:  # remote_to_remote
             raise BackupError(f"backup {self.name} has both src_dir and dst_dir as ssh targets")
 
-def backup_name_valid(backup_name:str) -> bool:
+
+def backup_name_valid(backup_name: str) -> bool:
     """Return True if `backup_name` is a valid backup name, otherwise return False."""
     return bool(re.match("^[a-z][-_:@a-z0-9]*$", backup_name, re.IGNORECASE))
+
 
 def backup_basename_re(backup=None, timeframe=None):
     """Returns a re compiled regex to match a yaesm backup basename. If `backup`
@@ -46,9 +48,10 @@ def backup_basename_re(backup=None, timeframe=None):
     backup_name_re_component = ".+" if backup is None else backup.name
     timeframe_name_re_component = ".+" if timeframe is None else timeframe.name
     return re.compile(
-        f"^yaesm-({backup_name_re_component})-({timeframe_name_re_component})" +
-        "\\.([0-9]{4})_([0-9]{2})_([0-9]{2})_([0-9]{2}):([0-9]{2})$"
+        f"^yaesm-({backup_name_re_component})-({timeframe_name_re_component})"
+        + "\\.([0-9]{4})_([0-9]{2})_([0-9]{2})_([0-9]{2}):([0-9]{2})$"
     )
+
 
 def backup_basename_update_time(backup_basename):
     re_result = backup_basename_re().match(backup_basename)
@@ -58,11 +61,13 @@ def backup_basename_update_time(backup_basename):
     name = datetime_now.strftime(f"yaesm-{backup_name}-{timeframe_name}.%Y_%m_%d_%H:%M")
     return name
 
-def backup_basename_now(backup:Backup, timeframe:Timeframe):
-    """Return the basename of a yaesm backup for the current time"""
+
+def backup_basename_now(backup: Backup, timeframe: Timeframe):
+    """Return the basename of a yaesm backup for the current time."""
     datetime_now = datetime.now()
     name = datetime_now.strftime(f"yaesm-{backup.name}-{timeframe.name}.%Y_%m_%d_%H:%M")
     return name
+
 
 def backup_to_datetime(backup):
     """Construct and return a datetime object based on the basename of a yaesm backup.
@@ -78,10 +83,12 @@ def backup_to_datetime(backup):
     dt = datetime.strptime(f"{year}_{month}_{day}_{hour}:{minute}", "%Y_%m_%d_%H:%M")
     return dt
 
+
 def backups_sorted(backups):
     """Returns list of backups (paths, basenames, or SSHTargets) sorted from newest to oldest."""
     sorted_backups = sorted(backups, key=backup_to_datetime, reverse=True)
     return sorted_backups
+
 
 def backups_collect(backup, timeframe=None):
     """This function collects all the yaesm backups for the Backup `backup`.
@@ -93,15 +100,19 @@ def backups_collect(backup, timeframe=None):
     backup_basename_re_ = backup_basename_re(backup=backup, timeframe=timeframe)
     if backup.backup_type == "local_to_remote":
         sshtarget = backup.dst_dir
-        collect_sh_cmd = \
-f"""
+        collect_sh_cmd = f"""
 for f in $(ls -1 '{sshtarget.path}'); do
   if [ -d \"{sshtarget.path}/$f\" ]; then
     printf '%s/%s\\n' '{sshtarget.path}' \"$f\";
   fi
 done"""
-        p = subprocess.run(sshtarget.openssh_cmd(collect_sh_cmd), shell=True, check=True,
-                           capture_output=True, encoding="utf-8")
+        p = subprocess.run(
+            sshtarget.openssh_cmd(collect_sh_cmd),
+            shell=True,
+            check=True,
+            capture_output=True,
+            encoding="utf-8",
+        )
         for bkp in p.stdout.splitlines():
             bkp = Path(bkp)
             if backup_basename_re_.match(bkp.name):

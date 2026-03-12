@@ -1,44 +1,44 @@
-import os
 import argparse
+import os
 from pathlib import Path
 
-from yaesm.subcommand.subcommandbase import SubcommandBase
-from yaesm.logging import logger
 import yaesm.cleanup
 import yaesm.scheduler
+from yaesm.logging import logger
+from yaesm.subcommand.subcommandbase import SubcommandBase
+
 
 class RunSubcommand(SubcommandBase):
     """The run subcommand runs the scheduler, blocks, and in most cases never terminates.
 
     This subcommand should primarily be invoked from OS init system software.
     """
+
     def main(self, backups, parsed_args) -> int:
         self._setup_pidfile(parsed_args.pidfile)
 
         scheduler = yaesm.scheduler.Scheduler()
         scheduler.add_backups(backups)
         yaesm.cleanup.add_cleanup_function(lambda s=scheduler: s.stop())
-        scheduler.start() # blocks
+        scheduler.start()  # blocks
 
         return 0
 
     @classmethod
-    def add_argparser_arguments(cls, parser:argparse.ArgumentParser) -> None:
+    def add_argparser_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
-            "--pidfile",
-            type=Path,
-            default=Path("/var/run/yaesm.pid"),
-            help="path to PID file"
+            "--pidfile", type=Path, default=Path("/var/run/yaesm.pid"), help="path to PID file"
         )
 
-    def _setup_pidfile(self, pidfile:Path) -> bool:
+    def _setup_pidfile(self, pidfile: Path) -> bool:
         """Create and register cleanup for pidfile.
 
         Returns:
             True if pidfile was successfully created, False if daemon is already running.
+
         """
         if pidfile.is_file():
-            with open(pidfile, "r") as fr:
+            with open(pidfile) as fr:
                 try:
                     existing_pid = int(fr.read().strip())
                     os.kill(existing_pid, 0)

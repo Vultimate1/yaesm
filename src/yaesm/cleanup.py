@@ -1,4 +1,4 @@
-"""src/yaesm/cleanup.py"""
+"""src/yaesm/cleanup.py."""
 
 import atexit
 import signal
@@ -45,5 +45,5 @@ class Cleanup:
             except Exception as e:
                 exit_status = 1
                 Logging.get().error("cleanup function failed: %s", e, exc_info=True)
-        if _args: # called from signal handler, otherwise called from atexit
+        if _args:  # called from signal handler, otherwise called from atexit
             sys.exit(exit_status)

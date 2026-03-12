@@ -1,4 +1,4 @@
-"""src/yaesm/sshtarget.py"""
+"""src/yaesm/sshtarget.py."""
 
 import copy
 import re
@@ -7,8 +7,8 @@ import subprocess
 from pathlib import Path
 
 
-class SSHTargetException(Exception):
-    ...
+class SSHTargetException(Exception): ...
+
 
 class SSHTarget:
     """The SSHTarget class manages connections to SSH servers using openssh.
@@ -26,7 +26,8 @@ class SSHTarget:
         sshtarget = SSHTarget("ssh://fredhost:/backups, Path("/home/larry/.ssh/id_rsa"), \
             sshconfig=Path("/home/larry/.ssh/larrys_ssh_config"))
     """
-    def __init__(self, target_spec, key:Path, sshconfig=None):
+
+    def __init__(self, target_spec, key: Path, sshconfig=None):
         self.key = Path(key)
         self.sshconfig = sshconfig
         user_host_re = re.compile("^([^@]+)@(.+)$")
@@ -46,7 +47,7 @@ class SSHTarget:
             raise SSHTargetException(f"invalid SSHTarget spec: {target_spec}")
 
     @staticmethod
-    def is_sshtarget_spec(spec:str) -> (re.Match[str] | None):
+    def is_sshtarget_spec(spec: str) -> re.Match[str] | None:
         """Check if `spec` is a valid ssh target spec."""
         if not isinstance(spec, str):
             return None
@@ -54,7 +55,7 @@ class SSHTarget:
         result = target_re.match(spec)
         return result
 
-    def with_path(self, path:Path):
+    def with_path(self, path: Path):
         """Returns a copy of `self` (via `copy.deepcopy()`) but with Path `path`."""
         sshtarget = copy.deepcopy(self)
         sshtarget.path = Path(path)
@@ -106,8 +107,12 @@ class SSHTarget:
         """
         if d is None:
             d = self.path
-        return subprocess.run(self.openssh_cmd(f"[ -d '{d}' ]; exit $?"), shell=True,
-                                   check=False).returncode == 0
+        return (
+            subprocess.run(
+                self.openssh_cmd(f"[ -d '{d}' ]; exit $?"), shell=True, check=False
+            ).returncode
+            == 0
+        )
 
     def is_file(self, f=None):
         """Return True if `f` is an existing file on the remote SSH server. If
@@ -115,8 +120,12 @@ class SSHTarget:
         """
         if f is None:
             f = self.path
-        return subprocess.run(self.openssh_cmd(f"[ -f '{f}' ]; exit $?"), shell=True,
-                                   check=False).returncode == 0
+        return (
+            subprocess.run(
+                self.openssh_cmd(f"[ -f '{f}' ]; exit $?"), shell=True, check=False
+            ).returncode
+            == 0
+        )
 
     def mkdir(self, d=None, parents=False, check=True):
         """Mkdir the directory `d` on the remote SSH server. If `d` is None,
@@ -127,9 +136,14 @@ class SSHTarget:
         if d is None:
             d = self.path
         p_flag = "-p" if parents else ""
-        return subprocess.run(
-            self.openssh_cmd(f"if ! [ -d '{d}' ]; then mkdir {p_flag} '{d}'; fi"),
-                             shell=True, check=check).returncode == 0
+        return (
+            subprocess.run(
+                self.openssh_cmd(f"if ! [ -d '{d}' ]; then mkdir {p_flag} '{d}'; fi"),
+                shell=True,
+                check=check,
+            ).returncode
+            == 0
+        )
 
     def touch(self, f=None, check=True):
         """Touch the file `f` on the remote SSH server. If `f` is None then default
@@ -138,5 +152,7 @@ class SSHTarget:
         """
         if f is None:
             f = self.path
-        return subprocess.run(self.openssh_cmd(f"touch '{f}'"), shell=True,
-                                   check=check).returncode == 0
+        return (
+            subprocess.run(self.openssh_cmd(f"touch '{f}'"), shell=True, check=check).returncode
+            == 0
+        )

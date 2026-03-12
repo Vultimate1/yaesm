@@ -1,4 +1,4 @@
-"""src/yaesm/backend/rsyncbackend.py"""
+"""src/yaesm/backend/rsyncbackend.py."""
 
 import subprocess
 from pathlib import Path
@@ -16,6 +16,7 @@ class RsyncBackend(BackendBase):
     """The rysnc backup execution backend. See BackendBase for more details on
     backup execution backends in general.
     """
+
     @staticmethod
     def config_schema() -> vlp.Schema:
         """Rsync backups allow user to specify arbitrary extra options via a
@@ -24,6 +25,7 @@ class RsyncBackend(BackendBase):
         either case the value is promoted to a list of string split on whitespace.
         The 'rsync_extra_opts' key is renamed to 'extra_opts' in the outputted dict.
         """
+
         def _promote_options_to_list_of_strings(d: dict) -> dict:
             if "rsync_extra_opts" in d:
                 opts = d["rsync_extra_opts"]
@@ -33,29 +35,34 @@ class RsyncBackend(BackendBase):
                     d["rsync_extra_opts"] = [word for opt in opts for word in opt.split()]
             return d
 
-        def _rename_key_extra_opts(d:dict) -> dict:
+        def _rename_key_extra_opts(d: dict) -> dict:
             if "rsync_extra_opts" in d:
                 d["extra_opts"] = d["rsync_extra_opts"]
                 del d["rsync_extra_opts"]
             return d
 
-        return vlp.Schema(vlp.All(
-            { vlp.Optional("rsync_extra_opts"): vlp.Any(str, [str]) },
-            _promote_options_to_list_of_strings,
-            _rename_key_extra_opts),
-            extra=vlp.ALLOW_EXTRA
+        return vlp.Schema(
+            vlp.All(
+                {vlp.Optional("rsync_extra_opts"): vlp.Any(str, [str])},
+                _promote_options_to_list_of_strings,
+                _rename_key_extra_opts,
+            ),
+            extra=vlp.ALLOW_EXTRA,
         )
 
-    def _exec_backup_local_to_local(self, backup:bckp.Backup, backup_basename:str,
-                                    timeframe:Timeframe):
+    def _exec_backup_local_to_local(
+        self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
+    ):
         return self._exec_backup(backup, backup_basename, timeframe)
 
-    def _exec_backup_local_to_remote(self, backup:bckp.Backup, backup_basename:str,
-                                     timeframe:Timeframe):
+    def _exec_backup_local_to_remote(
+        self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
+    ):
         return self._exec_backup(backup, backup_basename, timeframe)
 
-    def _exec_backup_remote_to_local(self, backup:bckp.Backup, backup_basename:str,
-                                     timeframe:Timeframe):
+    def _exec_backup_remote_to_local(
+        self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
+    ):
         return self._exec_backup(backup, backup_basename, timeframe)
 
     def _delete_backups_local(self, *backups):
@@ -69,14 +76,13 @@ class RsyncBackend(BackendBase):
         all at the same host.
         """
         for backup in backups:
-            subprocess.run(backup.openssh_cmd(f"sudo -n rm -r -f '{backup.path}'"),
-                           shell=True, check=True)
+            subprocess.run(
+                backup.openssh_cmd(f"sudo -n rm -r -f '{backup.path}'"), shell=True, check=True
+            )
         return backups
 
-    def _exec_backup(self, backup:bckp.Backup, backup_basename:str,
-                     timeframe:Timeframe):
-        """
-        Execute a single backup for `backup` in the timeframe `timeframe`. This
+    def _exec_backup(self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe):
+        """Execute a single backup for `backup` in the timeframe `timeframe`. This
         function automatically deals with if the backup is local-to-local,
         local-to-remote, or remote-to-local. If existing backups for this backup
         already exist, then the latest one is used with rsync's --link-dest
@@ -86,7 +92,7 @@ class RsyncBackend(BackendBase):
         if self.extra_opts:
             rsync_cmd += backup.extra_opts
 
-        backups = bckp.backups_collect(backup) # note that we dont pass timeframe here
+        backups = bckp.backups_collect(backup)  # note that we dont pass timeframe here
         if backups:
             newest_backup = backups[0]
             if isinstance(newest_backup, SSHTarget):
@@ -113,6 +119,7 @@ class RsyncBackend(BackendBase):
         if backup.backup_type == "local_to_remote":
             return backup.dst_dir.with_path(dst_dir)
         return dst_dir
+
 
 def _rsync_translate_sshtarget(sshtarget):
     user = "" if sshtarget.user is None else f"{sshtarget.user}@"
