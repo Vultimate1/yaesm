@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 
-import sys
 import argparse
 import importlib.metadata
+import sys
 from pathlib import Path
 
-import yaesm.logging
 import yaesm.config
-import yaesm.cleanup
+from yaesm.cleanup import Cleanup
+from yaesm.logging import Logging
 from yaesm.subcommand.subcommandbase import SubcommandBase
+
 
 def main(argv=None) -> int:
     """This is the main function of yaesm."""
@@ -21,22 +22,21 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="yaesm",
         description="yaesm is a backup tool with support for multiple file systems",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     subparsers = parser.add_subparsers(title="subcommands", dest="subcommand", required=True)
     for name, cls in subcommand_name_class_map.items():
         subparser = subparsers.add_parser(name)
         cls.add_argparser_arguments(subparser)
     parser.add_argument(
-        "--version",
-        action="version",
-        version=f'%(prog)s {importlib.metadata.version("yaesm")}'
+        "--version", action="version", version=f"%(prog)s {importlib.metadata.version('yaesm')}"
     )
     parser.add_argument(
-        "-c", "--config",
+        "-c",
+        "--config",
         type=Path,
         default=Path("/etc/yaesm/config.yaml"),
-        help="path to configuration file"
+        help="path to configuration file",
     )
     parser.add_argument(
         "--log-level",
@@ -44,27 +44,15 @@ def main(argv=None) -> int:
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="set the logging level",
     )
-    parser.add_argument(
-        "--log-stderr",
-        action="store_true",
-        help="log to STDERR"
-    )
-    parser.add_argument(
-        "--log-file",
-        type=Path,
-        metavar="FILE",
-        help="log to file FILE"
-    )
+    parser.add_argument("--log-stderr", action="store_true", help="log to STDERR")
+    parser.add_argument("--log-file", type=Path, metavar="FILE", help="log to file FILE")
     parser.add_argument(
         "--log-syslog",
         nargs="?",
         const=True,
         default=False,
         metavar="ADDRESS",
-        help=("enable syslog logging and "
-              "optionally specify syslog address "
-              "(default: /dev/log)"
-        )
+        help=("enable syslog logging and optionally specify syslog address (default: /dev/log)"),
     )
     parsed_args = parser.parse_args(argv)
 
@@ -76,14 +64,15 @@ def main(argv=None) -> int:
             print(f"yaesm: config error: {backup}: {err_msg}", file=sys.stderr)
         return 1
 
-    yaesm.logging.init_logging(
+    Logging.initialize(
         level=parsed_args.log_level,
         stderr=parsed_args.log_stderr,
         syslog=bool(parsed_args.log_syslog),
-        syslog_address=parsed_args.log_syslog if isinstance(parsed_args.log_syslog, str) else "/dev/log"
+        syslog_address=parsed_args.log_syslog
+        if isinstance(parsed_args.log_syslog, str)
+        else "/dev/log",
     )
-
-    yaesm.cleanup.initialize_cleanup()
+    Cleanup.initialize()
 
     try:
         exit_status = subcommand_name_class_map[parsed_args.subcommand]().main(backups, parsed_args)

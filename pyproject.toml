@@ -41,8 +41,28 @@ yaesm = "yaesm.main:main"
 test = [
     "pytest>=8.3.4",
     "pytest-cov>=7.0.0",
+    "pytest-ruff>=0.4.0",
     "freezegun>=1.5.1",
 ]
+dev = [
+    "ruff>=0.15.0",
+]
+
+[tool.ruff]
+required-version = ">=0.15.0"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["D", "E4", "E7", "E9", "F", "UP", "B", "SIM", "I", "E501"]
+ignore = ["D1", "D203", "D205", "D213", "D401", "D404"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+skip-magic-trailing-comma = false
+preview = false
+docstring-code-format = true
 
 [project.urls]
 Homepage = "https://github.com/Vultimate1/yaesm"
@@ -62,6 +82,8 @@ python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = [
     "--verbose",
+    "--ruff",
+    "--ruff-format",
     "--cov=yaesm",
     "--cov-report=term-missing",
 ]

@@ -5,8 +5,8 @@
 # package submodules, and SubcommandBase.__subclasses__() only reports classes
 # from modules that have already been imported.
 
-import pkgutil
 import importlib
+import pkgutil
 
 for m in pkgutil.iter_modules(__path__):
     importlib.import_module(f"{__name__}.{m.name}")
