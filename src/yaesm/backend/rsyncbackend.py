@@ -7,6 +7,7 @@ from shutil import rmtree
 import voluptuous as vlp
 
 import yaesm.backup as bckp
+import yaesm.ty as ty
 from yaesm.backend.backendbase import BackendBase
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
@@ -52,34 +53,34 @@ class RsyncBackend(BackendBase):
 
     def _exec_backup_local_to_local(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ):
-        return self._exec_backup(backup, backup_basename, timeframe)
+    ) -> None:
+        self._exec_backup(backup, backup_basename, timeframe)
 
     def _exec_backup_local_to_remote(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ):
-        return self._exec_backup(backup, backup_basename, timeframe)
+    ) -> None:
+        self._exec_backup(backup, backup_basename, timeframe)
 
     def _exec_backup_remote_to_local(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ):
-        return self._exec_backup(backup, backup_basename, timeframe)
+    ) -> None:
+        self._exec_backup(backup, backup_basename, timeframe)
 
-    def _delete_backups_local(self, *backups):
+    def _delete_backups_local(self, *backups: Path) -> None:
         for backup in backups:
             rmtree(backup)
-        return backups
 
-    def _delete_backups_remote(self, *backups):
+    def _delete_backups_remote(self, *backups: SSHTarget) -> None:
         """Note that the remote user must have passwordless sudo access to rm.
         Also note that all the backups in `backups` are assumed to be SSHTarget's
         all at the same host.
         """
         for backup in backups:
             subprocess.run(backup.openssh_cmd(f"sudo -n rm -r -f '{backup.path}'"), check=True)
-        return backups
 
-    def _exec_backup(self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe):
+    def _exec_backup(
+        self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
+    ) -> Path | SSHTarget:
         """Execute a single backup for `backup` in the timeframe `timeframe`. This
         function automatically deals with if the backup is local-to-local,
         local-to-remote, or remote-to-local. If existing backups for this backup
@@ -97,28 +98,27 @@ class RsyncBackend(BackendBase):
                 newest_backup = newest_backup.path
             rsync_cmd += [f"--link-dest={newest_backup}"]
 
-        if backup.backup_type == "local_to_remote":
+        if isinstance(backup.dst_dir, SSHTarget):
             rsync_cmd += ["-e", "ssh " + backup.dst_dir.openssh_opts(string=True)]
-            dst_dir = _rsync_translate_sshtarget(backup.dst_dir)
+            dst_dir = Path(_rsync_translate_sshtarget(backup.dst_dir)).joinpath(backup_basename)
         else:
-            dst_dir = backup.dst_dir
+            dst_dir = backup.dst_dir.joinpath(backup_basename)
 
-        if backup.backup_type == "remote_to_local":
+        if isinstance(backup.src_dir, SSHTarget):
             rsync_cmd += ["-e", "ssh " + backup.src_dir.openssh_opts(string=True)]
-            src_dir = _rsync_translate_sshtarget(backup.src_dir)
+            src_dir: str | Path = _rsync_translate_sshtarget(backup.src_dir)
         else:
             src_dir = backup.src_dir
 
-        dst_dir = Path(dst_dir).joinpath(backup_basename)
         rsync_cmd += [f"{src_dir}/", f"{dst_dir}/"]
 
         subprocess.run(rsync_cmd, check=True)
 
-        if backup.backup_type == "local_to_remote":
+        if isinstance(backup.dst_dir, SSHTarget):
             return backup.dst_dir.with_path(dst_dir)
         return dst_dir
 
 
-def _rsync_translate_sshtarget(sshtarget):
+def _rsync_translate_sshtarget(sshtarget: SSHTarget) -> str:
     user = "" if sshtarget.user is None else f"{sshtarget.user}@"
     return f"{user}{sshtarget.host}:{sshtarget.path}"

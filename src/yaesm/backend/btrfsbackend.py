@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import yaesm.backup as bckp
+import yaesm.ty as ty
 from yaesm.backend.backendbase import BackendBase
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
@@ -27,7 +28,9 @@ class BtrfsBackend(BackendBase):
 
     def _exec_backup_local_to_local(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ):
+    ) -> None:
+        assert isinstance(backup.src_dir, Path)
+        assert isinstance(backup.dst_dir, Path)
         src_dir = backup.src_dir
         backup_path = backup.dst_dir.joinpath(bckp.backup_basename_now(backup, timeframe))
         returncode, _ = _btrfs_take_snapshot_local(src_dir, backup_path, check=False)
@@ -41,7 +44,9 @@ class BtrfsBackend(BackendBase):
 
     def _exec_backup_local_to_remote(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ):
+    ) -> None:
+        assert isinstance(backup.src_dir, Path)
+        assert isinstance(backup.dst_dir, SSHTarget)
         src_dir = backup.src_dir
         backup_path = backup.dst_dir.with_path(backup.dst_dir.path.joinpath(backup_basename))
         bootstrap_snapshot = _btrfs_bootstrap_local_to_remote(
@@ -57,7 +62,9 @@ class BtrfsBackend(BackendBase):
 
     def _exec_backup_remote_to_local(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ):
+    ) -> None:
+        assert isinstance(backup.src_dir, SSHTarget)
+        assert isinstance(backup.dst_dir, Path)
         src_dir = backup.src_dir
         backup_path = backup.dst_dir.joinpath(backup_basename)
         bootstrap_snapshot = _btrfs_bootstrap_remote_to_local(src_dir, backup_path.parent)
@@ -69,14 +76,16 @@ class BtrfsBackend(BackendBase):
         )
         _btrfs_delete_subvolumes_remote(tmp_snapshot)
 
-    def _delete_backups_local(self, *backups):
+    def _delete_backups_local(self, *backups: Path) -> None:
         _btrfs_delete_subvolumes_local(*backups)
 
-    def _delete_backups_remote(self, *backups):
+    def _delete_backups_remote(self, *backups: SSHTarget) -> None:
         _btrfs_delete_subvolumes_remote(*backups)
 
 
-def _btrfs_take_snapshot_local(src_dir: Path, snapshot: Path, check=True):
+def _btrfs_take_snapshot_local(
+    src_dir: Path, snapshot: Path, check: bool = True
+) -> tuple[int, Path]:
     """Take a readonly local btrfs snapshot of `src_dir`, and place it at
     `snapshot`. The name of the created snapshot will be exactly `snapshot`.
     Passes `check` along to `subprocess.run()`. Returns a pair containing the
@@ -87,7 +96,9 @@ def _btrfs_take_snapshot_local(src_dir: Path, snapshot: Path, check=True):
     return p.returncode, snapshot
 
 
-def _btrfs_take_snapshot_remote(src_dir: SSHTarget, snapshot: SSHTarget, check=True):
+def _btrfs_take_snapshot_remote(
+    src_dir: SSHTarget, snapshot: SSHTarget, check: bool = True
+) -> tuple[int, SSHTarget]:
     """Take a readonly btrfs snapshot of the remote `src_dir` and place it at
     `snapshot`. The name of the created snapshot will be exactly
     `snapshot.path`. Passes `check` along to `subprocess.run()`. Returns a pair
@@ -108,7 +119,7 @@ def _btrfs_take_snapshot_remote(src_dir: SSHTarget, snapshot: SSHTarget, check=T
     return p.returncode, snapshot
 
 
-def _btrfs_delete_subvolumes_local(*subvolumes, check=True):
+def _btrfs_delete_subvolumes_local(*subvolumes: Path, check: bool = True) -> tuple[int, list[Path]]:
     """Delete all the local btrfs subvolumes in `subvolumes` (a list of Paths).
     The `check arg is passed along to `subprocess.run()`. Returns a pair
     containing the 'btrfs subvolume delete' commands returncode, and a list of all
@@ -118,7 +129,9 @@ def _btrfs_delete_subvolumes_local(*subvolumes, check=True):
     return p.returncode, list(subvolumes)
 
 
-def _btrfs_delete_subvolumes_remote(*subvolumes, check=True):
+def _btrfs_delete_subvolumes_remote(
+    *subvolumes: SSHTarget, check: bool = True
+) -> tuple[int, list[SSHTarget]]:
     """Delete all the remote btrfs subvolumes in `subvolumes` (a list of SSHTargets).
     The `check` arg is passed along to `subprocess.run()`. Returns a pair
     containing the 'btrfs subvolume delete' commands returncode, and a list of all
@@ -139,7 +152,9 @@ def _btrfs_delete_subvolumes_remote(*subvolumes, check=True):
     return p.returncode, list(subvolumes)
 
 
-def _btrfs_send_receive_local_to_local(snapshot: Path, dst_dir: Path, parent=None, check=True):
+def _btrfs_send_receive_local_to_local(
+    snapshot: Path, dst_dir: Path, parent: Path | None = None, check: bool = True
+) -> tuple[int, Path]:
     """Perform a btrfs send/receive sending the local snapshot `snapshot` to the
     directory `dst_dir`. If supplied a `parent` arg, then uses btrfs to send
     '-p parent' for an incremental backup. Passes along `check` to `subprocess.run()`.
@@ -155,8 +170,8 @@ def _btrfs_send_receive_local_to_local(snapshot: Path, dst_dir: Path, parent=Non
 
 
 def _btrfs_send_receive_local_to_remote(
-    snapshot: Path, dst_dir: SSHTarget, parent=None, check=True
-):
+    snapshot: Path, dst_dir: SSHTarget, parent: Path | None = None, check: bool = True
+) -> tuple[int, SSHTarget]:
     """Perform a btrfs send/receive sending the local snapshot `snapshot` to the
     remote SSHTarger `dst_dir`. If supplied a 'parent' arg, then uses btrfs send
     '-p parent' for an incremental backup. Passes along `check` to `subprocess.run()`.
@@ -176,8 +191,8 @@ def _btrfs_send_receive_local_to_remote(
 
 
 def _btrfs_send_receive_remote_to_local(
-    snapshot: SSHTarget, dst_dir: Path, parent=None, check=True
-):
+    snapshot: SSHTarget, dst_dir: Path, parent: SSHTarget | None = None, check: bool = True
+) -> tuple[int, Path]:
     """Perform a btrfs send/receive sending the remote snapshot `snapshot` to the
     local dir `dst_dir`. If supplied a `parent` arg, then uses btrfs send
     '-p parent' for an incremental backup. Passes along `check` to `subprocess.run()`.
@@ -199,12 +214,12 @@ def _btrfs_send_receive_remote_to_local(
     return p.returncode, dst_dir.joinpath(snapshot.path.name)
 
 
-def _btrfs_bootstrap_snapshot_basename():
+def _btrfs_bootstrap_snapshot_basename() -> str:
     """Return the basename of a btrfs bootstrap snapshot."""
     return ".yaesm-btrfs-bootstrap-snapshot"
 
 
-def _btrfs_bootstrap_local_to_local(src_dir: Path, dst_dir: Path):
+def _btrfs_bootstrap_local_to_local(src_dir: Path, dst_dir: Path) -> Path:
     """Perform the bootstrap phase of a local-to-local backup.
 
     The bootstrap snapshot is necessary for incremental backups with 'btrfs send -p'.
@@ -228,7 +243,7 @@ def _btrfs_bootstrap_local_to_local(src_dir: Path, dst_dir: Path):
     return src_bootstrap
 
 
-def _btrfs_bootstrap_local_to_remote(src_dir: Path, dst_dir: SSHTarget):
+def _btrfs_bootstrap_local_to_remote(src_dir: Path, dst_dir: SSHTarget) -> Path:
     """Perform the bootstrap phase of a local-to-remote backup.
 
     The bootstrap snapshot is necessary for incremental backups with 'btrfs send -p'.
@@ -252,7 +267,7 @@ def _btrfs_bootstrap_local_to_remote(src_dir: Path, dst_dir: SSHTarget):
     return src_bootstrap
 
 
-def _btrfs_bootstrap_remote_to_local(src_dir: SSHTarget, dst_dir: Path):
+def _btrfs_bootstrap_remote_to_local(src_dir: SSHTarget, dst_dir: Path) -> SSHTarget:
     """Perform the bootstrap phase of a remote-to-local backup.
 
     The bootstrap snapshot is necessary for incremental backups with 'btrfs send -p'.

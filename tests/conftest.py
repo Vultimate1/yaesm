@@ -19,6 +19,7 @@ import yaml
 import yaesm.backup as bckp
 import yaesm.logging
 from yaesm.backend import backendbase
+from yaesm.backend import btrfsbackend as _btrfsbackend_module
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import (
     DailyTimeframe,
@@ -94,9 +95,10 @@ def localhost_server_generator(ssh_key_generator, tmp_user_generator):
         authorized_keys = f"{user.pw_dir}/.ssh/authorized_keys"
         privkey = ssh_key_generator()
         pubkey = privkey.with_suffix(".pub")
-        with open(pubkey, encoding="utf-8") as fr, open(
-            authorized_keys, "a", encoding="utf-8"
-        ) as fw:
+        with (
+            open(pubkey, encoding="utf-8") as fr,
+            open(authorized_keys, "a", encoding="utf-8") as fw,
+        ):
             for line in fr:
                 fw.write(line)
         os.chmod(authorized_keys, 0o600)
@@ -169,6 +171,7 @@ def tmp_user_generator(yaesm_test_users_group, random_string_generator):
                 pwd.getpwnam(username)
             except KeyError:
                 break
+        assert username is not None
         subprocess.run(
             ["useradd", "-m", "-G", yaesm_test_users_group.gr_name, username], check=True
         )
@@ -457,6 +460,7 @@ def random_timeframe_generator(
             return MonthlyTimeframe(keep, times, monthdays)
         if tframe_type == YearlyTimeframe:
             return YearlyTimeframe(keep, times, yeardays)
+        raise ValueError(f"unexpected tframe_type: {tframe_type}")
 
     return generator
 
@@ -570,7 +574,7 @@ def random_timeframe_yeardays_generator():
 @pytest.fixture(scope="module")
 def btrfsbackend():
     """Fixture to provide a BtrfsBackend object."""
-    backend = btrfsbackend.BtrfsBackend()
+    backend = _btrfsbackend_module.BtrfsBackend()
     return backend
 
 

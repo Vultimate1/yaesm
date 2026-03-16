@@ -4,6 +4,7 @@ import atexit
 import signal
 import sys
 
+import yaesm.ty as ty
 from yaesm.logging import Logging
 
 
@@ -12,7 +13,7 @@ class Cleanup:
     _initialized = False
 
     @staticmethod
-    def initialize():
+    def initialize() -> None:
         """Initialize cleanup system for graceful shutdown.
 
         Sets up atexit handler and signal handlers (SIGTERM, SIGINT) to ensure
@@ -27,14 +28,14 @@ class Cleanup:
             Cleanup._initialized = True
 
     @staticmethod
-    def add_function(func):
+    def add_function(func: ty.Callable[[], None]) -> None:
         """Register a cleanup function to be run at program termination. Note that
         the most recently registered functions get executed first.
         """
         Cleanup._functions.append(func)
 
     @staticmethod
-    def _do_cleanup(*_args):
+    def _do_cleanup(*_args: object) -> None:
         """Execute all registered cleanup functions such that the most recently
         registered functions get executed first.
         """

@@ -70,6 +70,7 @@ def test_backup_basename_re(random_backup_generator):
     assert not backup_basename_re.match("foo-backup.1999_05_13_23:59")
     assert not backup_basename_re.match("yaesm-foo-backup-hourly.1999_05_13_23:5")
     re_result = backup_basename_re.match("yaesm-foo-backup-name-hourly.1999_05_13_23:59")
+    assert re_result is not None
     assert re_result.group(1) == "foo-backup-name"
     assert re_result.group(2) == "hourly"
     assert re_result.group(3) == "1999"
@@ -81,7 +82,7 @@ def test_backup_basename_re(random_backup_generator):
     backup1 = random_backup_generator()
     backup1.name = "foo-backup"
     backup_basename_re = bckp.backup_basename_re(
-        backup=backup1, timeframe=tframe.HourlyTimeframe(1, 1)
+        backup=backup1, timeframe=tframe.HourlyTimeframe(1, [1])
     )
     assert backup_basename_re.match(f"yaesm-{backup1.name}-hourly.1999_05_13_23:59")
     assert not backup_basename_re.match(f"yaesm-{backup1.name}-daily.1999_05_13_23:59")
@@ -140,7 +141,7 @@ def test_backups_collect(random_backup_generator):
     expected = list(
         map(lambda bn: backup.dst_dir.with_path(backup.dst_dir.path.joinpath(bn)), backup_basenames)
     )
-    for x, y in zip(got, expected):
+    for x, y in zip(got, expected, strict=True):
         assert x.path == y.path
 
     backup = random_backup_generator(backup_type="local_to_local")
@@ -150,7 +151,9 @@ def test_backups_collect(random_backup_generator):
     assert list(
         map(
             lambda d: d.name,
-            bckp.backups_collect(backup, timeframe=tframe.WeeklyTimeframe(1, 1, 1)),
+            bckp.backups_collect(
+                backup, timeframe=tframe.WeeklyTimeframe(1, [(10, 30)], ["monday"])
+            ),
         )
     ) == ["yaesm-backup-name-weekly.1999_05_13_10:30", "yaesm-backup-name-weekly.1999_05_13_09:30"]
 

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import yaesm.scheduler
+from yaesm.backup import Backup
 from yaesm.cleanup import Cleanup
 from yaesm.logging import Logging
 from yaesm.subcommand.subcommandbase import SubcommandBase
@@ -15,7 +16,7 @@ class RunSubcommand(SubcommandBase):
     This subcommand should primarily be invoked from OS init system software.
     """
 
-    def main(self, backups, parsed_args) -> int:
+    def main(self, backups: list[Backup], parsed_args: argparse.Namespace) -> int:
         try:
             lock_fd = os.open(parsed_args.lockfile, os.O_WRONLY | os.O_CREAT, 0o644)
             fcntl.lockf(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

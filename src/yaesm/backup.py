@@ -7,6 +7,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+import yaesm.ty as ty
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
 
@@ -16,7 +17,14 @@ class BackupError(Exception): ...
 
 @dataclasses.dataclass
 class Backup:
-    def __init__(self, name, backend, src_dir, dst_dir, timeframes):
+    def __init__(
+        self,
+        name: str,
+        backend: "ty.Any",
+        src_dir: Path | SSHTarget,
+        dst_dir: Path | SSHTarget,
+        timeframes: list[Timeframe],
+    ) -> None:
         self.name = name
         self.backend = backend
         self.src_dir = src_dir
@@ -40,7 +48,9 @@ def backup_name_valid(backup_name: str) -> bool:
     return bool(re.match("^[a-z][-_:@a-z0-9]*$", backup_name, re.IGNORECASE))
 
 
-def backup_basename_re(backup=None, timeframe=None):
+def backup_basename_re(
+    backup: "Backup | None" = None, timeframe: Timeframe | None = None
+) -> ty.Pattern[str]:
     """Returns a re compiled regex to match a yaesm backup basename. If `backup`
     is given, then only match a basename for `backup`. If `timeframe` is given,
     then only match a basename for `timeframe`.
@@ -53,8 +63,9 @@ def backup_basename_re(backup=None, timeframe=None):
     )
 
 
-def backup_basename_update_time(backup_basename):
+def backup_basename_update_time(backup_basename: str) -> str:
     re_result = backup_basename_re().match(backup_basename)
+    assert re_result is not None
     backup_name = re_result.group(1)
     timeframe_name = re_result.group(2)
     datetime_now = datetime.now()
@@ -62,14 +73,14 @@ def backup_basename_update_time(backup_basename):
     return name
 
 
-def backup_basename_now(backup: Backup, timeframe: Timeframe):
+def backup_basename_now(backup: "Backup", timeframe: Timeframe) -> str:
     """Return the basename of a yaesm backup for the current time."""
     datetime_now = datetime.now()
     name = datetime_now.strftime(f"yaesm-{backup.name}-{timeframe.name}.%Y_%m_%d_%H:%M")
     return name
 
 
-def backup_to_datetime(backup):
+def backup_to_datetime(backup: Path | str | SSHTarget) -> datetime:
     """Construct and return a datetime object based on the basename of a yaesm backup.
     This function accepts either a Path to a backup, the basename of a backup,
     or an SSHTarget for a backup.
@@ -79,26 +90,31 @@ def backup_to_datetime(backup):
     else:
         backup_basename = os.path.basename(backup)
     backup_basename_re_match = backup_basename_re().match(backup_basename)
+    assert backup_basename_re_match is not None
     year, month, day, hour, minute = backup_basename_re_match.group(3, 4, 5, 6, 7)
     dt = datetime.strptime(f"{year}_{month}_{day}_{hour}:{minute}", "%Y_%m_%d_%H:%M")
     return dt
 
 
-def backups_sorted(backups):
+def backups_sorted(
+    backups: list[Path | str | SSHTarget],
+) -> list[Path | str | SSHTarget]:
     """Returns list of backups (paths, basenames, or SSHTargets) sorted from newest to oldest."""
     sorted_backups = sorted(backups, key=backup_to_datetime, reverse=True)
     return sorted_backups
 
 
-def backups_collect(backup, timeframe=None):
+def backups_collect(
+    backup: "Backup", timeframe: Timeframe | None = None
+) -> list[Path | SSHTarget]:
     """This function collects all the yaesm backups for the Backup `backup`.
     If the Timeframe `timeframe` is given, then only collect the backups in this
     given Timeframe. Remember that all the backups for all the timeframes are
     stored in the same directory.
     """
-    backups = []
+    backups: list[Path | SSHTarget] = []
     backup_basename_re_ = backup_basename_re(backup=backup, timeframe=timeframe)
-    if backup.backup_type == "local_to_remote":
+    if isinstance(backup.dst_dir, SSHTarget):
         sshtarget = backup.dst_dir
         collect_sh_cmd = f"""
 for f in $(ls -1 '{sshtarget.path}'); do
@@ -121,5 +137,4 @@ done"""
         for path in dst_dir.iterdir():
             if path.is_dir() and backup_basename_re_.match(path.name):
                 backups.append(path)
-    backups = backups_sorted(backups)
-    return backups
+    return ty.cast(list[Path | SSHTarget], backups_sorted(ty.cast(list[Path | str | SSHTarget], backups)))

@@ -2,6 +2,8 @@
 
 import dataclasses
 
+import yaesm.ty as ty
+
 
 class Timeframe:
     """`Timeframe` is a base class for the different timeframe types. None of the
@@ -12,8 +14,19 @@ class Timeframe:
     Also see test_timeframe.py for examples of how to use `Timeframe`'s.
     """
 
+    name: str
+    keep: int
 
-def tframe_types(names=False) -> list:
+
+@ty.overload
+def tframe_types(names: ty.Literal[True]) -> list[str]: ...
+
+
+@ty.overload
+def tframe_types(names: ty.Literal[False] = ...) -> list[type["Timeframe"]]: ...
+
+
+def tframe_types(names: bool = False) -> list[str] | list[type["Timeframe"]]:
     """If `names` is `True`, return a list containing the names of all timeframe types
     as strings. Otherwise return a list of all the timeframe type subclasses.
     """
@@ -29,7 +42,7 @@ def tframe_types(names=False) -> list:
     ]
 
 
-def weekday_num(weekday):
+def weekday_num(weekday: str) -> int:
     # monday is first day to adhere to apscheduler
     weekday_num_map = {
         "monday": 0,
@@ -85,7 +98,7 @@ class DailyTimeframe(Timeframe):
 
     name = "daily"
     keep: int
-    times: list[list[int, int]]
+    times: list[tuple[int, int]]
 
 
 @dataclasses.dataclass
@@ -103,7 +116,7 @@ class WeeklyTimeframe(Timeframe):
 
     name = "weekly"
     keep: int
-    times: list[list[int, int]]
+    times: list[tuple[int, int]]
     weekdays: list[str]
 
 
@@ -124,7 +137,7 @@ class MonthlyTimeframe(Timeframe):
 
     name = "monthly"
     keep: int
-    times: list[list[int, int]]
+    times: list[tuple[int, int]]
     monthdays: list[int]
 
 
@@ -143,5 +156,5 @@ class YearlyTimeframe(Timeframe):
 
     name = "yearly"
     keep: int
-    times: list[list[int, int]]
+    times: list[tuple[int, int]]
     yeardays: list[int]

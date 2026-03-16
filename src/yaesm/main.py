@@ -11,7 +11,7 @@ from yaesm.logging import Logging
 from yaesm.subcommand.subcommandbase import SubcommandBase
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """This is the main function of yaesm."""
     if argv is None:
         argv = sys.argv[1:]
@@ -27,7 +27,7 @@ def main(argv=None) -> int:
     subparsers = parser.add_subparsers(title="subcommands", dest="subcommand", required=True)
     for name, cls in subcommand_name_class_map.items():
         subparser = subparsers.add_parser(name)
-        cls.add_argparser_arguments(subparser)
+        cls.add_argparser_arguments(subparser)  # ty: ignore[call-abstract-method]
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {importlib.metadata.version('yaesm')}"
     )

@@ -120,9 +120,9 @@ def test_btrfs_take_and_delete_snapshot_local(btrfs_fs, path_generator):
     assert len(os.listdir(dst_dir.parent)) == 0
     bad_src_dir = path_generator("bad-src-dir", mkdir=False)
     with pytest.raises(subprocess.CalledProcessError):
-        btrfs._btrfs_take_snapshot_local(bad_src_dir, "/foo")
+        btrfs._btrfs_take_snapshot_local(bad_src_dir, Path("/foo"))
     with pytest.raises(subprocess.CalledProcessError):
-        btrfs._btrfs_delete_subvolumes_local(bad_src_dir, "/foo")
+        btrfs._btrfs_delete_subvolumes_local(bad_src_dir, Path("/foo"))
 
 
 def test_btrfs_take_and_delete_snapshot_remote(btrfs_fs, sshtarget, path_generator):
