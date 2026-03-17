@@ -6,6 +6,8 @@ import shlex
 import subprocess
 from pathlib import Path
 
+import yaesm.ty as ty
+
 
 class SSHTargetException(Exception): ...
 
@@ -27,7 +29,7 @@ class SSHTarget:
             sshconfig=Path("/home/larry/.ssh/larrys_ssh_config"))
     """
 
-    def __init__(self, target_spec, key: Path, sshconfig=None):
+    def __init__(self, target_spec: str, key: Path, sshconfig: Path | None = None) -> None:
         self.key = Path(key)
         self.sshconfig = sshconfig
         user_host_re = re.compile("^([^@]+)@(.+)$")
@@ -55,13 +57,19 @@ class SSHTarget:
         result = target_re.match(spec)
         return result
 
-    def with_path(self, path: Path):
+    def with_path(self, path: Path) -> "SSHTarget":
         """Returns a copy of `self` (via `copy.deepcopy()`) but with Path `path`."""
         sshtarget = copy.deepcopy(self)
         sshtarget.path = Path(path)
         return sshtarget
 
-    def openssh_opts(self, string=False):
+    @ty.overload
+    def openssh_opts(self, string: ty.Literal[True]) -> str: ...
+
+    @ty.overload
+    def openssh_opts(self, string: ty.Literal[False] = ...) -> list[str | Path]: ...
+
+    def openssh_opts(self, string: bool = False) -> list[str | Path] | str:
         """Returns an exec list (`string=False`) or a string (`string=True`)
         containing OpenSSH options to enforce key-based authentication, ssh
         multiplexing, and strict host-key checking. Also ensures the proper port
@@ -88,12 +96,18 @@ class SSHTarget:
             "-o",
             "ControlPersist=310",
         ]
-        opts = [*configfile_opt, *port_opt, *default_opts]
+        opts: list[str | Path] = [*configfile_opt, *port_opt, *default_opts]
         if string:
-            opts = " ".join([shlex.quote(str(opt)) for opt in opts])
+            return " ".join([shlex.quote(str(opt)) for opt in opts])
         return opts
 
-    def openssh_cmd(self, cmd, string=False):
+    @ty.overload
+    def openssh_cmd(self, cmd: str, string: ty.Literal[True]) -> str: ...
+
+    @ty.overload
+    def openssh_cmd(self, cmd: str, string: ty.Literal[False] = ...) -> list[str | Path]: ...
+
+    def openssh_cmd(self, cmd: str, string: bool = False) -> list[str | Path] | str:
         """Returns an exec list (`string=False`) or a string (`string=True`) of
         an OpenSSH command that executes 'cmd' on the SSHTargets remote server.
         See `openssh_opts()` for details on the OpenSSH options that are used.
@@ -104,18 +118,18 @@ class SSHTarget:
                 shell=True, check=True, capture_output=True, encoding="utf-8")
         """
         host = self.host if self.user is None else f"{self.user}@{self.host}"
-        cmd = ["ssh", *self.openssh_opts(), host, cmd]
+        parts: list[str | Path] = ["ssh", *self.openssh_opts(), host, cmd]
         if string:
-            cmd = " ".join([shlex.quote(str(opt)) for opt in cmd])
-        return cmd
+            return " ".join([shlex.quote(str(opt)) for opt in parts])
+        return parts
 
-    def can_connect(self):
+    def can_connect(self) -> bool:
         """Return True if we can establish a connection to the SSH target server
         and return False otherwise.
         """
         return subprocess.run(self.openssh_cmd("exit 0"), check=False).returncode == 0
 
-    def is_dir(self, d=None):
+    def is_dir(self, d: Path | None = None) -> bool:
         """Return True if `d` is an existing directory on the remote SSH server.
         If `d` is None then default to checking `self.path`.
         """
@@ -125,7 +139,7 @@ class SSHTarget:
             subprocess.run(self.openssh_cmd(f"[ -d '{d}' ]; exit $?"), check=False).returncode == 0
         )
 
-    def is_file(self, f=None):
+    def is_file(self, f: Path | None = None) -> bool:
         """Return True if `f` is an existing file on the remote SSH server. If
         `f` is None then default to checking `self.path`.
         """
@@ -135,7 +149,7 @@ class SSHTarget:
             subprocess.run(self.openssh_cmd(f"[ -f '{f}' ]; exit $?"), check=False).returncode == 0
         )
 
-    def mkdir(self, d=None, parents=False, check=True):
+    def mkdir(self, d: Path | None = None, parents: bool = False, check: bool = True) -> bool:
         """Mkdir the directory `d` on the remote SSH server. If `d` is None,
         then default to `self.path`. If `parents` is True then use the mkdir
         '-p' flag. The `check` arg is passed along to `subprocess.run()`. Return
@@ -152,7 +166,7 @@ class SSHTarget:
             == 0
         )
 
-    def touch(self, f=None, check=True):
+    def touch(self, f: Path | None = None, check: bool = True) -> bool:
         """Touch the file `f` on the remote SSH server. If `f` is None then default
         to `self.path`. The `check` arg is passed along to `subprocess.run()`. Return
         True if the touch command succeeded, otherwise return False.

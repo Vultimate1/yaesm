@@ -5,4 +5,4 @@
 /__pycache__
 /.vagrant
 *.egg-info
-/.agent-shell/*
+/.agent-shell/

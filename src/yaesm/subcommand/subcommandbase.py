@@ -1,6 +1,8 @@
 import abc
 import argparse
-from typing import final
+
+import yaesm.ty as ty
+from yaesm.backup import Backup
 
 
 class SubcommandBase(abc.ABC):
@@ -12,7 +14,7 @@ class SubcommandBase(abc.ABC):
     """
 
     @abc.abstractmethod
-    def main(self, backups, parsed_args) -> int:
+    def main(self, backups: list[Backup], parsed_args: argparse.Namespace) -> int:
         """The function that actually executes the subcommand.
 
         Is passed a list of yaesm.backup.Backup object (`backups`) from the user
@@ -21,15 +23,15 @@ class SubcommandBase(abc.ABC):
 
         Returns program exit status.
         """
-        ...
+        raise NotImplementedError
 
     @classmethod
     @abc.abstractmethod
     def add_argparser_arguments(cls, parser: argparse.ArgumentParser) -> None:
         """Add this subcommand's CLI arguments to `parser`. Mutates `parser`."""
-        ...
+        raise NotImplementedError
 
-    @final
+    @ty.final
     @classmethod
     def name(cls) -> str:
         """Automatically derive subcommand name from class name.

@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 import apscheduler.events
 import apscheduler.schedulers.blocking
 
+import yaesm.ty as ty
+from yaesm.backup import Backup
 from yaesm.logging import Logging
 from yaesm.timeframe import (
     DailyTimeframe,
@@ -17,7 +19,7 @@ from yaesm.timeframe import (
 
 
 class Scheduler:
-    def __init__(self):
+    def __init__(self) -> None:
         self._apscheduler = apscheduler.schedulers.blocking.BlockingScheduler()
         Logging.get("apscheduler").propagate = False
         Logging.get("apscheduler").setLevel("CRITICAL")
@@ -38,18 +40,18 @@ class Scheduler:
             apscheduler.events.EVENT_JOB_MISSED,
         )
 
-    def start(self):
+    def start(self) -> None:
         """Start the scheduler if it has not already been started. Since the
         scheduler blocks this function may not return.
         """
         if not self._apscheduler.running:
             self._apscheduler.start()
 
-    def stop(self, force=False):
+    def stop(self, force: bool = False) -> None:
         """Stop the scheduler gracefully."""
         self._apscheduler.shutdown(wait=not force)
 
-    def add_backups(self, backups):
+    def add_backups(self, backups: list[Backup]) -> None:
         """Schedule every Backup in `backups` to have their backend's `do_backup()`
         function executed at the times denoted by the backup's Timeframes.
         """
@@ -60,11 +62,11 @@ class Scheduler:
                     job_name, lambda b=backup, t=timeframe: b.backend.do_backup(b, t), timeframe
                 )
 
-    def _job_name(self, job_id):
+    def _job_name(self, job_id: str) -> str:
         """Return name of the APScheduler job with id `job_id`."""
         return self._apscheduler.get_job(job_id).name
 
-    def _add_job(self, name, func, timeframe):
+    def _add_job(self, name: str, func: ty.Callable[[], None], timeframe: "ty.Any") -> None:
         """Schedule an arbitrary function (`func`) to be run at times according to `timeframe`."""
         if isinstance(timeframe, FiveMinuteTimeframe):
             self._apscheduler.add_job(func, "cron", minute="*/5", name=name)

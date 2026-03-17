@@ -102,7 +102,9 @@ def test_BackendSchema_dict_promote_backend_name_to_backend_instance():
 
 
 def test_TimeframeSchema_has_required_settings():
-    data = {"timeframes": ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]}
+    data: dict[str, object] = {
+        "timeframes": ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]
+    }
     setting_keys = [
         "5minute_keep",
         "hourly_keep",
@@ -143,7 +145,7 @@ def test_TimeframeSchema_has_required_settings():
 
 def test_TimeframeSchema_are_valid_timespecs():
     valid_specs = ["12:34", "23:59", "00:00", "99:99"]
-    valid_expected = [[12, 34], [23, 59], [0, 0], [99, 99]]
+    valid_expected = [(12, 34), (23, 59), (0, 0), (99, 99)]
     assert config.TimeframeSchema.are_valid_timespecs(valid_specs) == valid_expected
 
     invalid_specs = ["1:23", "12:3", "ab:cd", "1234", ""]
@@ -158,10 +160,10 @@ def test_TimeframeSchema_are_valid_timespecs():
 
 
 def test_TimeframeSchema_are_valid_hours():
-    valid_specs = [[12, 34], [23, 59], [0, 0], [3, -1]]
+    valid_specs = [(12, 34), (23, 59), (0, 0), (3, -1)]
     assert config.TimeframeSchema.are_valid_hours(valid_specs) == valid_specs
 
-    invalid_specs = [[-1, 30], [24, 30]]
+    invalid_specs = [(-1, 30), (24, 30)]
     for spec in invalid_specs:
         with pytest.raises(vlp.Invalid) as exc:
             config.TimeframeSchema.are_valid_hours([spec])
@@ -169,10 +171,10 @@ def test_TimeframeSchema_are_valid_hours():
 
 
 def test_TimeframeSchema_are_valid_minutes():
-    valid_specs = [[12, 34], [23, 59], [0, 0], [-1, 30]]
+    valid_specs = [(12, 34), (23, 59), (0, 0), (-1, 30)]
     assert config.TimeframeSchema.are_valid_minutes(valid_specs) == valid_specs
 
-    invalid_specs = [[3, -1], [3, 60]]
+    invalid_specs = [(3, -1), (3, 60)]
     for spec in invalid_specs:
         with pytest.raises(vlp.Invalid) as exc:
             config.TimeframeSchema.are_valid_minutes([spec])
@@ -646,9 +648,10 @@ def test_parse_config(path_generator, valid_config_file_generator):
     assert isinstance(exc.value, config.ConfigErrors)
 
     config_file_invalid = path_generator("config-file-invalid.yml", touch=True)
-    with open(valid_config_file_generator(num_backups=2), encoding="utf-8") as fr, open(
-        config_file_invalid, "a", encoding="utf-8"
-    ) as fw:
+    with (
+        open(valid_config_file_generator(num_backups=2), encoding="utf-8") as fr,
+        open(config_file_invalid, "a", encoding="utf-8") as fw,
+    ):
         for line in fr:
             if line.startswith("  src_dir:"):
                 invalid_path = path_generator("non-existent-path", touch=False)

@@ -11,7 +11,7 @@ from yaesm.logging import Logging
 from yaesm.subcommand.subcommandbase import SubcommandBase
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """This is the main function of yaesm."""
     if argv is None:
         argv = sys.argv[1:]

@@ -15,7 +15,7 @@ maintainers = [
     {name = "Nicholas B. Hubbard", email = "nicholashubbard@posteo.net"}
 ]
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = {text = "GPL-3.0-or-later"}
 keywords = ["backup", "filesystem", "snapshot"]
 
@@ -42,6 +42,7 @@ test = [
     "pytest>=8.3.4",
     "pytest-cov>=7.0.0",
     "pytest-ruff>=0.4.0",
+    "pytest-ty>=0.0.1",
     "freezegun>=1.5.1",
 ]
 dev = [
@@ -84,9 +85,13 @@ addopts = [
     "--verbose",
     "--ruff",
     "--ruff-format",
+    "--ty",
     "--cov=yaesm",
     "--cov-report=term-missing",
 ]
+
+[tool.ty.environment]
+python-version = "3.10"
 
 [tool.coverage.run]
 source = ["src"]

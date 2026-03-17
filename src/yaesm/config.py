@@ -3,12 +3,12 @@
 import dataclasses
 import re
 from pathlib import Path
-from typing import final
 
 import voluptuous as vlp
 import yaml
 
 import yaesm.backup as bckp
+import yaesm.ty as ty
 from yaesm.backend import backendbase
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import tframe_types
@@ -16,11 +16,11 @@ from yaesm.timeframe import tframe_types
 
 @dataclasses.dataclass
 class ConfigErrors(Exception):
-    config_file: int | str | Path
-    errors: list[str | Exception]
+    config_file: str | Path
+    errors: list[ty.Any]
 
 
-def parse_config(config_file):
+def parse_config(config_file: str | Path) -> list[bckp.Backup]:
     """Parse the file `config_file` into a list of `Backup` objects. This is the
     only function that should be directly used from outside the yaesm.config module.
     If there are any configuration errors then a `ConfigErrors` exception is raised.
@@ -65,6 +65,7 @@ class Schema:
         """The base schema is responsible for doing basic validation and for
         coercing freshly parsed yaml into usable types.
         """
+        raise NotImplementedError
 
     @staticmethod
     def schema_extra() -> vlp.Schema:
@@ -75,13 +76,13 @@ class Schema:
         return Schema.schema_empty()
 
     @staticmethod
-    @final
+    @ty.final
     def schema_empty() -> vlp.Schema:
         """A pass-through schema that accepts any input and returns it back unchanged."""
         return vlp.Schema(lambda x: x)
 
     @staticmethod
-    def is_file(s: (Path | str)) -> Path:
+    def is_file(s: Path | str) -> Path:
         """Validator to ensure `s` is a string or Path representing a full path
         to a regular file (not directory) on the system, and if so returns `s`
         as a Path.
@@ -91,7 +92,7 @@ class Schema:
         return Path(s)
 
     @staticmethod
-    def is_dir(s: (Path | str)) -> Path:
+    def is_dir(s: Path | str) -> Path:
         """Validator to ensure `s` is a string or Path representing a full path
         to an existing directory on the system, and if so returns `s` as a Path.
         """
@@ -168,14 +169,14 @@ class BackupSchema(Schema):
         return bckp.Backup(backup_name, backend_obj, src_dir, dst_dir, timeframes)
 
     @staticmethod
-    def _ensure_single_backup(d: dict):
+    def _ensure_single_backup(d: dict) -> dict:
         """Validator to ensure that `d` is a dict with a single key (i.e. just one backup)."""
         if not len(d) == 1:
             raise vlp.Invalid(BackupSchema.ErrMsg.NOT_1_BACKUP)
         return d
 
     @staticmethod
-    def _ensure_backup_name_valid(d: dict):
+    def _ensure_backup_name_valid(d: dict) -> dict:
         """Ensure that the single key in the dict `d` is a string denoting a valid
         backup name. Should only be called after first calling `_ensure_single_backup`.
         """
@@ -355,7 +356,7 @@ class TimeframeSchema(Schema):
         return spec
 
     @staticmethod
-    def are_valid_timespecs(spec: list[str]) -> list[list[int, int]]:
+    def are_valid_timespecs(spec: list[str]) -> list[tuple[int, int]]:
         """Takes a list of supposed timespecs. Returns a list of hour:minute pairings if
         successful. This does NOT check if the hour and minute parts are valid, use
         `are_valid_hours` and `are_valid_minutes` to do this.
@@ -363,11 +364,11 @@ class TimeframeSchema(Schema):
         Raises `voluptuous.Invalid` if a timespec is formatted incorrectly, or if the minute or
         hour parts cannot be converted to `int`.
         """
-        res = []
+        res: list[tuple[int, int]] = []
         for timespec in spec:
             timespec_re = re.compile("([0-9]{2}):([0-9]{2})")
             if re_result := timespec_re.match(timespec):
-                res.append([int(re_result.group(1)), int(re_result.group(2))])
+                res.append((int(re_result.group(1)), int(re_result.group(2))))
             else:
                 raise vlp.Invalid(
                     TimeframeSchema.ErrMsg.TIME_MALFORMED
@@ -376,7 +377,7 @@ class TimeframeSchema(Schema):
         return res
 
     @staticmethod
-    def are_valid_hours(spec: list[list[int, int]]) -> list[list[int, int]]:
+    def are_valid_hours(spec: list[tuple[int, int]]) -> list[tuple[int, int]]:
         """Takes a list of hour:minute pairings.
 
         Raises `voluptuous.Invalid` if the hour part is not within the accepted range.
@@ -387,7 +388,7 @@ class TimeframeSchema(Schema):
         return spec
 
     @staticmethod
-    def are_valid_minutes(spec: list[list[int, int]]) -> list[list[int, int]]:
+    def are_valid_minutes(spec: list[tuple[int, int]]) -> list[tuple[int, int]]:
         """Takes a list of hour:minute pairings.
 
         Raises `voluptuous.Invalid` if the minute part is not within the accepted range.
@@ -488,7 +489,7 @@ class SrcDirDstDirSchema(Schema):
         return spec
 
     @staticmethod
-    def _is_dir_or_sshtarget_spec(s: str) -> Path | str:
+    def _is_dir_or_sshtarget_spec(s: str | Path) -> Path | str:
         """Validator to ensure `s` is a string representing either an existing
         directory on the system, or a valid SSH target spec.
         """

@@ -4,11 +4,11 @@ import abc
 import importlib
 from functools import cache
 from pathlib import Path
-from typing import final
 
 import voluptuous as vlp
 
 import yaesm.backup as bckp
+import yaesm.ty as ty
 from yaesm import config
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
@@ -27,11 +27,11 @@ class BackendBase(abc.ABC):
     directory (Path or SSHTarget).
     """
 
-    def __init__(self, extra_opts=None):
+    def __init__(self, extra_opts: list[str] | None = None) -> None:
         self.extra_opts = extra_opts
 
-    @final
-    def do_backup(self, backup: bckp.Backup, timeframe: Timeframe):
+    @ty.final
+    def do_backup(self, backup: bckp.Backup, timeframe: Timeframe) -> None:
         """Perform a `backup` for a given `timeframe`.
 
         Note that this function also cleans up old backups.
@@ -54,7 +54,7 @@ class BackendBase(abc.ABC):
                 self._delete_backups_local(*to_delete)
 
     @classmethod
-    @final
+    @ty.final
     def name(cls) -> str:
         """Automatically derive backend name from class name.
 
@@ -84,7 +84,7 @@ class BackendBase(abc.ABC):
     @abc.abstractmethod
     def _exec_backup_local_to_local(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ):
+    ) -> None:
         """Execute a single local to local backup for the Backup `backup` in Timeframe `timeframe`.
 
         The resulting backup will have basename `backup_basename`.
@@ -94,7 +94,7 @@ class BackendBase(abc.ABC):
     @abc.abstractmethod
     def _exec_backup_local_to_remote(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ):
+    ) -> None:
         """Execute a single local to remote backup for the Backup `backup` in
         the Timeframe `timeframe`. The resulting backup backup will have
         basename `backup_basename`. Note that this function does not perform any
@@ -104,24 +104,24 @@ class BackendBase(abc.ABC):
     @abc.abstractmethod
     def _exec_backup_remote_to_local(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ):
+    ) -> None:
         """Execute a single remote to local backup for the Backup `backup` in
         the Timeframe `timeframe`. The resulting backup will have basename
         `backup_basename`. Note that this function does not perform any cleanup.
         """
 
     @abc.abstractmethod
-    def _delete_backups_local(self, *backups):
+    def _delete_backups_local(self, *backups: Path) -> None:
         """Delete all the local backups in `*backups` (Paths)."""
 
     @abc.abstractmethod
-    def _delete_backups_remote(self, *backups):
+    def _delete_backups_remote(self, *backups: SSHTarget) -> None:
         """Delete all the remote backups in `*backups` (SSHTargets)."""
 
     @staticmethod
-    @final
+    @ty.final
     @cache
-    def backend_classes():
+    def backend_classes() -> list[type["BackendBase"]]:
         """Returns a list of all the backend classes.
 
         This is made possible with the use of a naming convention for backend

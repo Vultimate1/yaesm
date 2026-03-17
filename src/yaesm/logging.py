@@ -7,6 +7,9 @@ should happen through the functions defined in this module.
 import inspect
 import logging
 import logging.handlers
+from pathlib import Path
+
+import yaesm.ty as ty
 
 
 class LoggingNotInitializedException(Exception): ...
@@ -17,8 +20,12 @@ class Logging:
 
     @staticmethod
     def initialize(
-        stderr=False, logfile=None, syslog=False, syslog_address="/dev/log", level=logging.INFO
-    ):
+        stderr: bool = False,
+        logfile: Path | str | None = None,
+        syslog: bool = False,
+        syslog_address: str = "/dev/log",
+        level: int | str = logging.INFO,
+    ) -> None:
         """Initialize logging for yaesm. Yaesm can log to any and all of stderr,
         syslog, and a file. If this function is called multiple times then it will
         fully re-initialize the logging. If none of `stderr`, `logfile`, or `syslog`
@@ -56,7 +63,7 @@ class Logging:
         Logging._logging_initialized = True
 
     @staticmethod
-    def get(name=None):
+    def get(name: str | None = None) -> ty.Logger:
         """Return a logger with the specified name. Defaults to the name of the callers
         module. If logging has not yet been initialized (i.e. init_logging() has not
         been invoked), then raise an exception.
@@ -66,11 +73,12 @@ class Logging:
                 "trying to get logger but logging has not been initialized"
             )
         if name is None:
-            name = inspect.getmodule(inspect.stack()[1][0]).__name__
+            module = inspect.getmodule(inspect.stack()[1][0])
+            name = module.__name__ if module is not None else "__main__"
         return logging.getLogger(name)
 
     @staticmethod
-    def disable():
+    def disable() -> None:
         """Disable all logging by removing all handlers and marking logging as uninitialized."""
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
