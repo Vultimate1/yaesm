@@ -1,5 +1,7 @@
 """src/yaesm/backend/backendbase.py."""
 
+from __future__ import annotations
+
 import abc
 import importlib
 from functools import cache
@@ -121,7 +123,7 @@ class BackendBase(abc.ABC):
     @staticmethod
     @ty.final
     @cache
-    def backend_classes() -> list[type["BackendBase"]]:
+    def backend_classes() -> list[type[BackendBase]]:
         """Returns a list of all the backend classes.
 
         This is made possible with the use of a naming convention for backend

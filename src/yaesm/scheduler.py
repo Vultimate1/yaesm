@@ -66,7 +66,7 @@ class Scheduler:
         """Return name of the APScheduler job with id `job_id`."""
         return self._apscheduler.get_job(job_id).name
 
-    def _add_job(self, name: str, func: ty.Callable[[], None], timeframe: "ty.Any") -> None:
+    def _add_job(self, name: str, func: ty.Callable[[], None], timeframe: ty.Any) -> None:
         """Schedule an arbitrary function (`func`) to be run at times according to `timeframe`."""
         if isinstance(timeframe, FiveMinuteTimeframe):
             self._apscheduler.add_job(func, "cron", minute="*/5", name=name)

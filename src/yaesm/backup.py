@@ -20,7 +20,7 @@ class Backup:
     def __init__(
         self,
         name: str,
-        backend: "ty.Any",
+        backend: ty.Any,
         src_dir: Path | SSHTarget,
         dst_dir: Path | SSHTarget,
         timeframes: list[Timeframe],
@@ -49,7 +49,7 @@ def backup_name_valid(backup_name: str) -> bool:
 
 
 def backup_basename_re(
-    backup: "Backup | None" = None, timeframe: Timeframe | None = None
+    backup: Backup | None = None, timeframe: Timeframe | None = None
 ) -> ty.Pattern[str]:
     """Returns a re compiled regex to match a yaesm backup basename. If `backup`
     is given, then only match a basename for `backup`. If `timeframe` is given,
@@ -73,7 +73,7 @@ def backup_basename_update_time(backup_basename: str) -> str:
     return name
 
 
-def backup_basename_now(backup: "Backup", timeframe: Timeframe) -> str:
+def backup_basename_now(backup: Backup, timeframe: Timeframe) -> str:
     """Return the basename of a yaesm backup for the current time."""
     datetime_now = datetime.now()
     name = datetime_now.strftime(f"yaesm-{backup.name}-{timeframe.name}.%Y_%m_%d_%H:%M")
@@ -105,7 +105,7 @@ def backups_sorted(
 
 
 def backups_collect(
-    backup: "Backup", timeframe: Timeframe | None = None
+    backup: Backup, timeframe: Timeframe | None = None
 ) -> list[Path | SSHTarget]:
     """This function collects all the yaesm backups for the Backup `backup`.
     If the Timeframe `timeframe` is given, then only collect the backups in this

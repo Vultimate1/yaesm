@@ -23,10 +23,10 @@ def tframe_types(names: ty.Literal[True]) -> list[str]: ...
 
 
 @ty.overload
-def tframe_types(names: ty.Literal[False] = ...) -> list[type["Timeframe"]]: ...
+def tframe_types(names: ty.Literal[False] = ...) -> list[type[Timeframe]]: ...
 
 
-def tframe_types(names: bool = False) -> list[str] | list[type["Timeframe"]]:
+def tframe_types(names: bool = False) -> list[str] | list[type[Timeframe]]:
     """If `names` is `True`, return a list containing the names of all timeframe types
     as strings. Otherwise return a list of all the timeframe type subclasses.
     """

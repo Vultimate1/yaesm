@@ -1,5 +1,7 @@
 """src/yaesm/sshtarget.py."""
 
+from __future__ import annotations
+
 import copy
 import re
 import shlex
@@ -57,7 +59,7 @@ class SSHTarget:
         result = target_re.match(spec)
         return result
 
-    def with_path(self, path: Path) -> "SSHTarget":
+    def with_path(self, path: Path) -> SSHTarget:
         """Returns a copy of `self` (via `copy.deepcopy()`) but with Path `path`."""
         sshtarget = copy.deepcopy(self)
         sshtarget.path = Path(path)
