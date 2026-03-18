@@ -18,6 +18,9 @@ class RsyncBackend(BackendBase):
     backup execution backends in general.
     """
 
+    def check_extra(self, backup: bckp.Backup) -> list[str]:
+        return []
+
     @staticmethod
     def config_schema() -> vlp.Schema:
         """Rsync backups allow user to specify arbitrary extra options via a

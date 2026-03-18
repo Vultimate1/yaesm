@@ -26,6 +26,20 @@ class BtrfsBackend(BackendBase):
     'btrfs receive'.
     """
 
+    def check_extra(self, backup: bckp.Backup) -> list[str]:
+        errors: list[str] = []
+        src_dir = backup.src_dir
+        dst_dir = backup.dst_dir
+        if isinstance(src_dir, SSHTarget):
+            errors += check_btrfs_filesystem_remote(src_dir, "src_dir")
+        else:
+            errors += check_btrfs_filesystem_local(src_dir, "src_dir")
+        if isinstance(dst_dir, SSHTarget):
+            errors += check_btrfs_filesystem_remote(dst_dir, "dst_dir")
+        else:
+            errors += check_btrfs_filesystem_local(dst_dir, "dst_dir")
+        return errors
+
     def _exec_backup_local_to_local(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
     ) -> None:
@@ -280,3 +294,29 @@ def _btrfs_bootstrap_remote_to_local(src_dir: SSHTarget, dst_dir: Path) -> SSHTa
     else:
         pass  # already bootstrapped
     return src_bootstrap
+
+
+def check_btrfs_filesystem_local(path: Path, label: str) -> list[str]:
+    if not path.is_dir():
+        return []
+    p = subprocess.run(
+        ["stat", "-f", "-c", "%T", str(path)],
+        check=False,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    if p.returncode != 0 or p.stdout.strip() != "btrfs":
+        return [f"{label} is not on a btrfs filesystem: {path}"]
+    return []
+
+
+def check_btrfs_filesystem_remote(sshtarget: SSHTarget, label: str) -> list[str]:
+    p = subprocess.run(
+        sshtarget.openssh_cmd(f"stat -f -c %T '{sshtarget.path}'"),
+        check=False,
+        capture_output=True,
+        encoding="utf-8",
+    )
+    if p.returncode != 0 or p.stdout.strip() != "btrfs":
+        return [f"{label} is not on a btrfs filesystem on remote {sshtarget.host}: {sshtarget.path}"]
+    return []
