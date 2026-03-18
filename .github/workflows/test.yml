@@ -1,0 +1,33 @@
+name: run-tests
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@4
+      - name: Update system packages
+        run: |
+          apt-get update -y
+          apt-get upgrade -y
+      - name: Install dependencies
+        run: |
+          apt-get install -y python3 python3-venv btrfs-progs zfsutils-linux
+      - name: Setup OpenSSH
+        run: |
+          ssh-keyscan localhost >~/.ssh/known_hosts 2>/dev/null
+          chmod 0600 ~/.ssh/known_hosts
+      - name: Create virtual environment
+        run: |
+          pyhton3 -m venv yaesm-venv
+      - name: Activate and run pytest environment
+        run: |
+          source yaesm-venv/bin/activate
+          pip3 install -e "yaesm[test]"
+          pytest
