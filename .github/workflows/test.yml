@@ -23,7 +23,7 @@ jobs:
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan localhost >~/.ssh/known_hosts 2>/dev/null
-          chmod 0600 ~/.ssh/known_hosts
+          chmod 0644 ~/.ssh/known_hosts
       - name: Create virtual environment
         run: |
           python3 -m venv yaesm-venv
@@ -31,4 +31,4 @@ jobs:
         run: |
           source yaesm-venv/bin/activate
           pip3 install -e .[test]
-          python3 -m pytest
+          pytest
