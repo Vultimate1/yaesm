@@ -39,7 +39,7 @@ yaesm = "yaesm.main:main"
 
 [project.optional-dependencies]
 test = [
-    "pytest>=9.0.1",
+    "pytest>=7.4.4",
     "pytest-cov>=7.0.0",
     "pytest-ruff>=0.4.0",
     "pytest-ty>=0.0.1",
