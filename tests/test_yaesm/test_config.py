@@ -144,9 +144,17 @@ def test_TimeframeSchema_has_required_settings():
 
 
 def test_TimeframeSchema_are_valid_timespecs():
-    valid_specs = ["12:34", "23:59", "00:00", "99:99"]
+    valid_specs: list[int | str] = ["12:34", "23:59", "00:00", "99:99"]
     valid_expected = [(12, 34), (23, 59), (0, 0), (99, 99)]
     assert config.TimeframeSchema.are_valid_timespecs(valid_specs) == valid_expected
+
+    valid_int_specs: list[int | str] = [754, 1439, 0]
+    valid_int_expected = [(12, 34), (23, 59), (0, 0)]
+    assert config.TimeframeSchema.are_valid_timespecs(valid_int_specs) == valid_int_expected
+
+    valid_int_specs: list[int | str] = ["12:34", 1439, 0]
+    valid_int_expected = [(12, 34), (23, 59), (0, 0)]
+    assert config.TimeframeSchema.are_valid_timespecs(valid_int_specs) == valid_int_expected
 
     invalid_specs = ["1:23", "12:3", "ab:cd", "1234", ""]
     for spec in invalid_specs:

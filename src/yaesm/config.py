@@ -309,7 +309,22 @@ class TimeframeSchema(Schema):
                         "yearly_keep",
                     ): vlp.All(int, vlp.Range(min=0)),
                     "hourly_minutes": [vlp.All(int, vlp.Range(min=0, max=59))],
-                    ("daily_times", "weekly_times", "monthly_times", "yearly_times"): vlp.All(
+                    vlp.Optional("daily_times"): vlp.All(
+                        TimeframeSchema.are_valid_timespecs,
+                        TimeframeSchema.are_valid_hours,
+                        TimeframeSchema.are_valid_minutes,
+                    ),
+                    vlp.Optional("weekly_times"): vlp.All(
+                        TimeframeSchema.are_valid_timespecs,
+                        TimeframeSchema.are_valid_hours,
+                        TimeframeSchema.are_valid_minutes,
+                    ),
+                    vlp.Optional("monthly_times"): vlp.All(
+                        TimeframeSchema.are_valid_timespecs,
+                        TimeframeSchema.are_valid_hours,
+                        TimeframeSchema.are_valid_minutes,
+                    ),
+                    vlp.Optional("yearly_times"): vlp.All(
                         TimeframeSchema.are_valid_timespecs,
                         TimeframeSchema.are_valid_hours,
                         TimeframeSchema.are_valid_minutes,
@@ -356,24 +371,30 @@ class TimeframeSchema(Schema):
         return spec
 
     @staticmethod
-    def are_valid_timespecs(spec: list[str]) -> list[tuple[int, int]]:
+    def are_valid_timespecs(spec: list[int | str]) -> list[tuple[int, int]]:
         """Takes a list of supposed timespecs. Returns a list of hour:minute pairings if
         successful. This does NOT check if the hour and minute parts are valid, use
         `are_valid_hours` and `are_valid_minutes` to do this.
+
+        Accepts integers (base-60, as produced by PyYAML from unquoted 'HH:MM' values)
+        or strings in 'HH:MM' format (as produced by PyYAML from quoted timespecs).
 
         Raises `voluptuous.Invalid` if a timespec is formatted incorrectly, or if the minute or
         hour parts cannot be converted to `int`.
         """
         res: list[tuple[int, int]] = []
         for timespec in spec:
-            timespec_re = re.compile("([0-9]{2}):([0-9]{2})")
-            if re_result := timespec_re.match(timespec):
-                res.append((int(re_result.group(1)), int(re_result.group(2))))
+            if isinstance(timespec, int):
+                res.append((timespec // 60, timespec % 60))
             else:
-                raise vlp.Invalid(
-                    TimeframeSchema.ErrMsg.TIME_MALFORMED
-                    + f"\n\tExpected format 'hh:mm', got {timespec}"
-                )
+                timespec_re = re.compile("([0-9]{2}):([0-9]{2})")
+                if re_result := timespec_re.match(timespec):
+                    res.append((int(re_result.group(1)), int(re_result.group(2))))
+                else:
+                    raise vlp.Invalid(
+                        TimeframeSchema.ErrMsg.TIME_MALFORMED
+                        + f"\n\tExpected format 'hh:mm', got {timespec}"
+                    )
         return res
 
     @staticmethod

@@ -672,15 +672,15 @@ def valid_raw_config_generator(random_backup_generator):
                 elif isinstance(tframe, HourlyTimeframe):
                     backup_settings[f"{tframe.name}_minutes"] = tframe.minutes
                 elif isinstance(tframe, DailyTimeframe):
-                    backup_settings[f"{tframe.name}_times"] = tframe.times
+                    backup_settings[f"{tframe.name}_times"] = [h * 60 + m for h, m in tframe.times]
                 elif isinstance(tframe, WeeklyTimeframe):
-                    backup_settings[f"{tframe.name}_times"] = tframe.times
+                    backup_settings[f"{tframe.name}_times"] = [h * 60 + m for h, m in tframe.times]
                     backup_settings[f"{tframe.name}_days"] = tframe.weekdays
                 elif isinstance(tframe, MonthlyTimeframe):
-                    backup_settings[f"{tframe.name}_times"] = tframe.times
+                    backup_settings[f"{tframe.name}_times"] = [h * 60 + m for h, m in tframe.times]
                     backup_settings[f"{tframe.name}_days"] = tframe.monthdays
                 elif isinstance(tframe, YearlyTimeframe):
-                    backup_settings[f"{tframe.name}_times"] = tframe.times
+                    backup_settings[f"{tframe.name}_times"] = [h * 60 + m for h, m in tframe.times]
                     backup_settings[f"{tframe.name}_days"] = tframe.yeardays
             backup_settings["timeframes"] = timeframes
             config[backup.name] = backup_settings

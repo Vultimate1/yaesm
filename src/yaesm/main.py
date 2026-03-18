@@ -9,6 +9,7 @@ import yaesm.config
 from yaesm.cleanup import Cleanup
 from yaesm.logging import Logging
 from yaesm.subcommand.subcommandbase import SubcommandBase
+import yaesm.ty as ty
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -17,7 +18,9 @@ def main(argv: list[str] | None = None) -> int:
         argv = sys.argv[1:]
 
     # yaesm.subcommand modules are loaded eagerly from the yaesm.subcommand __init__.py
-    subcommand_name_class_map = {cls.name(): cls for cls in SubcommandBase.__subclasses__()}
+    subcommand_name_class_map: dict[str, ty.Any] = {
+        cls.name(): cls for cls in SubcommandBase.__subclasses__()
+    }
 
     parser = argparse.ArgumentParser(
         prog="yaesm",
