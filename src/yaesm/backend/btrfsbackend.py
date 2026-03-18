@@ -5,7 +5,6 @@ import subprocess
 from pathlib import Path
 
 import yaesm.backup as bckp
-import yaesm.ty as ty
 from yaesm.backend.backendbase import BackendBase
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
@@ -318,5 +317,7 @@ def check_btrfs_filesystem_remote(sshtarget: SSHTarget, label: str) -> list[str]
         encoding="utf-8",
     )
     if p.returncode != 0 or p.stdout.strip() != "btrfs":
-        return [f"{label} is not on a btrfs filesystem on remote {sshtarget.host}: {sshtarget.path}"]
+        return [
+            f"{label} is not on a btrfs filesystem on remote {sshtarget.host}: {sshtarget.path}"
+        ]
     return []

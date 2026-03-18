@@ -7,7 +7,6 @@ from shutil import rmtree
 import voluptuous as vlp
 
 import yaesm.backup as bckp
-import yaesm.ty as ty
 from yaesm.backend.backendbase import BackendBase
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
