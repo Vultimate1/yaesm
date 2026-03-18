@@ -372,11 +372,11 @@ def test_SrcDirDstDirSchema_dict_ssh_target_connectable(sshtarget_generator, pat
     data = config.SrcDirDstDirSchema._dict_ssh_target_connectable(data)
     assert isinstance(data["dst_dir"], SSHTarget)
 
-    sshtarget = sshtarget_generator()
     with pytest.raises(vlp.Invalid) as exc:
         bad_key = path_generator("bad_key", touch=True)
         new_sshtarget = sshtarget.with_path(sshtarget.path)
         new_sshtarget.key = bad_key
+        new_sshtarget.user = "nonexistent-user"
         data = {"ssh_key": bad_key, "src_dir": Path("/foo"), "dst_dir": new_sshtarget}
         config.SrcDirDstDirSchema._dict_ssh_target_connectable(data)
     assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_CONNECTION_FAILED_TO_ESTABLISH
@@ -502,8 +502,9 @@ def test_SrcDirDstDirSchema_schema_extra(sshtarget_generator, path_generator):
 
     with pytest.raises(vlp.Invalid) as exc:
         bad_key = path_generator("bad_key", touch=True)
-        new_sshtarget = sshtarget_generator()
+        new_sshtarget = sshtarget.with_path(sshtarget.path)
         new_sshtarget.key = bad_key
+        new_sshtarget.user = "nonexistent-user"
         data = {"src_dir": new_sshtarget, "dst_dir": dst_dir}
         schema_extra(data)
     assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_CONNECTION_FAILED_TO_ESTABLISH

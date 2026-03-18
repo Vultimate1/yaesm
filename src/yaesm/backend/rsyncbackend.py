@@ -71,12 +71,11 @@ class RsyncBackend(BackendBase):
             rmtree(backup)
 
     def _delete_backups_remote(self, *backups: SSHTarget) -> None:
-        """Note that the remote user must have passwordless sudo access to rm.
-        Also note that all the backups in `backups` are assumed to be SSHTarget's
+        """Note that all the backups in `backups` are assumed to be SSHTarget's
         all at the same host.
         """
         for backup in backups:
-            subprocess.run(backup.openssh_cmd(f"sudo -n rm -r -f '{backup.path}'"), check=True)
+            subprocess.run(backup.openssh_cmd(f"rm -r -f '{backup.path}'"), check=True)
 
     def _exec_backup(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe

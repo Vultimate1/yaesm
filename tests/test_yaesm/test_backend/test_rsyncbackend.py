@@ -106,7 +106,7 @@ def test_delete_backups_local(rsync_backend, path_generator):
     assert all(not (x.is_dir()) for x in backups)
 
 
-def test_delete_backups_remote(rsync_backend, sshtarget, path_generator, rm_sudo_access):
+def test_delete_backups_remote(rsync_backend, sshtarget, path_generator):
     dst_dir = path_generator("rsync_test_dst_dir", mkdir=True)
     backups = []
     for i in range(6):

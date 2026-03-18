@@ -18,7 +18,7 @@ def btrfs_backend():
     return btrfs.BtrfsBackend()
 
 
-def test_do_backup(btrfs_backend, random_backup_generator, btrfs_sudo_access, path_generator):
+def test_do_backup(btrfs_backend, random_backup_generator, path_generator):
     for backup_type in ["local_to_local", "local_to_remote,", "remote_to_local"]:
         backup = random_backup_generator(backend_type="btrfs", backup_type=backup_type)
         timeframe = backup.timeframes[0]
@@ -63,7 +63,7 @@ def test_exec_backup_local_to_local(btrfs_backend, random_backup_generator):
         assert backup_path.is_dir()
 
 
-def test_exec_backup_local_to_remote(btrfs_backend, random_backup_generator, btrfs_sudo_access):
+def test_exec_backup_local_to_remote(btrfs_backend, random_backup_generator):
     backup = random_backup_generator(backend_type="btrfs", backup_type="local_to_remote")
     timeframe = backup.timeframes[0]
     with freeze_time("1999-05-13 23:59"):
@@ -77,7 +77,7 @@ def test_exec_backup_local_to_remote(btrfs_backend, random_backup_generator, btr
         assert backup_path.is_dir()
 
 
-def test_exec_backup_remote_to_local(btrfs_backend, random_backup_generator, btrfs_sudo_access):
+def test_exec_backup_remote_to_local(btrfs_backend, random_backup_generator):
     backup = random_backup_generator(backend_type="btrfs", backup_type="remote_to_local")
     timeframe = backup.timeframes[0]
     with freeze_time("1999-05-13 23:59"):

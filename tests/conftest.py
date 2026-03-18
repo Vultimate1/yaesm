@@ -81,31 +81,36 @@ def loopback(loopback_generator):
 
 
 @pytest.fixture
-def localhost_server_generator(ssh_key_generator, tmp_user_generator):
+def localhost_server_generator(ssh_key_generator):
     """Fixture to setup mock ssh servers on the localhost.
 
-    Makes key auth possible by creating and adding the ssh_key to the localhost
-    server user's ~/.ssh/authorized_keys. Returns a hash - {"user":pwd_object, "key":path_to_key}
+    Makes key auth possible by creating and adding the ssh_key to root's
+    ~/.ssh/authorized_keys. Returns a hash - {"user":pwd_object, "key":path_to_key}
     """
+    pubkey_lines = []
 
     def generator():
-        user = tmp_user_generator()
-        os.makedirs(f"{user.pw_dir}/.ssh", mode=0o700)
-        os.chown(f"{user.pw_dir}/.ssh", user.pw_uid, user.pw_gid)
-        authorized_keys = f"{user.pw_dir}/.ssh/authorized_keys"
+        authorized_keys = Path("/root/.ssh/authorized_keys")
+        authorized_keys.parent.mkdir(mode=0o700, exist_ok=True)
         privkey = ssh_key_generator()
         pubkey = privkey.with_suffix(".pub")
-        with (
-            open(pubkey, encoding="utf-8") as fr,
-            open(authorized_keys, "a", encoding="utf-8") as fw,
-        ):
-            for line in fr:
-                fw.write(line)
+        pubkey_content = pubkey.read_text(encoding="utf-8").strip()
+        with open(authorized_keys, "a", encoding="utf-8") as fw:
+            fw.write(pubkey_content + "\n")
+        pubkey_lines.append(pubkey_content)
         os.chmod(authorized_keys, 0o600)
-        os.chown(authorized_keys, user.pw_uid, user.pw_gid)
+        user = pwd.getpwnam("root")
         return {"user": user, "key": privkey}
 
-    return generator
+    yield generator
+
+    authorized_keys = Path("/root/.ssh/authorized_keys")
+    if authorized_keys.is_file():
+        lines = authorized_keys.read_text(encoding="utf-8").splitlines()
+        remaining = [line for line in lines if line.strip() not in pubkey_lines]
+        authorized_keys.write_text(
+            "\n".join(remaining) + "\n" if remaining else "", encoding="utf-8"
+        )
 
 
 @pytest.fixture
@@ -610,27 +615,6 @@ def btrfs_fs(btrfs_fs_generator):
 
 
 @pytest.fixture
-def btrfs_sudo_access(yaesm_test_users_group):
-    """Fixture to give users in the 'yaesm_test_users_group' group passwordless
-    sudo access to the 'btrfs' executable. Users created with the 'tmp_user_generator'
-    fixture are always assigned membership to this group.
-    """
-    btrfs = shutil.which("btrfs")
-    sudoers_rules = [
-        f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {btrfs} subvolume snapshot -r *",
-        f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {btrfs} subvolume delete *",
-        f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {btrfs} send *",
-        f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {btrfs} receive *",
-    ]
-    sudo_rule_file = Path("/etc/sudoers.d/yaesm-test-btrfs-sudo-rule")
-    if not sudo_rule_file.is_file():
-        with open(sudo_rule_file, "w", encoding="utf-8") as f:
-            for rule in sudoers_rules:
-                f.write(rule + "\n")
-    return True
-
-
-@pytest.fixture
 def valid_raw_config_generator(random_backup_generator):
     """Fixture to generate a valid raw configuration dict. A raw configuration
     is a dict that comes directly after parsing the user configuration yaml
@@ -720,21 +704,3 @@ def valid_config_file(valid_config_file_generator):
     `valid_config_file_generator` fixture for more details.
     """
     return valid_config_file_generator()
-
-
-@pytest.fixture
-def rm_sudo_access(yaesm_test_users_group):
-    """Fixture to give users in the 'yaesm_test_users_group' group passwordless
-    sudo access to the 'rm' executable. Users created with the 'tmp_user_generator'
-    fixture are always assigned membership to this group.
-    """
-    rm = shutil.which("rm")
-    # This is not actually safe sudoer rule and should never be in actual use.
-    # Sudo version 1.9.10 added regular expression support for sudoer rules that can
-    # be used to craft a safe rule. Unfortunately the OS we test on (Ubuntu Jammy)
-    # only uses sudo version 1.9.9.
-    rule = f"%{yaesm_test_users_group.gr_name} ALL = NOPASSWD: {rm} -r -f *yaesm*"
-    sudo_rule_file = Path("/etc/sudoers.d/yaesm-test-rm-sudo-rule")
-    if not sudo_rule_file.is_file():
-        with open(sudo_rule_file, "w", encoding="utf-8") as f:
-            f.write(rule + "\n")
