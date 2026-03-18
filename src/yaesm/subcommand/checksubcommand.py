@@ -15,7 +15,7 @@ class CheckSubcommand(SubcommandBase):
             backups = [b for b in backups if b.name == parsed_args.backup_name]
             if not backups:
                 Logging.get().error(f"no backup named '{parsed_args.backup_name}' in config")
-                return 1
+                return 2
         checks_passed = True
         for backup in backups:
             errors = backup.backend.check(backup)

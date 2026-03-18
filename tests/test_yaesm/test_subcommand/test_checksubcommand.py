@@ -95,5 +95,5 @@ def test_check_unknown_backup_name(checksubcommand, caplog):
     args = parser.parse_args(["nonexistent"])
     caplog.set_level(logging.ERROR)
     rc = checksubcommand.main(backups, args)
-    assert rc == 1
+    assert rc == 2
     assert "nonexistent" in caplog.text
