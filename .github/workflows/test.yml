@@ -23,12 +23,13 @@ jobs:
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan localhost >~/.ssh/known_hosts 2>/dev/null
-          chmod 0644 ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/known_hosts
       - name: Create virtual environment
         run: |
           python3 -m venv yaesm-venv
       - name: Activate and run pytest environment
+        # TODO: I really don't want to use sudo here, but it's failing without it
         run: |
           source yaesm-venv/bin/activate
           pip3 install -e .[test]
-          pytest
+          sudo python -m pytest
