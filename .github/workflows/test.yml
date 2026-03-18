@@ -26,7 +26,7 @@ jobs:
           chmod 0600 ~/.ssh/known_hosts
       - name: Create virtual environment
         run: |
-          pyhton3 -m venv yaesm-venv
+          python3 -m venv yaesm-venv
       - name: Activate and run pytest environment
         run: |
           source yaesm-venv/bin/activate
