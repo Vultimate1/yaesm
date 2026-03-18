@@ -14,11 +14,11 @@ jobs:
         uses: actions/checkout@v6
       - name: Update system packages
         run: |
-          apt-get update -y
-          apt-get upgrade -y
+          sudo apt-get update -y
+          sudo apt-get upgrade -y
       - name: Install dependencies
         run: |
-          apt-get install -y python3 python3-venv btrfs-progs zfsutils-linux
+          sudo apt-get install -y python3 python3-venv btrfs-progs zfsutils-linux
       - name: Setup OpenSSH
         run: |
           ssh-keyscan localhost >~/.ssh/known_hosts 2>/dev/null
