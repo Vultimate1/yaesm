@@ -19,16 +19,15 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get install -y python3 python3-venv btrfs-progs zfsutils-linux
-      # - name: Setup OpenSSH
-      #   run: |
-      #     mkdir -p ~/.ssh
-      #     ssh-keyscan localhost >~/.ssh/known_hosts 2>/dev/null
-      #     chmod 0600 ~/.ssh/known_hosts
+      - name: Setup OpenSSH
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan localhost >~/.ssh/known_hosts 2>/dev/null
+          chmod 0600 ~/.ssh/*
       - name: Create virtual environment
         run: |
           python3 -m venv yaesm-venv
       - name: Activate and run pytest environment
-        # TODO: I really don't want to use sudo here, but it's failing without it
         run: |
           source yaesm-venv/bin/activate
           pip3 install -e .[test]
