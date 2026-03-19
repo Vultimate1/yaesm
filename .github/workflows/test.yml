@@ -22,8 +22,8 @@ jobs:
       - name: Setup OpenSSH
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan localhost >~/.ssh/known_hosts 2>/dev/null
-          chmod 0600 ~/.ssh/*
+          ssh-keyscan github.com >~/.ssh/known_hosts 2>/dev/null
+          chmod 0600 ~/.ssh/known_hosts
       - name: Create virtual environment
         run: |
           python3 -m venv yaesm-venv
