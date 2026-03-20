@@ -19,9 +19,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get install -y python3 python3-venv btrfs-progs zfsutils-linux
-      - name: Setup SSH
-        env:
-          ssh_key: ${{secrets.SSH_PRIVATE_KEY}}
+      - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan github.com >~/.ssh/known_hosts 2>/dev/null
