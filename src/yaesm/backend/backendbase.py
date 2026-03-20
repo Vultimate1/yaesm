@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import abc
 import importlib
+import shutil
+import subprocess
 from functools import cache
 from pathlib import Path
 
@@ -83,6 +85,45 @@ class BackendBase(abc.ABC):
         """
         return config.Schema.schema_empty()
 
+    @ty.final
+    def check(self, backup: bckp.Backup) -> list[str]:
+        """Check that preconditions for `backup` are met.
+
+        Returns a list of error strings. Empty list means all checks passed.
+        """
+        errors: list[str] = []
+        src_dir = backup.src_dir
+        dst_dir = backup.dst_dir
+        sshtarget = src_dir if isinstance(src_dir, SSHTarget) else None
+        if sshtarget is None and isinstance(dst_dir, SSHTarget):
+            sshtarget = dst_dir
+        if isinstance(src_dir, SSHTarget):
+            errors += check_ssh_connectivity(src_dir)
+            if not errors:
+                errors += check_dir_exists_remote(src_dir, "src_dir")
+                errors += check_dir_readable_remote(src_dir, "src_dir")
+        else:
+            errors += check_dir_exists_local(src_dir, "src_dir")
+        if isinstance(dst_dir, SSHTarget):
+            errors += check_ssh_connectivity(dst_dir)
+            if not errors:
+                errors += check_dir_exists_remote(dst_dir, "dst_dir")
+                errors += check_dir_writable_remote(dst_dir, "dst_dir")
+        else:
+            errors += check_dir_exists_local(dst_dir, "dst_dir")
+        errors += check_tool_local(self.name())
+        if sshtarget is not None and not any("SSH" in e or "cannot" in e for e in errors):
+            errors += check_tool_remote(sshtarget, self.name())
+        errors += self.check_extra(backup)
+        return errors
+
+    @abc.abstractmethod
+    def check_extra(self, backup: bckp.Backup) -> list[str]:
+        """Backend-specific checks beyond the common ones.
+
+        Returns a list of error strings. Empty list means all checks passed.
+        """
+
     @abc.abstractmethod
     def _exec_backup_local_to_local(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
@@ -140,3 +181,60 @@ class BackendBase(abc.ABC):
             backend_class = getattr(module, class_name)
             backend_classes.append(backend_class)
         return backend_classes
+
+
+def check_dir_exists_local(path: Path, label: str) -> list[str]:
+    if not path.is_dir():
+        return [f"{label} does not exist locally: {path}"]
+    return []
+
+
+def check_dir_exists_remote(sshtarget: SSHTarget, label: str) -> list[str]:
+    if not sshtarget.is_dir():
+        return [f"{label} does not exist on remote {sshtarget.host}: {sshtarget.path}"]
+    return []
+
+
+def check_ssh_connectivity(sshtarget: SSHTarget) -> list[str]:
+    if not sshtarget.can_connect():
+        return [f"cannot establish SSH connection to {sshtarget.host}"]
+    return []
+
+
+def check_tool_local(tool: str) -> list[str]:
+    if shutil.which(tool) is None:
+        return [f"required tool not found locally: {tool}"]
+    return []
+
+
+def check_tool_remote(sshtarget: SSHTarget, tool: str) -> list[str]:
+    p = subprocess.run(
+        sshtarget.openssh_cmd(f"type {tool}"),
+        check=False,
+        capture_output=True,
+    )
+    if p.returncode != 0:
+        return [f"required tool not found on remote {sshtarget.host}: {tool}"]
+    return []
+
+
+def check_dir_readable_remote(sshtarget: SSHTarget, label: str) -> list[str]:
+    p = subprocess.run(
+        sshtarget.openssh_cmd(f"test -r '{sshtarget.path}'"),
+        check=False,
+        capture_output=True,
+    )
+    if p.returncode != 0:
+        return [f"{label} is not readable on remote {sshtarget.host}: {sshtarget.path}"]
+    return []
+
+
+def check_dir_writable_remote(sshtarget: SSHTarget, label: str) -> list[str]:
+    p = subprocess.run(
+        sshtarget.openssh_cmd(f"test -w '{sshtarget.path}'"),
+        check=False,
+        capture_output=True,
+    )
+    if p.returncode != 0:
+        return [f"{label} is not writable on remote {sshtarget.host}: {sshtarget.path}"]
+    return []
