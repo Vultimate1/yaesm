@@ -19,10 +19,14 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get install -y python3 python3-venv btrfs-progs zfsutils-linux
-      - name: Setup OpenSSH
+      - name: Setup SSH
+        env:
+          SSH_KEY: ${{secrets.SSH_PRIVATE_KEY}}
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan localhost >~/.ssh/known_hosts 2>/dev/null
+          echo "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 0600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >~/.ssh/known_hosts 2>/dev/null
           chmod 0600 ~/.ssh/known_hosts
       - name: Create virtual environment
         run: |
