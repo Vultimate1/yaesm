@@ -3,6 +3,8 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from yaesm.sshtarget import SSHTarget
 
 
@@ -163,3 +165,32 @@ def test_touch(sshtarget, path_generator):
     assert not path.is_file()
     assert newsshtarget.touch()
     assert path.is_file()
+
+
+def test_mtime(sshtarget, path_generator):
+    # file
+    path = path_generator("foo", cleanup=True)
+    path.touch()
+    target = sshtarget.with_path(path)
+    remote_mtime = target.mtime()
+    local_mtime = path.stat().st_mtime
+    assert abs(remote_mtime - local_mtime) < 1.0
+
+    # directory
+    d = path_generator("dir", cleanup=True, mkdir=True)
+    target_d = sshtarget.with_path(d)
+    remote_mtime_d = target_d.mtime()
+    local_mtime_d = d.stat().st_mtime
+    assert abs(remote_mtime_d - local_mtime_d) < 1.0
+
+    # explicit path argument
+    path2 = path_generator("bar", cleanup=True)
+    path2.touch()
+    remote_mtime2 = sshtarget.mtime(f=path2)
+    local_mtime2 = path2.stat().st_mtime
+    assert abs(remote_mtime2 - local_mtime2) < 1.0
+
+    # nonexistent path raises
+    bad_path = path_generator("nonexistent")
+    with pytest.raises(subprocess.CalledProcessError):
+        sshtarget.mtime(f=bad_path)
