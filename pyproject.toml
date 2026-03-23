@@ -91,6 +91,7 @@ addopts = [
 ]
 
 [tool.ty]
+[tool.ty.src]
 exclude = [".venv"]
 
 [tool.ty.environment]
