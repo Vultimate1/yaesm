@@ -21,7 +21,7 @@ from yaesm.timeframe import (
     MonthlyTimeframe,
     Timeframe,
     WeeklyTimeframe,
-    tframe_types,
+    tframe_types_configurable,
 )
 
 
@@ -238,8 +238,8 @@ def test_TimeframeSchema_schema(valid_raw_config):
             if isinstance(backup_settings[key], list):
                 assert len(processed_backup[key]) == len(backup_settings[key])
 
-        tf_types = tframe_types()
-        tf_names = tframe_types(names=True)
+        tf_types = tframe_types_configurable()
+        tf_names = tframe_types_configurable(names=True)
         expected_tf_types = [
             tf_types[i]
             for i in range(len(tf_names))
@@ -269,6 +269,13 @@ def test_TimeframeSchema_schema(valid_raw_config):
                 assert [
                     isinstance(item, int) for time in processed_backup[setting] for item in time
                 ]
+
+
+def test_TimeframeSchema_rejects_immediate():
+    schema = config.TimeframeSchema.schema()
+    data = {"timeframes": ["immediate"]}
+    with pytest.raises(vlp.Invalid):
+        schema(data)
 
 
 def test_SrcDirDstDirSchema_is_sshtarget_spec():

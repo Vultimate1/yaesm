@@ -11,7 +11,7 @@ import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.backend import backendbase
 from yaesm.sshtarget import SSHTarget
-from yaesm.timeframe import tframe_types
+from yaesm.timeframe import tframe_types_configurable
 
 
 @dataclasses.dataclass
@@ -291,9 +291,7 @@ class TimeframeSchema(Schema):
                         list,
                         [
                             vlp.All(
-                                vlp.In(
-                                    ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]
-                                )
+                                vlp.In(tframe_types_configurable(names=True))
                             )
                         ],
                     )
@@ -426,7 +424,7 @@ class TimeframeSchema(Schema):
 
         The value paired with 'timeframes' in `spec` is assumed to be entirely valid.
         """
-        timeframe_dict = dict(zip(tframe_types(names=True), tframe_types()))
+        timeframe_dict = dict(zip(tframe_types_configurable(names=True), tframe_types_configurable()))
         timeframes = []
         for timeframe_name in spec["timeframes"]:
             timeframe_obj = timeframe_dict[timeframe_name](
