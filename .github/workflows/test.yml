@@ -21,12 +21,15 @@ jobs:
           sudo apt-get install -y python3 python3-venv btrfs-progs zfsutils-linux openssh-client openssh-server
       - name: Start SSH server
         run: |
-          sudo mkdir -p /run/sshd
+          sudo mkdir -p /run/sshd /root/.ssh
           sudo /usr/sbin/sshd
+          sudo ssh-keyscan -H localhost | sudo tee -a /root/.ssh/known_hosts
+          sudo chmod 600 /root/.ssh/known_hosts
       - name: Create virtual environment
         run: |
           sudo python3 -m venv yaesm-venv
       - name: Activate and run pytest environment
         run: |
           sudo yaesm-venv/bin/pip3 install -e .[test]
-          sudo yaesm-venv/bin/python3 -m pytest
+          . yaesm-venv/bin/activate
+          sudo -E python3 -m pytest
