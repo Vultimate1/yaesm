@@ -21,12 +21,11 @@ jobs:
           apt-get upgrade -y
       - name: Install dependencies
         run: |
-          apt-get install -y python3 python3-venv btrfs-progs zfsutils-linux
-      - name: Configure SSH
+          apt-get install -y python3 python3-venv btrfs-progs zfsutils-linux openssh-client openssh-server
+      - name: Start SSH server
         run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan github.com >~/.ssh/known_hosts 2>/dev/null
-          chmod 0600 ~/.ssh/known_hosts
+          mkdir -p /run/sshd
+          /usr/sbin/sshd
       - name: Create virtual environment
         run: |
           python3 -m venv yaesm-venv
