@@ -32,4 +32,4 @@ jobs:
         run: |
           sudo yaesm-venv/bin/pip3 install -e .[test]
           . yaesm-venv/bin/activate
-          sudo -E python3 -m pytest
+          sudo -E yaesm-venv/bin/python3 -m pytest
