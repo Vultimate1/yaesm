@@ -636,6 +636,39 @@ def test_BackupSchema_schema(valid_raw_config, path_generator):
         )
 
 
+def test_btrfs_bootstrap_refresh_config(path_generator):
+    schema = config.BackupSchema.schema()
+    src_dir = path_generator("src", mkdir=True)
+    dst_dir = path_generator("dst", mkdir=True)
+    data = {
+        "mybackup": {
+            "backend": "btrfs",
+            "btrfs_bootstrap_refresh": 30,
+            "src_dir": str(src_dir),
+            "dst_dir": str(dst_dir),
+            "timeframes": ["daily"],
+            "daily_keep": 7,
+            "daily_times": ["12:00"],
+        }
+    }
+    backup = schema(data)
+    assert backup.backend.bootstrap_refresh_days == 30
+
+    # without the setting, should default to None
+    data2 = {
+        "mybackup2": {
+            "backend": "btrfs",
+            "src_dir": str(src_dir),
+            "dst_dir": str(dst_dir),
+            "timeframes": ["daily"],
+            "daily_keep": 7,
+            "daily_times": ["12:00"],
+        }
+    }
+    backup2 = schema(data2)
+    assert backup2.backend.bootstrap_refresh_days is None
+
+
 def test_parse_config(path_generator, valid_config_file_generator):
     backups = config.parse_config(valid_config_file_generator())
     assert len(backups) == 3

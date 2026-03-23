@@ -2,10 +2,14 @@
 
 import shlex
 import subprocess
+import time
 from pathlib import Path
+
+import voluptuous as vlp
 
 import yaesm.backup as bckp
 from yaesm.backend.backendbase import BackendBase
+from yaesm.logging import Logging
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
 
@@ -24,6 +28,25 @@ class BtrfsBackend(BackendBase):
     'btrfs subvolume snapshot', 'btrfs subvolume delete', 'btrfs send', and
     'btrfs receive'.
     """
+
+    def __init__(self, extra_opts=None, bootstrap_refresh_days=None):
+        super().__init__(extra_opts)
+        self.bootstrap_refresh_days = bootstrap_refresh_days
+
+    @staticmethod
+    def config_schema() -> vlp.Schema:
+        def _apply_to_backend(d: dict) -> dict:
+            if "btrfs_bootstrap_refresh" in d:
+                d["backend"].bootstrap_refresh_days = d.pop("btrfs_bootstrap_refresh")
+            return d
+
+        return vlp.Schema(
+            vlp.All(
+                {vlp.Optional("btrfs_bootstrap_refresh"): vlp.All(int, vlp.Range(min=1))},
+                _apply_to_backend,
+            ),
+            extra=vlp.ALLOW_EXTRA,
+        )
 
     def check_extra(self, backup: bckp.Backup) -> list[str]:
         errors: list[str] = []
@@ -44,6 +67,8 @@ class BtrfsBackend(BackendBase):
     ) -> None:
         assert isinstance(backup.src_dir, Path)
         assert isinstance(backup.dst_dir, Path)
+        if self.bootstrap_refresh_days is not None:
+            _btrfs_maybe_refresh_bootstrap(backup, self.bootstrap_refresh_days)
         src_dir = backup.src_dir
         backup_path = backup.dst_dir.joinpath(bckp.backup_basename_now(backup, timeframe))
         returncode, _ = _btrfs_take_snapshot_local(src_dir, backup_path, check=False)
@@ -60,6 +85,8 @@ class BtrfsBackend(BackendBase):
     ) -> None:
         assert isinstance(backup.src_dir, Path)
         assert isinstance(backup.dst_dir, SSHTarget)
+        if self.bootstrap_refresh_days is not None:
+            _btrfs_maybe_refresh_bootstrap(backup, self.bootstrap_refresh_days)
         src_dir = backup.src_dir
         backup_path = backup.dst_dir.with_path(backup.dst_dir.path.joinpath(backup_basename))
         bootstrap_snapshot = _btrfs_bootstrap_local_to_remote(
@@ -78,6 +105,8 @@ class BtrfsBackend(BackendBase):
     ) -> None:
         assert isinstance(backup.src_dir, SSHTarget)
         assert isinstance(backup.dst_dir, Path)
+        if self.bootstrap_refresh_days is not None:
+            _btrfs_maybe_refresh_bootstrap(backup, self.bootstrap_refresh_days)
         src_dir = backup.src_dir
         backup_path = backup.dst_dir.joinpath(backup_basename)
         bootstrap_snapshot = _btrfs_bootstrap_remote_to_local(src_dir, backup_path.parent)
@@ -216,6 +245,45 @@ def _btrfs_send_receive_remote_to_local(
         check=check,
     )
     return p.returncode, dst_dir.joinpath(snapshot.path.name)
+
+
+def _btrfs_maybe_refresh_bootstrap(backup: bckp.Backup, refresh_days: int) -> None:
+    """Delete stale bootstrap snapshots so they get recreated fresh.
+
+    Checks if the src bootstrap snapshot is older than `refresh_days` days.
+    If so, deletes both src and dst bootstrap snapshots. The existing
+    _btrfs_bootstrap_* functions handle the "neither exists" case by
+    recreating both.
+    """
+    basename = _btrfs_bootstrap_snapshot_basename()
+    src_dir = backup.src_dir
+    dst_dir = backup.dst_dir
+    if isinstance(src_dir, SSHTarget):
+        src_bootstrap_path = src_dir.path.joinpath(basename)
+        src_bootstrap_target = src_dir.with_path(src_bootstrap_path)
+        if not src_bootstrap_target.is_dir():
+            return
+        mtime = src_bootstrap_target.mtime()
+    else:
+        src_bootstrap_path = src_dir.joinpath(basename)
+        if not src_bootstrap_path.is_dir():
+            return
+        mtime = src_bootstrap_path.stat().st_mtime
+    if time.time() - mtime <= refresh_days * 86400:
+        return
+    Logging.get().info(f"refreshing btrfs bootstrap snapshot for backup '{backup.name}'")
+    if isinstance(src_dir, SSHTarget):
+        _btrfs_delete_subvolumes_remote(src_bootstrap_target)
+    else:
+        _btrfs_delete_subvolumes_local(src_bootstrap_path)
+    if isinstance(dst_dir, SSHTarget):
+        dst_bootstrap_target = dst_dir.with_path(dst_dir.path.joinpath(basename))
+        if dst_bootstrap_target.is_dir():
+            _btrfs_delete_subvolumes_remote(dst_bootstrap_target)
+    else:
+        dst_bootstrap_path = dst_dir.joinpath(basename)
+        if dst_bootstrap_path.is_dir():
+            _btrfs_delete_subvolumes_local(dst_bootstrap_path)
 
 
 def _btrfs_bootstrap_snapshot_basename() -> str:
