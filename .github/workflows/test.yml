@@ -21,17 +21,17 @@ jobs:
         run: |
           apt-get update -y
           apt-get install -y python3 python3-venv btrfs-progs zfsutils-linux openssh-client openssh-server
+      - name: Install python dependencies into venv
+        run: |
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip3 install -e .[test]
       - name: Start SSH server
         run: |
           mkdir -p /run/sshd /root/.ssh
           /usr/sbin/sshd
           ssh-keyscan -H localhost >> /root/.ssh/known_hosts
           chmod 600 /root/.ssh/known_hosts
-      - name: Install python dependencies into venv
-        run: |
-          python3 -m venv .venv
-          source .venv/bin/activate
-          pip3 install -e .[test]
       - name: Run tests
         run: |
           source .venv/bin/activate
