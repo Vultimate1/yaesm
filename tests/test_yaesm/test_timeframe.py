@@ -4,10 +4,12 @@ from yaesm.timeframe import (
     DailyTimeframe,
     FiveMinuteTimeframe,
     HourlyTimeframe,
+    ImmediateTimeframe,
     MonthlyTimeframe,
     WeeklyTimeframe,
     YearlyTimeframe,
     tframe_types,
+    tframe_types_configurable,
 )
 
 
@@ -55,6 +57,12 @@ def test_YearlyTimeframe():
     assert tf.yeardays == [1, 2, 365]
 
 
+def test_ImmediateTimeframe():
+    tf = ImmediateTimeframe(10)
+    assert tf.name == "immediate"
+    assert tf.keep == 10
+
+
 def test_tframe_types():
     assert tframe_types() == [
         FiveMinuteTimeframe,
@@ -63,5 +71,38 @@ def test_tframe_types():
         WeeklyTimeframe,
         MonthlyTimeframe,
         YearlyTimeframe,
+        ImmediateTimeframe,
     ]
-    assert tframe_types(names=True) == ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]
+    assert tframe_types(names=True) == [
+        "5minute",
+        "hourly",
+        "daily",
+        "weekly",
+        "monthly",
+        "yearly",
+        "immediate",
+    ]
+
+
+def test_tframe_types_configurable():
+    assert tframe_types_configurable() == [
+        FiveMinuteTimeframe,
+        HourlyTimeframe,
+        DailyTimeframe,
+        WeeklyTimeframe,
+        MonthlyTimeframe,
+        YearlyTimeframe,
+    ]
+    assert tframe_types_configurable(names=True) == [
+        "5minute",
+        "hourly",
+        "daily",
+        "weekly",
+        "monthly",
+        "yearly",
+    ]
+
+
+def test_ImmediateTimeframe_not_in_tframe_types_configurable():
+    assert ImmediateTimeframe not in tframe_types_configurable()
+    assert "immediate" not in tframe_types_configurable(names=True)

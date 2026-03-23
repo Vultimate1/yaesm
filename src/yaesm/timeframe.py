@@ -31,6 +31,32 @@ def tframe_types(names: bool = False) -> list[str] | list[type[Timeframe]]:
     as strings. Otherwise return a list of all the timeframe type subclasses.
     """
     if names:
+        return ["5minute", "hourly", "daily", "weekly", "monthly", "yearly", "immediate"]
+    return [
+        FiveMinuteTimeframe,
+        HourlyTimeframe,
+        DailyTimeframe,
+        WeeklyTimeframe,
+        MonthlyTimeframe,
+        YearlyTimeframe,
+        ImmediateTimeframe,
+    ]
+
+
+@ty.overload
+def tframe_types_configurable(names: ty.Literal[True]) -> list[str]: ...
+
+
+@ty.overload
+def tframe_types_configurable(names: ty.Literal[False] = ...) -> list[type[Timeframe]]: ...
+
+
+def tframe_types_configurable(names: bool = False) -> list[str] | list[type[Timeframe]]:
+    """Like `tframe_types()` but only returns timeframe types that are valid in
+    configuration files. Excludes timeframes like `ImmediateTimeframe` that are
+    only used programmatically.
+    """
+    if names:
         return ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]
     return [
         FiveMinuteTimeframe,
@@ -158,3 +184,16 @@ class YearlyTimeframe(Timeframe):
     keep: int
     times: list[tuple[int, int]]
     yeardays: list[int]
+
+
+@dataclasses.dataclass
+class ImmediateTimeframe(Timeframe):
+    """`ImmediateTimeframe` represents a one-off manual backup triggered by the
+    ``yaesm backup`` subcommand.
+
+    This timeframe is not valid in configuration files and is excluded from
+    `tframe_types_configurable()`.
+    """
+
+    name = "immediate"
+    keep: int

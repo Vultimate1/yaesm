@@ -29,7 +29,7 @@ from yaesm.timeframe import (
     Timeframe,
     WeeklyTimeframe,
     YearlyTimeframe,
-    tframe_types,
+    tframe_types_configurable,
 )
 
 
@@ -432,7 +432,8 @@ def random_timeframe_generator(
         monthdays=None,
         yeardays=None,
     ) -> Timeframe:
-        tframe_type = random.choice(tframe_types()) if tframe_type is None else tframe_type
+        if tframe_type is None:
+            tframe_type = random.choice(tframe_types_configurable())
         keep = random.randint(1, 10) if keep is None else keep
         minutes = (
             random_timeframe_minutes_generator(random.randint(1, 5)) if minutes is None else minutes
@@ -486,7 +487,7 @@ def random_timeframes_generator(random_timeframe_generator):
 
     def generator(num=3, **kwargs):
         timeframes = []
-        tf_types = random.sample(tframe_types(), k=num)
+        tf_types = random.sample(tframe_types_configurable(), k=num)
         for tf_type in tf_types:
             timeframes.append(random_timeframe_generator(tframe_type=tf_type, **kwargs))
         return timeframes
