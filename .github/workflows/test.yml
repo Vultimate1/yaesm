@@ -9,28 +9,24 @@ on:
 jobs:
   test:
     runs-on: ubuntu-24.04
-    container:
-      image: ubuntu:24.04
-      options: --user root
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
       - name: Update system packages
         run: |
-          apt-get update -y
-          apt-get upgrade -y
+          sudo apt-get update -y
+          sudo apt-get upgrade -y
       - name: Install dependencies
         run: |
-          apt-get install -y python3 python3-venv btrfs-progs zfsutils-linux openssh-client openssh-server
+          sudo apt-get install -y python3 python3-venv btrfs-progs zfsutils-linux openssh-client openssh-server
       - name: Start SSH server
         run: |
-          mkdir -p /run/sshd
-          /usr/sbin/sshd
+          sudo mkdir -p /run/sshd
+          sudo /usr/sbin/sshd
       - name: Create virtual environment
         run: |
-          python3 -m venv yaesm-venv
+          sudo python3 -m venv yaesm-venv
       - name: Activate and run pytest environment
         run: |
-          . yaesm-venv/bin/activate
-          pip3 install -e .[test]
-          python3 -m pytest
+          sudo yaesm-venv/bin/pip3 install -e .[test]
+          sudo yaesm-venv/bin/python3 -m pytest
