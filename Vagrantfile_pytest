@@ -36,8 +36,8 @@ Vagrant.configure("2") do |config|
       # PYTEST ENV
       (
         su vagrant
-        python3 -m venv /home/vagrant/yaesm-venv
-        . /home/vagrant/yaesm-venv/bin/activate
+        python3 -m venv /home/vagrant/.venv
+        . /home/vagrant/.venv/bin/activate
         pip3 install -e "/home/vagrant/yaesm[test]"
       )
     SHELL

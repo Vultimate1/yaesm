@@ -155,7 +155,7 @@ fi
 _r vagrant snapshot restore --no-start yaesm-pytest yaesm-pytest-postbuild-snapshot
 _r vagrant up yaesm-pytest --provider libvirt
 VM_STATE=running
-vagrant ssh yaesm-pytest -c "sudo bash -c 'cd /home/vagrant/yaesm && . /home/vagrant/yaesm-venv/bin/activate && python3 -m pytest $OPTS_PYTEST'" 2> >(grep -v '^\[fog\]\[WARNING\]' 1>&2) # for information on [fog][WARNING] see https://github.com/vagrant-libvirt/vagrant-libvirt/issues/1831#issuecomment-2471728475
+vagrant ssh yaesm-pytest -c "sudo bash -c 'cd /home/vagrant/yaesm && . /home/vagrant/.venv/bin/activate && python3 -m pytest $OPTS_PYTEST'" 2> >(grep -v '^\[fog\]\[WARNING\]' 1>&2) # for information on [fog][WARNING] see https://github.com/vagrant-libvirt/vagrant-libvirt/issues/1831#issuecomment-2471728475
 PYTEST_STATUS=$?
 
 if [[ 0 -ne $OPT_VM_KEEP_RUNNING ]]; then
