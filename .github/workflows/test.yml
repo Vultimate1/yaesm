@@ -25,11 +25,11 @@ jobs:
           sudo /usr/sbin/sshd
           sudo ssh-keyscan -H localhost | sudo tee -a /root/.ssh/known_hosts
           sudo chmod 600 /root/.ssh/known_hosts
-      - name: Create virtual environment
+      - name: Install python dependencies into venv
         run: |
           sudo python3 -m venv yaesm-venv
-      - name: Activate and run pytest environment
-        run: |
           sudo yaesm-venv/bin/pip3 install -e .[test]
+      - name: Run tests
+        run: |
           . yaesm-venv/bin/activate
           sudo -E yaesm-venv/bin/python3 -m pytest
