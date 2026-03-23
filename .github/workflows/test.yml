@@ -27,9 +27,9 @@ jobs:
           sudo chmod 600 /root/.ssh/known_hosts
       - name: Install python dependencies into venv
         run: |
-          sudo python3 -m venv yaesm-venv
-          sudo yaesm-venv/bin/pip3 install -e .[test]
+          sudo python3 -m venv .venv
+          sudo .venv/bin/pip3 install -e .[test]
       - name: Run tests
         run: |
-          . yaesm-venv/bin/activate
-          sudo -E yaesm-venv/bin/python3 -m pytest
+          . .venv/bin/activate
+          sudo -E HOME=/root .venv/bin/python3 -m pytest
