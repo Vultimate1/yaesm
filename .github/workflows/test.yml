@@ -31,6 +31,6 @@ jobs:
           python3 -m venv yaesm-venv
       - name: Activate and run pytest environment
         run: |
-          source yaesm-venv/bin/activate
+          . yaesm-venv/bin/activate
           pip3 install -e .[test]
           python3 -m pytest
