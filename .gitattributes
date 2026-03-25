@@ -1,6 +1,7 @@
-tests/              export-ignore
-vagrant-pytest      export-ignore
-Vagrantfile_pytest  export-ignore
-.gitattributes      export-ignore
-.gitignore          export-ignore
-.github/            export-ignore
+*              export-ignore
+src            -export-ignore
+src/**         -export-ignore
+pyproject.toml -export-ignore
+LICENSE        -export-ignore
+README.md      -export-ignore
+CHANGELOG.md   -export-ignore
