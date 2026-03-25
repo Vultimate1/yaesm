@@ -1,0 +1,7 @@
+*                export-ignore
+src/             -export-ignore
+src/**           -export-ignore
+pyproject.toml   -export-ignore
+LICENSE          -export-ignore
+README.md        -export-ignore
+CHANGELOG.md     -export-ignore
