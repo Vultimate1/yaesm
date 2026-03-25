@@ -11,10 +11,7 @@ from yaesm.subcommand.subcommandbase import SubcommandBase
 
 
 class RunSubcommand(SubcommandBase):
-    """The run subcommand runs the scheduler, which blocks, and in most cases never terminates.
-
-    This subcommand should primarily be invoked from OS init system software.
-    """
+    """Start the backup scheduler (blocks indefinitely; intended for use by init systems)."""
 
     def main(self, backups: list[Backup], parsed_args: argparse.Namespace) -> int:
         try:

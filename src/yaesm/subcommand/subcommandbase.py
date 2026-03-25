@@ -33,6 +33,16 @@ class SubcommandBase(abc.ABC):
 
     @ty.final
     @classmethod
+    def description(cls) -> str | None:
+        """Return the class docstring for use as the subcommand's --help description.
+
+        Subcommand classes should use their class docstring to describe the
+        subcommand's purpose; it will be displayed in --help output automatically.
+        """
+        return cls.__doc__
+
+    @ty.final
+    @classmethod
     def name(cls) -> str:
         """Automatically derive subcommand name from class name.
 
