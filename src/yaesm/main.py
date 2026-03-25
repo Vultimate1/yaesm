@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     subparsers = parser.add_subparsers(title="subcommands", dest="subcommand", required=True)
     for name, cls in subcommand_name_class_map.items():
-        subparser = subparsers.add_parser(name, help=cls.description(), description=cls.description())
+        subparser = subparsers.add_parser(name)
         cls.add_argparser_arguments(subparser)
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {importlib.metadata.version('yaesm')}"

@@ -8,7 +8,7 @@ from yaesm.timeframe import ImmediateTimeframe
 
 
 class BackupSubcommand(SubcommandBase):
-    """Perform a single manual backup."""
+    """The backup subcommand performs a single manual backup."""
 
     def main(self, backups: list[Backup], parsed_args: argparse.Namespace) -> int:
         backup = None

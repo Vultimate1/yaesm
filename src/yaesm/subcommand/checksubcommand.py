@@ -8,7 +8,7 @@ from yaesm.subcommand.subcommandbase import SubcommandBase
 
 
 class CheckSubcommand(SubcommandBase):
-    """Validate that all preconditions for a backup are met."""
+    """The check subcommand validates that all preconditions for a backup are met."""
 
     def main(self, backups: list[Backup], parsed_args: argparse.Namespace) -> int:
         if parsed_args.backup_name:
