@@ -14,6 +14,7 @@ import voluptuous as vlp
 import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm import config
+from yaesm.logging import Logging
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
 
@@ -41,6 +42,13 @@ class BackendBase(abc.ABC):
         Note that this function also cleans up old backups.
         """
         backup_basename = bckp.backup_basename_now(backup, timeframe)
+        if isinstance(backup.dst_dir, SSHTarget):
+            backup_exists = backup.dst_dir.exists(backup.dst_dir.path / backup_basename)
+        else:
+            backup_exists = backup.dst_dir.joinpath(backup_basename).exists()
+        if backup_exists:
+            Logging.get().error(f"backup already exists: {backup_basename}")
+            raise bckp.BackupError(f"backup already exists: {backup_basename}")
         if backup.backup_type == "local_to_local":
             self._exec_backup_local_to_local(backup, backup_basename, timeframe)
         elif backup.backup_type == "local_to_remote":

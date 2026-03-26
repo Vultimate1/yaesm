@@ -131,6 +131,16 @@ class SSHTarget:
         """
         return subprocess.run(self.openssh_cmd("exit 0"), check=False).returncode == 0
 
+    def exists(self, p: Path | None = None) -> bool:
+        """Return True if `p` exists on the remote SSH server.
+        If `p` is None then default to checking `self.path`.
+        """
+        if p is None:
+            p = self.path
+        return (
+            subprocess.run(self.openssh_cmd(f"[ -e '{p}' ]; exit $?"), check=False).returncode == 0
+        )
+
     def is_dir(self, d: Path | None = None) -> bool:
         """Return True if `d` is an existing directory on the remote SSH server.
         If `d` is None then default to checking `self.path`.

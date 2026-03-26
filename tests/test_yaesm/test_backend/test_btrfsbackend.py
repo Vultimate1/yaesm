@@ -40,6 +40,16 @@ def test_do_backup(btrfs_backend, random_backup_generator, path_generator):
         assert expected_backup_basenames[0 : timeframe.keep] == backup_basenames
 
 
+def test_do_backup_already_exists(btrfs_backend, random_backup_generator):
+    for backup_type in ["local_to_local", "local_to_remote", "remote_to_local"]:
+        backup = random_backup_generator(backend_type="btrfs", backup_type=backup_type)
+        timeframe = backup.timeframes[0]
+        with freeze_time("2020-01-01 00:00"):
+            btrfs_backend.do_backup(backup, timeframe)
+            with pytest.raises(bckp.BackupError, match="backup already exists"):
+                btrfs_backend.do_backup(backup, timeframe)
+
+
 def test_exec_backup_local_to_local(btrfs_backend, random_backup_generator):
     with freeze_time("1999-05-13 23:59"):
         backup_diff_fs = random_backup_generator(backend_type="btrfs", backup_type="local_to_local")

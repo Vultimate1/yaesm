@@ -111,6 +111,20 @@ def test_can_connect(sshtarget, tmp_user):
     assert not new_sshtarget.can_connect()
 
 
+def test_exists(sshtarget, path_generator):
+    path1 = path_generator("foo")
+    path2 = path_generator("bar")
+    target1 = sshtarget.with_path(path1)
+    target2 = sshtarget.with_path(path2)
+    assert not target1.exists()
+    assert not target2.exists()
+    path1.mkdir()
+    path2.touch()
+    assert target1.exists()
+    assert target2.exists()
+    assert target1.exists(path2)
+
+
 def test_is_dir(sshtarget, path_generator):
     path1 = path_generator("foo")
     path2 = path_generator("bar")
