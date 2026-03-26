@@ -1,15 +1,8 @@
 <!--
-  yaesm(1) man page source. Written in pandoc-flavored Markdown with YAML
-  frontmatter for man page metadata. The CI (build-manual.yml) converts this
-  to roff via pandoc. The footer version is injected from pyproject.toml at
-  build time.
+  yaesm(1) man page source. Written in pandoc-flavored Markdown. The CI
+  (build-manual.yml) converts this to roff via pandoc, passing all man page
+  metadata as CLI flags.
 -->
-
----
-title: YAESM
-section: 1
-footer: yaesm VERSION
----
 
 # NAME
 
