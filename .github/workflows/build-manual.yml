@@ -1,0 +1,33 @@
+name: build-manual
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'man/yaesm.1.md'
+      - '.github/workflows/build-manual.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'man/yaesm.1.md'
+      - '.github/workflows/build-manual.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Install pandoc
+        run: sudo apt-get update -y && sudo apt-get install -y pandoc
+      - name: Build man page
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          pandoc man/yaesm.1.md -s -t man -o man/yaesm.1 --metadata "footer=yaesm $version"
+          sed -i '1i .\" Auto-generated from man/yaesm.1.md by pandoc. Do not edit.' man/yaesm.1
+      - name: Upload man page
+        uses: actions/upload-artifact@v4
+        with:
+          name: man-pages
+          path: man/yaesm.1
