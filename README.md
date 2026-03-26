@@ -2,6 +2,8 @@
 
 A backup tool with support for multiple file systems!
 
+See the [manual](man/yaesm.1.md) for usage and configuration details.
+
 # DEVELOPERS
 
 Please do not hesitate to open an [issue](https://github.com/Vultimate1/yaesm/issues/new) or [pull request](https://github.com/Vultimate1/yaesm/pulls)!
