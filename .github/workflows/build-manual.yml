@@ -6,16 +6,10 @@ on:
     paths:
       - 'man/yaesm.1.md'
       - '.github/workflows/build-manual.yml'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'man/yaesm.1.md'
-      - '.github/workflows/build-manual.yml'
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -27,7 +21,6 @@ jobs:
           pandoc man/yaesm.1.md -s -t man -o man/yaesm.1 --metadata "footer=yaesm $version"
           sed -i '1i .\" Auto-generated from man/yaesm.1.md by pandoc. Do not edit.' man/yaesm.1
       - name: Commit man page
-        if: github.event_name == 'push'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
