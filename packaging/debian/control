@@ -1,0 +1,13 @@
+Source: yaesm
+Maintainer: SkiHatDuckie <SkiHatDuckie@gmail.com>
+Section: utils
+Priority: optional
+Build-Depends: dh-python, pybuild-plugin-pyproject, python3-setuptools, python3, debhelper (>= 10)
+Standards-Version: 4.6.0.1
+Homepage: https://github.com/Vultimate1/yaesm
+
+Package: yaesm
+Architecture: any
+Depends: ${misc:Depends}, ${python3:Depends}, python3
+Description: Yet another backup scheduler
+ YAESM is a backup scheduler for multiple filesystems.
