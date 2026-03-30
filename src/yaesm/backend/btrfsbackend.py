@@ -73,7 +73,7 @@ class BtrfsBackend(BackendBase):
         backup_path = backup.dst_dir.joinpath(bckp.backup_basename_now(backup, timeframe))
         returncode, _ = _btrfs_take_snapshot_local(src_dir, backup_path, check=False)
         if returncode != 0:
-            bootstrap_snapshot = _btrfs_bootstrap_local_to_local(src_dir, backup_path.parent)
+            bootstrap_snapshot = _btrfs_bootstrap_local_to_local(src_dir, backup_path.parent, backup)
             _, tmp_snapshot = _btrfs_take_snapshot_local(src_dir, src_dir.joinpath(backup_basename))
             _btrfs_send_receive_local_to_local(
                 tmp_snapshot, backup_path.parent, parent=bootstrap_snapshot
@@ -90,7 +90,7 @@ class BtrfsBackend(BackendBase):
         src_dir = backup.src_dir
         backup_path = backup.dst_dir.with_path(backup.dst_dir.path.joinpath(backup_basename))
         bootstrap_snapshot = _btrfs_bootstrap_local_to_remote(
-            src_dir, backup_path.with_path(backup_path.path.parent)
+            src_dir, backup_path.with_path(backup_path.path.parent), backup
         )
         _, tmp_snapshot = _btrfs_take_snapshot_local(
             src_dir, src_dir.joinpath(backup_path.path.name)
@@ -109,7 +109,7 @@ class BtrfsBackend(BackendBase):
             _btrfs_maybe_refresh_bootstrap(backup, self.bootstrap_refresh_days)
         src_dir = backup.src_dir
         backup_path = backup.dst_dir.joinpath(backup_basename)
-        bootstrap_snapshot = _btrfs_bootstrap_remote_to_local(src_dir, backup_path.parent)
+        bootstrap_snapshot = _btrfs_bootstrap_remote_to_local(src_dir, backup_path.parent, backup)
         _, tmp_snapshot = _btrfs_take_snapshot_remote(
             src_dir, src_dir.with_path(src_dir.path.joinpath(backup_path.name))
         )
@@ -255,7 +255,7 @@ def _btrfs_maybe_refresh_bootstrap(backup: bckp.Backup, refresh_days: int) -> No
     _btrfs_bootstrap_* functions handle the "neither exists" case by
     recreating both.
     """
-    basename = _btrfs_bootstrap_snapshot_basename()
+    basename = _btrfs_bootstrap_snapshot_basename(backup.name)
     src_dir = backup.src_dir
     dst_dir = backup.dst_dir
     if isinstance(src_dir, SSHTarget):
@@ -286,18 +286,18 @@ def _btrfs_maybe_refresh_bootstrap(backup: bckp.Backup, refresh_days: int) -> No
             _btrfs_delete_subvolumes_local(dst_bootstrap_path)
 
 
-def _btrfs_bootstrap_snapshot_basename() -> str:
+def _btrfs_bootstrap_snapshot_basename(backup_name: str) -> str:
     """Return the basename of a btrfs bootstrap snapshot."""
-    return ".yaesm-btrfs-bootstrap-snapshot"
+    return f".yaesm-btrfs-bootstrap-snapshot-{backup_name}"
 
 
-def _btrfs_bootstrap_local_to_local(src_dir: Path, dst_dir: Path) -> Path:
+def _btrfs_bootstrap_local_to_local(src_dir: Path, dst_dir: Path, backup: bckp.Backup) -> Path:
     """Perform the bootstrap phase of a local-to-local backup.
 
     The bootstrap snapshot is necessary for incremental backups with 'btrfs send -p'.
     """
-    src_bootstrap = src_dir.joinpath(_btrfs_bootstrap_snapshot_basename())
-    dst_bootstrap = dst_dir.joinpath(_btrfs_bootstrap_snapshot_basename())
+    src_bootstrap = src_dir.joinpath(_btrfs_bootstrap_snapshot_basename(backup.name))
+    dst_bootstrap = dst_dir.joinpath(_btrfs_bootstrap_snapshot_basename(backup.name))
     src_bootstrap_exists = src_bootstrap.is_dir()
     dst_bootstrap_exists = dst_bootstrap.is_dir()
     if not src_bootstrap_exists and not dst_bootstrap_exists:
@@ -315,13 +315,15 @@ def _btrfs_bootstrap_local_to_local(src_dir: Path, dst_dir: Path) -> Path:
     return src_bootstrap
 
 
-def _btrfs_bootstrap_local_to_remote(src_dir: Path, dst_dir: SSHTarget) -> Path:
+def _btrfs_bootstrap_local_to_remote(src_dir: Path, dst_dir: SSHTarget, backup: bckp.Backup) -> Path:
     """Perform the bootstrap phase of a local-to-remote backup.
 
     The bootstrap snapshot is necessary for incremental backups with 'btrfs send -p'.
     """
-    src_bootstrap = src_dir.joinpath(_btrfs_bootstrap_snapshot_basename())
-    dst_bootstrap = dst_dir.with_path(dst_dir.path.joinpath(_btrfs_bootstrap_snapshot_basename()))
+    src_bootstrap = src_dir.joinpath(_btrfs_bootstrap_snapshot_basename(backup.name))
+    dst_bootstrap = dst_dir.with_path(
+        dst_dir.path.joinpath(_btrfs_bootstrap_snapshot_basename(backup.name))
+    )
     src_bootstrap_exists = src_bootstrap.is_dir()
     dst_bootstrap_exists = dst_bootstrap.is_dir()
     if not src_bootstrap_exists and not dst_bootstrap_exists:
@@ -339,13 +341,15 @@ def _btrfs_bootstrap_local_to_remote(src_dir: Path, dst_dir: SSHTarget) -> Path:
     return src_bootstrap
 
 
-def _btrfs_bootstrap_remote_to_local(src_dir: SSHTarget, dst_dir: Path) -> SSHTarget:
+def _btrfs_bootstrap_remote_to_local(src_dir: SSHTarget, dst_dir: Path, backup: bckp.Backup) -> SSHTarget:
     """Perform the bootstrap phase of a remote-to-local backup.
 
     The bootstrap snapshot is necessary for incremental backups with 'btrfs send -p'.
     """
-    src_bootstrap = src_dir.with_path(src_dir.path.joinpath(_btrfs_bootstrap_snapshot_basename()))
-    dst_bootstrap = dst_dir.joinpath(_btrfs_bootstrap_snapshot_basename())
+    src_bootstrap = src_dir.with_path(
+        src_dir.path.joinpath(_btrfs_bootstrap_snapshot_basename(backup.name))
+    )
+    dst_bootstrap = dst_dir.joinpath(_btrfs_bootstrap_snapshot_basename(backup.name))
     src_bootstrap_exists = src_bootstrap.is_dir()
     dst_bootstrap_exists = dst_bootstrap.is_dir()
     if not src_bootstrap_exists and not dst_bootstrap_exists:

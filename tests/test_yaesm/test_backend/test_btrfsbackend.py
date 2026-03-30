@@ -273,69 +273,78 @@ def test_btrfs_send_receive_remote_to_local(btrfs_fs, sshtarget, path_generator)
     assert received_snapshot == receive_dir.joinpath(tmp_snapshot.path.name)
 
 
-def test_btrfs_bootstrap_local_to_local(btrfs_fs, path_generator):
+def test_btrfs_bootstrap_local_to_local(
+    btrfs_fs, btrfs_backend, path_generator, random_timeframes_generator
+):
     src_dir = btrfs_fs
     dst_dir = path_generator("test-btrfs-bootstrap-dst", base_dir=btrfs_fs, mkdir=True)
-    dst_bootstrap = dst_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename())
-    bootstrap_snapshot = btrfs._btrfs_bootstrap_local_to_local(src_dir, dst_dir)
-    assert bootstrap_snapshot == src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename())
+    backup = Backup("test", btrfs_backend, src_dir, dst_dir, random_timeframes_generator())
+    dst_bootstrap = dst_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename("test"))
+    bootstrap_snapshot = btrfs._btrfs_bootstrap_local_to_local(src_dir, dst_dir, backup)
+    assert bootstrap_snapshot == src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename("test"))
     assert bootstrap_snapshot.is_dir()
     assert dst_bootstrap.is_dir()
     btrfs._btrfs_delete_subvolumes_local(dst_bootstrap)
     assert not dst_bootstrap.is_dir()
-    bootstrap_snapshot = btrfs._btrfs_bootstrap_local_to_local(src_dir, dst_dir)
+    bootstrap_snapshot = btrfs._btrfs_bootstrap_local_to_local(src_dir, dst_dir, backup)
     assert dst_bootstrap.is_dir()
     btrfs._btrfs_delete_subvolumes_local(bootstrap_snapshot)
     assert not bootstrap_snapshot.is_dir()
-    btrfs._btrfs_bootstrap_local_to_local(src_dir, dst_dir)
+    btrfs._btrfs_bootstrap_local_to_local(src_dir, dst_dir, backup)
     assert bootstrap_snapshot.is_dir()
-    btrfs._btrfs_bootstrap_local_to_local(src_dir, dst_dir)
+    btrfs._btrfs_bootstrap_local_to_local(src_dir, dst_dir, backup)
     assert bootstrap_snapshot.is_dir()
 
 
-def test_btrfs_bootstrap_local_to_remote(btrfs_fs, sshtarget, path_generator):
+def test_btrfs_bootstrap_local_to_remote(
+    btrfs_fs, btrfs_backend, sshtarget, path_generator, random_timeframes_generator
+):
     src_dir = btrfs_fs
     dst_dir = sshtarget.with_path(
         path_generator("test-btrfs-bootstrap-dst", base_dir=btrfs_fs, mkdir=True)
     )
+    backup = Backup("test", btrfs_backend, src_dir, dst_dir, random_timeframes_generator())
     dst_bootstrap = dst_dir.with_path(
-        dst_dir.path.joinpath(btrfs._btrfs_bootstrap_snapshot_basename())
+        dst_dir.path.joinpath(btrfs._btrfs_bootstrap_snapshot_basename("test"))
     )
-    bootstrap_snapshot = btrfs._btrfs_bootstrap_local_to_remote(src_dir, dst_dir)
-    assert bootstrap_snapshot == src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename())
+    bootstrap_snapshot = btrfs._btrfs_bootstrap_local_to_remote(src_dir, dst_dir, backup)
+    assert bootstrap_snapshot == src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename("test"))
     assert bootstrap_snapshot.is_dir()
     assert dst_bootstrap.path.is_dir()
     btrfs._btrfs_delete_subvolumes_local(dst_bootstrap.path)
     assert not dst_bootstrap.path.is_dir()
-    bootstrap_snapshot = btrfs._btrfs_bootstrap_local_to_remote(src_dir, dst_dir)
+    bootstrap_snapshot = btrfs._btrfs_bootstrap_local_to_remote(src_dir, dst_dir, backup)
     assert dst_bootstrap.path.is_dir()
     btrfs._btrfs_delete_subvolumes_local(bootstrap_snapshot)
     assert not bootstrap_snapshot.is_dir()
-    btrfs._btrfs_bootstrap_local_to_remote(src_dir, dst_dir)
+    btrfs._btrfs_bootstrap_local_to_remote(src_dir, dst_dir, backup)
     assert bootstrap_snapshot.is_dir()
-    btrfs._btrfs_bootstrap_local_to_remote(src_dir, dst_dir)
+    btrfs._btrfs_bootstrap_local_to_remote(src_dir, dst_dir, backup)
     assert bootstrap_snapshot.is_dir()
 
 
-def test_btrfs_bootstrap_remote_to_local(btrfs_fs, sshtarget, path_generator):
+def test_btrfs_bootstrap_remote_to_local(
+    btrfs_fs, btrfs_backend, sshtarget, path_generator, random_timeframes_generator
+):
     src_dir = sshtarget.with_path(btrfs_fs)
     dst_dir = path_generator("test-btrfs-bootstrap-dst", base_dir=btrfs_fs, mkdir=True)
-    dst_bootstrap = dst_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename())
-    bootstrap_snapshot = btrfs._btrfs_bootstrap_remote_to_local(src_dir, dst_dir)
+    backup = Backup("test", btrfs_backend, src_dir, dst_dir, random_timeframes_generator())
+    dst_bootstrap = dst_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename("test"))
+    bootstrap_snapshot = btrfs._btrfs_bootstrap_remote_to_local(src_dir, dst_dir, backup)
     assert bootstrap_snapshot.path == src_dir.path.joinpath(
-        btrfs._btrfs_bootstrap_snapshot_basename()
+        btrfs._btrfs_bootstrap_snapshot_basename("test")
     )
     assert bootstrap_snapshot.path.is_dir()
     assert dst_bootstrap.is_dir()
     btrfs._btrfs_delete_subvolumes_local(dst_bootstrap)
     assert not dst_bootstrap.is_dir()
-    bootstrap_snapshot = btrfs._btrfs_bootstrap_remote_to_local(src_dir, dst_dir)
+    bootstrap_snapshot = btrfs._btrfs_bootstrap_remote_to_local(src_dir, dst_dir, backup)
     assert dst_bootstrap.is_dir()
     btrfs._btrfs_delete_subvolumes_remote(bootstrap_snapshot)
     assert not bootstrap_snapshot.path.is_dir()
-    btrfs._btrfs_bootstrap_remote_to_local(src_dir, dst_dir)
+    btrfs._btrfs_bootstrap_remote_to_local(src_dir, dst_dir, backup)
     assert bootstrap_snapshot.path.is_dir()
-    btrfs._btrfs_bootstrap_remote_to_local(src_dir, dst_dir)
+    btrfs._btrfs_bootstrap_remote_to_local(src_dir, dst_dir, backup)
     assert bootstrap_snapshot.path.is_dir()
 
 
@@ -650,7 +659,7 @@ def test_btrfs_maybe_refresh_bootstrap(btrfs_fs_generator, random_timeframes_gen
     src_dir = btrfs_fs_generator()
     dst_dir = btrfs_fs_generator()
     backup = Backup("test-refresh", backend, src_dir, dst_dir, random_timeframes_generator())
-    basename = btrfs._btrfs_bootstrap_snapshot_basename()
+    basename = btrfs._btrfs_bootstrap_snapshot_basename(backup.name)
     src_bootstrap = src_dir.joinpath(basename)
     dst_bootstrap = dst_dir.joinpath(basename)
 
@@ -660,7 +669,7 @@ def test_btrfs_maybe_refresh_bootstrap(btrfs_fs_generator, random_timeframes_gen
     assert not dst_bootstrap.is_dir()
 
     # create bootstrap snapshots manually
-    btrfs._btrfs_bootstrap_local_to_local(src_dir, dst_dir)
+    btrfs._btrfs_bootstrap_local_to_local(src_dir, dst_dir, backup)
     assert src_bootstrap.is_dir()
     assert dst_bootstrap.is_dir()
 
@@ -681,7 +690,7 @@ def test_btrfs_maybe_refresh_bootstrap(btrfs_fs_generator, random_timeframes_gen
     assert not dst_bootstrap.is_dir()
 
     # recreate and test: src deleted but dst already gone — no error
-    btrfs._btrfs_bootstrap_local_to_local(src_dir, dst_dir)
+    btrfs._btrfs_bootstrap_local_to_local(src_dir, dst_dir, backup)
     btrfs._btrfs_delete_subvolumes_local(dst_bootstrap)
     assert not dst_bootstrap.is_dir()
     with freeze_time("2020-01-05 12:00"):
@@ -698,8 +707,8 @@ def test_bootstrap_refresh_local_to_local(btrfs_fs_generator, random_backup_gene
     timeframe.keep = 5
     with freeze_time("2020-01-01 12:00"):
         backend.do_backup(backup, timeframe)
-    src_bootstrap = backup.src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename())
-    dst_bootstrap = backup.dst_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename())
+    src_bootstrap = backup.src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename(backup.name))
+    dst_bootstrap = backup.dst_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename(backup.name))
     assert src_bootstrap.is_dir()
     assert dst_bootstrap.is_dir()
     _age_btrfs_snapshot(src_bootstrap, datetime(2020, 1, 1).timestamp())
@@ -724,8 +733,9 @@ def test_bootstrap_refresh_local_to_remote(
     timeframe.keep = 5
     with freeze_time("2020-01-01 12:00"):
         backend.do_backup(backup, timeframe)
-    src_bootstrap = backup.src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename())
-    dst_bootstrap = backup.dst_dir.path.joinpath(btrfs._btrfs_bootstrap_snapshot_basename())
+    src_bootstrap = backup.src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename(backup.name))
+    bootstrap_basename = btrfs._btrfs_bootstrap_snapshot_basename(backup.name)
+    dst_bootstrap = backup.dst_dir.path.joinpath(bootstrap_basename)
     assert src_bootstrap.is_dir()
     assert dst_bootstrap.is_dir()
     _age_btrfs_snapshot(src_bootstrap, datetime(2020, 1, 1).timestamp())
@@ -750,8 +760,9 @@ def test_bootstrap_refresh_remote_to_local(
     timeframe.keep = 5
     with freeze_time("2020-01-01 12:00"):
         backend.do_backup(backup, timeframe)
-    src_bootstrap = backup.src_dir.path.joinpath(btrfs._btrfs_bootstrap_snapshot_basename())
-    dst_bootstrap = backup.dst_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename())
+    bootstrap_basename = btrfs._btrfs_bootstrap_snapshot_basename(backup.name)
+    src_bootstrap = backup.src_dir.path.joinpath(bootstrap_basename)
+    dst_bootstrap = backup.dst_dir.joinpath(bootstrap_basename)
     assert src_bootstrap.is_dir()
     assert dst_bootstrap.is_dir()
     _age_btrfs_snapshot(src_bootstrap, datetime(2020, 1, 1).timestamp())
@@ -774,7 +785,7 @@ def test_bootstrap_no_refresh_when_young(btrfs_fs_generator, random_backup_gener
     timeframe.keep = 5
     with freeze_time("2020-01-01 12:00"):
         backend.do_backup(backup, timeframe)
-    src_bootstrap = backup.src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename())
+    src_bootstrap = backup.src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename(backup.name))
     original_mtime = src_bootstrap.stat().st_mtime
     with freeze_time("2020-01-02 12:00"):
         backend.do_backup(backup, timeframe)
@@ -788,7 +799,7 @@ def test_bootstrap_no_refresh_at_boundary(btrfs_fs_generator, random_backup_gene
     timeframe.keep = 5
     with freeze_time("2020-01-01 12:00"):
         backend.do_backup(backup, timeframe)
-    src_bootstrap = backup.src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename())
+    src_bootstrap = backup.src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename(backup.name))
     # age to exactly 1 day (== refresh_days), should NOT refresh
     _age_btrfs_snapshot(src_bootstrap, datetime(2020, 1, 1, 12, 0).timestamp())
     original_mtime = src_bootstrap.stat().st_mtime
@@ -805,7 +816,7 @@ def test_bootstrap_no_refresh_when_unset(btrfs_fs_generator, random_backup_gener
     timeframe.keep = 5
     with freeze_time("2020-01-01 12:00"):
         backend.do_backup(backup, timeframe)
-    src_bootstrap = backup.src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename())
+    src_bootstrap = backup.src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename(backup.name))
     _age_btrfs_snapshot(src_bootstrap, datetime(2019, 1, 1).timestamp())
     original_mtime = src_bootstrap.stat().st_mtime
     with freeze_time("2020-05-01 12:00"):
@@ -824,7 +835,7 @@ def test_bootstrap_refresh_preserves_existing_backups(btrfs_fs_generator, random
             backend.do_backup(backup, timeframe)
     backups_before = bckp.backups_collect(backup, timeframe=timeframe)
     assert len(backups_before) == 3
-    src_bootstrap = backup.src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename())
+    src_bootstrap = backup.src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename(backup.name))
     # set mtime to 2 days before the next frozen time
     next_frozen = now + timedelta(hours=3)
     _age_btrfs_snapshot(src_bootstrap, (next_frozen - timedelta(days=2)).timestamp())
