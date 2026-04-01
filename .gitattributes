@@ -5,3 +5,5 @@ pyproject.toml -export-ignore
 LICENSE        -export-ignore
 README.md      -export-ignore
 CHANGELOG.md   -export-ignore
+man            -export-ignore
+man/yaesm.1    -export-ignore
