@@ -25,7 +25,7 @@ jobs:
             --metadata title=YAESM \
             --metadata section=1 \
             --metadata "footer=yaesm $version"
-          sed -i '1i .\" Auto-generated from man/yaesm.1.md by pandoc. Do not edit.' man/yaesm.1
+          sed -i '1i .\\" Auto-generated from man/yaesm.1.md by pandoc. Do not edit.' man/yaesm.1
       - name: Commit man page
         run: |
           git config user.name "github-actions[bot]"
