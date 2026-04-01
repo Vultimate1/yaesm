@@ -7,6 +7,9 @@ on:
       - 'man/yaesm.1.md'
       - '.github/workflows/build-manual.yml'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
