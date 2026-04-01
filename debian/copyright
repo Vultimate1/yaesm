@@ -1,0 +1,8 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: yaesm
+Source: https://github.com/Vultimate1/yaesm
+
+Files: *
+Copyright: 2026- Yaesm contributors
+License: GPL-3.0+
+  /usr/share/common-licenses/GPL-3
