@@ -1,0 +1,14 @@
+[Unit]
+Description=YAESM backup scheduler
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStartPre=/usr/bin/yaesm --config /etc/yaesm/config.yaml check
+ExecStart=/usr/bin/yaesm --config /etc/yaesm/config.yaml --log-level INFO --log-stderr run
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
