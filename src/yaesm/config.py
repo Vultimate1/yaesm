@@ -333,15 +333,8 @@ class TimeframeSchema(Schema):
                     )
                 },
                 TimeframeSchema.has_required_settings,
+                TimeframeSchema._keeps_are_ints,
                 {
-                    (
-                        "5minute_keep",
-                        "hourly_keep",
-                        "daily_keep",
-                        "weekly_keep",
-                        "monthly_keep",
-                        "yearly_keep",
-                    ): vlp.All(int, vlp.Range(min=0)),
                     "hourly_minutes": [vlp.All(int, vlp.Range(min=0, max=59))],
                     vlp.Optional("daily_times"): vlp.All(
                         TimeframeSchema.are_valid_timespecs,
@@ -430,6 +423,16 @@ class TimeframeSchema(Schema):
                         + f"\n\tExpected format 'hh:mm', got {timespec}"
                     )
         return res
+
+    @staticmethod
+    def _keeps_are_ints(spec: dict) -> dict:
+        for setting in ["5minute_keep", "hourly_keep", "daily_keep", "weekly_keep", "monthly_keep", "yearly_keep"]:
+            keep = spec.get(setting)
+            if keep is not None:
+                if not isinstance(keep, int) or keep < 1:
+                    raise vlp.Invalid("BAD KEEP")
+        return spec
+
 
     @staticmethod
     def are_valid_hours(spec: list[tuple[int, int]]) -> list[tuple[int, int]]:
