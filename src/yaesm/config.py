@@ -27,16 +27,16 @@ def parse_config(config_file: str | Path) -> list[bckp.Backup]:
     """
     config_file = Path(config_file)
     if not config_file.is_file():
-        raise ConfigErrors(config_file, [f"config file does not exist: {config_file}"])
+        raise ConfigErrors(config_file, [(config_file, "config file does not exist")])
 
     with open(config_file, encoding="utf-8") as f:
         try:
             config_data = yaml.safe_load(f)
         except yaml.YAMLError as exc:
-            raise ConfigErrors(config_file, [exc]) from exc
+            raise ConfigErrors(config_file, [(config_file, exc)]) from exc
     backup_names = sorted(list(config_data.keys())) if config_data else []
     if not backup_names:
-        raise ConfigErrors(config_file, ["no backups specified"])
+        raise ConfigErrors(config_file, [(config_file, "no backups specified")])
     backup_schema = BackupSchema.schema()
     backups = []
     errors = []
