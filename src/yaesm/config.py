@@ -334,7 +334,7 @@ class TimeframeSchema(Schema):
                     )
                 },
                 TimeframeSchema.has_required_settings,
-                TimeframeSchema._keeps_are_ints,
+                TimeframeSchema._keeps_are_positive_ints,
                 {
                     "hourly_minutes": [vlp.All(int, vlp.Range(min=0, max=59))],
                     vlp.Optional("daily_times"): vlp.All(
@@ -426,7 +426,7 @@ class TimeframeSchema(Schema):
         return res
 
     @staticmethod
-    def _keeps_are_ints(spec: dict) -> dict:
+    def _keeps_are_positive_ints(spec: dict) -> dict:
         bad_keeps = []
         for setting in ["5minute_keep", "hourly_keep", "daily_keep", "weekly_keep", "monthly_keep", "yearly_keep"]:
             keep = spec.get(setting)
