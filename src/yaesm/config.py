@@ -274,6 +274,7 @@ class TimeframeSchema(Schema):
         TIME_MALFORMED = "Not a valid time specification"
         HOUR_OUT_OF_RANGE = "Hour portion of time specification not within range [0, 23]"
         MINUTE_OUT_OF_RANGE = "Minute portion of time specification not within range [0, 59]"
+        INVALID_KEEP = "Invalid *_keep settings not a positive integer"
 
     # Be Scared, BE AFRAID!!! Due to an oversight, devs must ensure the settings for
     # each key are in the same order as they appear in the Timeframe class'
@@ -426,11 +427,14 @@ class TimeframeSchema(Schema):
 
     @staticmethod
     def _keeps_are_ints(spec: dict) -> dict:
+        bad_keeps = []
         for setting in ["5minute_keep", "hourly_keep", "daily_keep", "weekly_keep", "monthly_keep", "yearly_keep"]:
             keep = spec.get(setting)
             if keep is not None:
                 if not isinstance(keep, int) or keep < 1:
-                    raise vlp.Invalid("BAD KEEP")
+                    bad_keeps.append(setting)
+        if bad_keeps:
+            raise vlp.Invalid(TimeframeSchema.ErrMsg.INVALID_KEEP + f":\n\t{bad_keeps}")
         return spec
 
 
