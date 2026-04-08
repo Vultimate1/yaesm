@@ -553,6 +553,25 @@ def test_BackupSchema_ensure_backup_name_valid():
     assert str(exc.value) == config.BackupSchema.ErrMsg.INVALID_BACKUP_NAME
 
 
+def test_BackupSchema_reject_unknown_settings(valid_raw_config):
+    for backup_name in sorted(valid_raw_config.keys()):
+        backup_settings = copy.deepcopy(valid_raw_config[backup_name])
+        # valid settings should pass
+        config.BackupSchema._reject_unknown_settings({backup_name: backup_settings})
+        # single unknown setting
+        backup_settings["INVALID_SETTING"] = 12
+        with pytest.raises(vlp.Invalid) as exc:
+            config.BackupSchema._reject_unknown_settings({backup_name: backup_settings})
+        assert config.BackupSchema.ErrMsg.UNKNOWN_SETTING in str(exc.value)
+        assert "INVALID_SETTING" in str(exc.value)
+        # multiple unknown settings
+        backup_settings["ANOTHER_BAD"] = "foo"
+        with pytest.raises(vlp.Invalid) as exc:
+            config.BackupSchema._reject_unknown_settings({backup_name: backup_settings})
+        assert "INVALID_SETTING" in str(exc.value)
+        assert "ANOTHER_BAD" in str(exc.value)
+
+
 def test_BackupSchema_apply_sub_schemas(valid_raw_config, path_generator):
     # success tests
     for backup_name in sorted(valid_raw_config.keys()):
@@ -607,8 +626,9 @@ def test_BackupSchema_schema(valid_raw_config, path_generator):
             assert isinstance(backup.dst_dir, Path)
         raw_config_copy = copy.deepcopy(valid_raw_config)
         raw_config_copy[backup_name]["INVALIDSETTING"] = "foo"
-        # no error for invalid setting
-        assert schema({backup_name: raw_config_copy[backup_name]})
+        with pytest.raises(vlp.MultipleInvalid) as exc:
+            schema({backup_name: raw_config_copy[backup_name]})
+        assert any(config.BackupSchema.ErrMsg.UNKNOWN_SETTING in str(e) for e in exc.value.errors)
     # failure tests
     with pytest.raises(vlp.Invalid) as exc:
         schema({})

@@ -77,6 +77,11 @@ class BackendBase(abc.ABC):
         return backend_name.lower()
 
     @staticmethod
+    def config_settings() -> set[str]:
+        """Returns the set of valid configuration setting names for this backend."""
+        return set()
+
+    @staticmethod
     def config_schema() -> vlp.Schema:
         """Returns a voluptuous schema for this backends specific configuration.
 

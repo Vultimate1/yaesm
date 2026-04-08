@@ -108,6 +108,7 @@ class BackupSchema(Schema):
     class ErrMsg:
         NOT_1_BACKUP = "Not given exactly 1 backup"
         INVALID_BACKUP_NAME = "Not a valid backup name"
+        UNKNOWN_SETTING = "Unknown configuration setting"
 
     @staticmethod
     def schema() -> vlp.Schema:
@@ -126,6 +127,26 @@ class BackupSchema(Schema):
         )
 
     @staticmethod
+    def _reject_unknown_settings(d: dict) -> dict:
+        """Raise a `vlp.Invalid` if the backup settings contain any keys that
+        are not recognized by any schema class or backend.
+        """
+        backup_name = list(d.keys())[0]
+        backup_settings = d[backup_name]
+        valid = BackendSchema.valid_settings() | SrcDirDstDirSchema.valid_settings() | TimeframeSchema.valid_settings()
+        backend_name = backup_settings.get("backend", "")
+        for cls in backendbase.BackendBase.backend_classes():
+            if cls.name() == backend_name:
+                valid |= cls.config_settings()
+                break
+        unknown = sorted(set(backup_settings.keys()) - valid)
+        if unknown:
+            raise vlp.Invalid(
+                BackupSchema.ErrMsg.UNKNOWN_SETTING + f"\n\t{unknown}"
+            )
+        return d
+
+    @staticmethod
     def _apply_sub_schemas(d: dict) -> dict:
         """Apply all of the sub schemas (TimeframeSchema, SrcDirDstDirSchema, etc)
         to `d`, mutating d. Collects all errors, and raises a `vlp.MultipleInvalid`
@@ -136,6 +157,10 @@ class BackupSchema(Schema):
         backup_name = list(d.keys())[0]
         backup_settings = d[backup_name]
         errors = []
+        try:
+            BackupSchema._reject_unknown_settings(d)
+        except vlp.Invalid as exc:
+            errors.append(exc)
         for schema_class in [BackendSchema, SrcDirDstDirSchema, TimeframeSchema]:
             schema = schema_class.schema()
             try:
@@ -194,6 +219,10 @@ class BackendSchema(Schema):
     @dataclasses.dataclass
     class ErrMsg:
         INVALID_BACKEND_NAME = "Not a valid backend name"
+
+    @staticmethod
+    def valid_settings() -> set[str]:
+        return {"backend"}
 
     @staticmethod
     def schema() -> vlp.Schema:
@@ -257,6 +286,13 @@ class TimeframeSchema(Schema):
         "monthly": ["monthly_keep", "monthly_times", "monthly_days"],
         "yearly": ["yearly_keep", "yearly_times", "yearly_days"],
     }
+
+    @staticmethod
+    def valid_settings() -> set[str]:
+        settings = {"timeframes"}
+        for tf_settings in TimeframeSchema.REQUIRED_SETTINGS.values():
+            settings.update(tf_settings)
+        return settings
 
     @staticmethod
     def schema() -> vlp.Schema:
@@ -451,6 +487,10 @@ class SrcDirDstDirSchema(Schema):
         SSH_CONNECTION_FAILED_TO_ESTABLISH = (
             "Could not establish an SSH connection to the SSHtarget"
         )
+
+    @staticmethod
+    def valid_settings() -> set[str]:
+        return {"src_dir", "dst_dir", "ssh_key", "ssh_config"}
 
     @staticmethod
     def schema() -> vlp.Schema:

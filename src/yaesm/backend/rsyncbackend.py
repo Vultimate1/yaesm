@@ -21,6 +21,10 @@ class RsyncBackend(BackendBase):
         return []
 
     @staticmethod
+    def config_settings() -> set[str]:
+        return {"rsync_extra_opts"}
+
+    @staticmethod
     def config_schema() -> vlp.Schema:
         """Rsync backups allow user to specify arbitrary extra options via a
         'rsync_extra_opts' setting. This setting can associate to a string
