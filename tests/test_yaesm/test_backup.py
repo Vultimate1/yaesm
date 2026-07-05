@@ -4,6 +4,7 @@ from freezegun import freeze_time
 
 import yaesm.backup as bckp
 import yaesm.timeframe as tframe
+from yaesm.sshtarget import SSHTarget
 
 
 def test_backup_to_datetime(sshtarget):
@@ -142,6 +143,8 @@ def test_backups_collect(random_backup_generator):
         map(lambda bn: backup.dst_dir.with_path(backup.dst_dir.path.joinpath(bn)), backup_basenames)
     )
     for x, y in zip(got, expected, strict=True):
+        assert isinstance(x, SSHTarget)
+        assert isinstance(y, SSHTarget)
         assert x.path == y.path
 
     backup = random_backup_generator(backup_type="local_to_local")
