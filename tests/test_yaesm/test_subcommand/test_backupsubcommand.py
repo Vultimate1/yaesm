@@ -53,6 +53,17 @@ def test_backup_name_not_found(backupsubcommand, caplog):
     assert "backup not found: nonexistent" in caplog.text
 
 
+def test_keep_not_positive(backupsubcommand, caplog):
+    caplog.set_level(logging.ERROR)
+    backup = MagicMock()
+    backup.name = "mybackup"
+    for keep in [0, -1]:
+        args = _parse_args(["mybackup", "--keep", str(keep)])
+        assert backupsubcommand.main([backup], args) == 1
+        assert f"--keep must be a positive integer, got {keep}" in caplog.text
+        backup.backend.do_backup.assert_not_called()
+
+
 def test_selects_correct_backup_from_multiple(backupsubcommand, caplog):
     caplog.set_level(logging.INFO)
     backup_a = MagicMock()

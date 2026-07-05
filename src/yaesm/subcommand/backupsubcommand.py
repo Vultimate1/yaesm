@@ -21,6 +21,9 @@ class BackupSubcommand(SubcommandBase):
             return 1
 
         keep = parsed_args.keep if parsed_args.keep is not None else sys.maxsize
+        if keep < 1:
+            Logging.get().error(f"--keep must be a positive integer, got {keep}")
+            return 1
         timeframe = ImmediateTimeframe(keep=keep)
 
         Logging.get().info(f"starting backup '{backup.name}'")
