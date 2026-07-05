@@ -143,6 +143,48 @@ def test_TimeframeSchema_has_required_settings():
     )
 
 
+def test_TimeframeSchema_keeps_are_positive_ints():
+    keep_settings = [
+        "5minute_keep",
+        "hourly_keep",
+        "daily_keep",
+        "weekly_keep",
+        "monthly_keep",
+        "yearly_keep",
+    ]
+
+    # valid positive ints pass through unchanged
+    data = dict.fromkeys(keep_settings, 1)
+    assert config.TimeframeSchema._keeps_are_positive_ints(data) == data
+
+    # missing settings are ignored
+    assert config.TimeframeSchema._keeps_are_positive_ints({}) == {}
+
+    # 0 and negative ints are rejected
+    for bad_value in [0, -1]:
+        data = {"hourly_keep": bad_value}
+        with pytest.raises(vlp.Invalid) as exc:
+            config.TimeframeSchema._keeps_are_positive_ints(data)
+        assert str(exc.value) == config.TimeframeSchema.ErrMsg.INVALID_KEEP + ":\n\t['hourly_keep']"
+
+    # non-ints are rejected, including an explicit null (as opposed to the
+    # setting being absent entirely, which is ignored above)
+    for bad_value in ["foo", 1.5, True, False, None]:
+        data = {"daily_keep": bad_value}
+        with pytest.raises(vlp.Invalid) as exc:
+            config.TimeframeSchema._keeps_are_positive_ints(data)
+        assert str(exc.value) == config.TimeframeSchema.ErrMsg.INVALID_KEEP + ":\n\t['daily_keep']"
+
+    # multiple bad settings are all reported
+    data = {"hourly_keep": 0, "daily_keep": "foo", "weekly_keep": 3}
+    with pytest.raises(vlp.Invalid) as exc:
+        config.TimeframeSchema._keeps_are_positive_ints(data)
+    assert (
+        str(exc.value)
+        == config.TimeframeSchema.ErrMsg.INVALID_KEEP + ":\n\t['hourly_keep', 'daily_keep']"
+    )
+
+
 def test_TimeframeSchema_are_valid_timespecs():
     valid_specs: list[int | str] = ["12:34", "23:59", "00:00", "99:99"]
     valid_expected = [(12, 34), (23, 59), (0, 0), (99, 99)]
@@ -553,6 +595,33 @@ def test_BackupSchema_ensure_backup_name_valid():
     assert str(exc.value) == config.BackupSchema.ErrMsg.INVALID_BACKUP_NAME
 
 
+def test_BackupSchema_reject_unknown_settings(valid_raw_config):
+    for backup_name in sorted(valid_raw_config.keys()):
+        backup_settings = copy.deepcopy(valid_raw_config[backup_name])
+        # valid settings should pass
+        config.BackupSchema._reject_unknown_settings({backup_name: backup_settings})
+        # single unknown setting
+        backup_settings["INVALID_SETTING"] = 12
+        with pytest.raises(vlp.Invalid) as exc:
+            config.BackupSchema._reject_unknown_settings({backup_name: backup_settings})
+        assert config.BackupSchema.ErrMsg.UNKNOWN_SETTING in str(exc.value)
+        assert "INVALID_SETTING" in str(exc.value)
+        # multiple unknown settings
+        backup_settings["ANOTHER_BAD"] = "foo"
+        with pytest.raises(vlp.Invalid) as exc:
+            config.BackupSchema._reject_unknown_settings({backup_name: backup_settings})
+        assert "INVALID_SETTING" in str(exc.value)
+        assert "ANOTHER_BAD" in str(exc.value)
+
+
+def test_BackupSchema_rejects_non_dict_settings():
+    schema = config.BackupSchema.schema()
+    for bad_settings in [None, "foo", ["foo"], 12]:
+        with pytest.raises(vlp.Invalid) as exc:
+            schema({"mybackup": bad_settings})
+        assert config.BackupSchema.ErrMsg.INVALID_SETTINGS in str(exc.value)
+
+
 def test_BackupSchema_apply_sub_schemas(valid_raw_config, path_generator):
     # success tests
     for backup_name in sorted(valid_raw_config.keys()):
@@ -607,8 +676,9 @@ def test_BackupSchema_schema(valid_raw_config, path_generator):
             assert isinstance(backup.dst_dir, Path)
         raw_config_copy = copy.deepcopy(valid_raw_config)
         raw_config_copy[backup_name]["INVALIDSETTING"] = "foo"
-        # no error for invalid setting
-        assert schema({backup_name: raw_config_copy[backup_name]})
+        with pytest.raises(vlp.MultipleInvalid) as exc:
+            schema({backup_name: raw_config_copy[backup_name]})
+        assert any(config.BackupSchema.ErrMsg.UNKNOWN_SETTING in str(e) for e in exc.value.errors)
     # failure tests
     with pytest.raises(vlp.Invalid) as exc:
         schema({})
@@ -689,7 +759,7 @@ def test_parse_config(path_generator, valid_config_file_generator):
     with pytest.raises(config.ConfigErrors) as exc:
         config.parse_config(config_file_copy)
     assert len(exc.value.errors) == 1
-    assert isinstance(exc.value.errors[0], yaml.YAMLError)
+    assert isinstance(exc.value.errors[0][1], yaml.YAMLError)
 
     empty_file = path_generator("empty-config-file", touch=True)
     with pytest.raises(config.ConfigErrors) as exc:
@@ -725,4 +795,4 @@ def test_parse_config(path_generator, valid_config_file_generator):
     with pytest.raises(config.ConfigErrors) as exc:
         config.parse_config(config_file_copy)
     assert len(exc.value.errors) == 1
-    assert isinstance(exc.value.errors[0], yaml.YAMLError)
+    assert isinstance(exc.value.errors[0][1], yaml.YAMLError)

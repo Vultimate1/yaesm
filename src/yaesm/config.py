@@ -27,16 +27,16 @@ def parse_config(config_file: str | Path) -> list[bckp.Backup]:
     """
     config_file = Path(config_file)
     if not config_file.is_file():
-        raise ConfigErrors(config_file, [f"config file does not exist: {config_file}"])
+        raise ConfigErrors(config_file, [(config_file, "config file does not exist")])
 
     with open(config_file, encoding="utf-8") as f:
         try:
             config_data = yaml.safe_load(f)
         except yaml.YAMLError as exc:
-            raise ConfigErrors(config_file, [exc]) from exc
+            raise ConfigErrors(config_file, [(config_file, exc)]) from exc
     backup_names = sorted(list(config_data.keys())) if config_data else []
     if not backup_names:
-        raise ConfigErrors(config_file, ["no backups specified"])
+        raise ConfigErrors(config_file, [(config_file, "no backups specified")])
     backup_schema = BackupSchema.schema()
     backups = []
     errors = []
@@ -108,6 +108,8 @@ class BackupSchema(Schema):
     class ErrMsg:
         NOT_1_BACKUP = "Not given exactly 1 backup"
         INVALID_BACKUP_NAME = "Not a valid backup name"
+        UNKNOWN_SETTING = "Unknown configuration setting"
+        INVALID_SETTINGS = "Backup settings must be a mapping of setting names to values"
 
     @staticmethod
     def schema() -> vlp.Schema:
@@ -126,6 +128,26 @@ class BackupSchema(Schema):
         )
 
     @staticmethod
+    def _reject_unknown_settings(d: dict) -> dict:
+        """Raise a `vlp.Invalid` if the backup settings contain any keys that
+        are not recognized by any schema class or backend.
+        """
+        backup_name = list(d.keys())[0]
+        backup_settings = d[backup_name]
+        valid = BackendSchema.valid_settings() | SrcDirDstDirSchema.valid_settings() | TimeframeSchema.valid_settings()
+        backend_name = backup_settings.get("backend", "")
+        for cls in backendbase.BackendBase.backend_classes():
+            if cls.name() == backend_name:
+                valid |= cls.config_settings()
+                break
+        unknown = sorted(set(backup_settings.keys()) - valid)
+        if unknown:
+            raise vlp.Invalid(
+                BackupSchema.ErrMsg.UNKNOWN_SETTING + f"\n\t{unknown}"
+            )
+        return d
+
+    @staticmethod
     def _apply_sub_schemas(d: dict) -> dict:
         """Apply all of the sub schemas (TimeframeSchema, SrcDirDstDirSchema, etc)
         to `d`, mutating d. Collects all errors, and raises a `vlp.MultipleInvalid`
@@ -135,7 +157,13 @@ class BackupSchema(Schema):
         """
         backup_name = list(d.keys())[0]
         backup_settings = d[backup_name]
+        if not isinstance(backup_settings, dict):
+            raise vlp.Invalid(BackupSchema.ErrMsg.INVALID_SETTINGS)
         errors = []
+        try:
+            BackupSchema._reject_unknown_settings(d)
+        except vlp.Invalid as exc:
+            errors.append(exc)
         for schema_class in [BackendSchema, SrcDirDstDirSchema, TimeframeSchema]:
             schema = schema_class.schema()
             try:
@@ -196,6 +224,10 @@ class BackendSchema(Schema):
         INVALID_BACKEND_NAME = "Not a valid backend name"
 
     @staticmethod
+    def valid_settings() -> set[str]:
+        return {"backend"}
+
+    @staticmethod
     def schema() -> vlp.Schema:
         """Schema that accepts a dict with a single key 'backend' with a value
         that is a string dentoting a valid backend name (like 'btrfs' or 'rsync').
@@ -245,6 +277,7 @@ class TimeframeSchema(Schema):
         TIME_MALFORMED = "Not a valid time specification"
         HOUR_OUT_OF_RANGE = "Hour portion of time specification not within range [0, 23]"
         MINUTE_OUT_OF_RANGE = "Minute portion of time specification not within range [0, 59]"
+        INVALID_KEEP = "Invalid *_keep settings not a positive integer"
 
     # Be Scared, BE AFRAID!!! Due to an oversight, devs must ensure the settings for
     # each key are in the same order as they appear in the Timeframe class'
@@ -257,6 +290,13 @@ class TimeframeSchema(Schema):
         "monthly": ["monthly_keep", "monthly_times", "monthly_days"],
         "yearly": ["yearly_keep", "yearly_times", "yearly_days"],
     }
+
+    @staticmethod
+    def valid_settings() -> set[str]:
+        settings = {"timeframes"}
+        for tf_settings in TimeframeSchema.REQUIRED_SETTINGS.values():
+            settings.update(tf_settings)
+        return settings
 
     @staticmethod
     def schema() -> vlp.Schema:
@@ -297,15 +337,8 @@ class TimeframeSchema(Schema):
                     )
                 },
                 TimeframeSchema.has_required_settings,
+                TimeframeSchema._keeps_are_positive_ints,
                 {
-                    (
-                        "5minute_keep",
-                        "hourly_keep",
-                        "daily_keep",
-                        "weekly_keep",
-                        "monthly_keep",
-                        "yearly_keep",
-                    ): vlp.All(int, vlp.Range(min=0)),
                     "hourly_minutes": [vlp.All(int, vlp.Range(min=0, max=59))],
                     vlp.Optional("daily_times"): vlp.All(
                         TimeframeSchema.are_valid_timespecs,
@@ -396,6 +429,19 @@ class TimeframeSchema(Schema):
         return res
 
     @staticmethod
+    def _keeps_are_positive_ints(spec: dict) -> dict:
+        bad_keeps = []
+        for setting in ["5minute_keep", "hourly_keep", "daily_keep", "weekly_keep", "monthly_keep", "yearly_keep"]:
+            if setting in spec:
+                keep = spec[setting]
+                if not isinstance(keep, int) or isinstance(keep, bool) or keep < 1:
+                    bad_keeps.append(setting)
+        if bad_keeps:
+            raise vlp.Invalid(TimeframeSchema.ErrMsg.INVALID_KEEP + f":\n\t{bad_keeps}")
+        return spec
+
+
+    @staticmethod
     def are_valid_hours(spec: list[tuple[int, int]]) -> list[tuple[int, int]]:
         """Takes a list of hour:minute pairings.
 
@@ -451,6 +497,10 @@ class SrcDirDstDirSchema(Schema):
         SSH_CONNECTION_FAILED_TO_ESTABLISH = (
             "Could not establish an SSH connection to the SSHtarget"
         )
+
+    @staticmethod
+    def valid_settings() -> set[str]:
+        return {"src_dir", "dst_dir", "ssh_key", "ssh_config"}
 
     @staticmethod
     def schema() -> vlp.Schema:

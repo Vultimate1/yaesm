@@ -34,6 +34,10 @@ class BtrfsBackend(BackendBase):
         self.bootstrap_refresh_days = bootstrap_refresh_days
 
     @staticmethod
+    def config_settings() -> set[str]:
+        return {"btrfs_bootstrap_refresh"}
+
+    @staticmethod
     def config_schema() -> vlp.Schema:
         def _apply_to_backend(d: dict) -> dict:
             if "btrfs_bootstrap_refresh" in d:
