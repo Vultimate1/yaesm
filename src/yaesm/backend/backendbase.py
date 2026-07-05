@@ -61,9 +61,9 @@ class BackendBase(abc.ABC):
             to_delete.append(backups.pop())
         if to_delete:
             if isinstance(backup.dst_dir, SSHTarget):
-                self._delete_backups_remote(*to_delete)
+                self._delete_backups_remote(*ty.cast(list[SSHTarget], to_delete))
             else:
-                self._delete_backups_local(*to_delete)
+                self._delete_backups_local(*ty.cast(list[Path], to_delete))
 
     @classmethod
     @ty.final
