@@ -10,7 +10,7 @@ import yaesm.timeframe
 def test_add_job_5minute_timeframe():
     scheduler = yaesm.scheduler.Scheduler()
     timeframe = yaesm.timeframe.FiveMinuteTimeframe(keep=10)
-    scheduler._add_job("foo-name", lambda: 1, timeframe)
+    scheduler._add_job("foo-name", lambda: None, timeframe)
     jobs = scheduler._apscheduler.get_jobs()
     assert len(jobs) == 1
     job = jobs[0]
@@ -33,7 +33,7 @@ def test_add_job_5minute_timeframe():
 def test_add_job_hourly_timeframe():
     scheduler = yaesm.scheduler.Scheduler()
     timeframe = yaesm.timeframe.HourlyTimeframe(keep=24, minutes=[0, 15, 30, 45])
-    scheduler._add_job("foo-name", lambda: 1, timeframe)
+    scheduler._add_job("foo-name", lambda: None, timeframe)
     jobs = scheduler._apscheduler.get_jobs()
     assert len(jobs) == 1
     job = jobs[0]
@@ -58,7 +58,7 @@ def test_add_job_hourly_timeframe():
 def test_add_job_daily_timeframe():
     scheduler = yaesm.scheduler.Scheduler()
     timeframe = yaesm.timeframe.DailyTimeframe(keep=7, times=[(9, 0), (17, 30)])
-    scheduler._add_job("foo-name", lambda: 1, timeframe)
+    scheduler._add_job("foo-name", lambda: None, timeframe)
     jobs = scheduler._apscheduler.get_jobs()
     assert len(jobs) == 2
 
@@ -102,7 +102,7 @@ def test_add_job_weekly_timeframe():
     timeframe = yaesm.timeframe.WeeklyTimeframe(
         keep=4, times=[(10, 0), (18, 30)], weekdays=["monday", "friday"]
     )
-    scheduler._add_job("foobar-name", lambda: 1, timeframe)
+    scheduler._add_job("foobar-name", lambda: None, timeframe)
     jobs = scheduler._apscheduler.get_jobs()
     assert len(jobs) == 2  # 2 times, each with monday,friday in day_of_week
 
@@ -146,7 +146,7 @@ def test_add_job_monthly_timeframe():
     timeframe = yaesm.timeframe.MonthlyTimeframe(
         keep=12, times=[(9, 0), (21, 0)], monthdays=[1, 15]
     )
-    scheduler._add_job("foo-name", lambda: 1, timeframe)
+    scheduler._add_job("foo-name", lambda: None, timeframe)
     jobs = scheduler._apscheduler.get_jobs()
     assert len(jobs) == 4  # 2 monthdays * 2 times = 4 jobs
 
@@ -225,7 +225,7 @@ def test_add_job_yearly_timeframe():
     timeframe = yaesm.timeframe.YearlyTimeframe(
         keep=5, times=[(0, 0), (12, 0)], yeardays=[1, 32, 365]
     )
-    scheduler._add_job("foo-name", lambda: 1, timeframe)
+    scheduler._add_job("foo-name", lambda: None, timeframe)
     jobs = scheduler._apscheduler.get_jobs()
     assert len(jobs) == 6  # 3 yeardays * 2 times = 6 jobs
 
