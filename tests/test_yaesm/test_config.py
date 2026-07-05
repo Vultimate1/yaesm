@@ -759,7 +759,7 @@ def test_parse_config(path_generator, valid_config_file_generator):
     with pytest.raises(config.ConfigErrors) as exc:
         config.parse_config(config_file_copy)
     assert len(exc.value.errors) == 1
-    assert isinstance(exc.value.errors[0], yaml.YAMLError)
+    assert isinstance(exc.value.errors[0][1], yaml.YAMLError)
 
     empty_file = path_generator("empty-config-file", touch=True)
     with pytest.raises(config.ConfigErrors) as exc:
@@ -795,4 +795,4 @@ def test_parse_config(path_generator, valid_config_file_generator):
     with pytest.raises(config.ConfigErrors) as exc:
         config.parse_config(config_file_copy)
     assert len(exc.value.errors) == 1
-    assert isinstance(exc.value.errors[0], yaml.YAMLError)
+    assert isinstance(exc.value.errors[0][1], yaml.YAMLError)
