@@ -572,6 +572,14 @@ def test_BackupSchema_reject_unknown_settings(valid_raw_config):
         assert "ANOTHER_BAD" in str(exc.value)
 
 
+def test_BackupSchema_rejects_non_dict_settings():
+    schema = config.BackupSchema.schema()
+    for bad_settings in [None, "foo", ["foo"], 12]:
+        with pytest.raises(vlp.Invalid) as exc:
+            schema({"mybackup": bad_settings})
+        assert config.BackupSchema.ErrMsg.INVALID_SETTINGS in str(exc.value)
+
+
 def test_BackupSchema_apply_sub_schemas(valid_raw_config, path_generator):
     # success tests
     for backup_name in sorted(valid_raw_config.keys()):

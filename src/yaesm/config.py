@@ -109,6 +109,7 @@ class BackupSchema(Schema):
         NOT_1_BACKUP = "Not given exactly 1 backup"
         INVALID_BACKUP_NAME = "Not a valid backup name"
         UNKNOWN_SETTING = "Unknown configuration setting"
+        INVALID_SETTINGS = "Backup settings must be a mapping of setting names to values"
 
     @staticmethod
     def schema() -> vlp.Schema:
@@ -156,6 +157,8 @@ class BackupSchema(Schema):
         """
         backup_name = list(d.keys())[0]
         backup_settings = d[backup_name]
+        if not isinstance(backup_settings, dict):
+            raise vlp.Invalid(BackupSchema.ErrMsg.INVALID_SETTINGS)
         errors = []
         try:
             BackupSchema._reject_unknown_settings(d)
