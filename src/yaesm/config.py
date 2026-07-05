@@ -432,9 +432,9 @@ class TimeframeSchema(Schema):
     def _keeps_are_positive_ints(spec: dict) -> dict:
         bad_keeps = []
         for setting in ["5minute_keep", "hourly_keep", "daily_keep", "weekly_keep", "monthly_keep", "yearly_keep"]:
-            keep = spec.get(setting)
-            if keep is not None:
-                if not isinstance(keep, int) or keep < 1:
+            if setting in spec:
+                keep = spec[setting]
+                if not isinstance(keep, int) or isinstance(keep, bool) or keep < 1:
                     bad_keeps.append(setting)
         if bad_keeps:
             raise vlp.Invalid(TimeframeSchema.ErrMsg.INVALID_KEEP + f":\n\t{bad_keeps}")

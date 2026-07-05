@@ -143,6 +143,48 @@ def test_TimeframeSchema_has_required_settings():
     )
 
 
+def test_TimeframeSchema_keeps_are_positive_ints():
+    keep_settings = [
+        "5minute_keep",
+        "hourly_keep",
+        "daily_keep",
+        "weekly_keep",
+        "monthly_keep",
+        "yearly_keep",
+    ]
+
+    # valid positive ints pass through unchanged
+    data = dict.fromkeys(keep_settings, 1)
+    assert config.TimeframeSchema._keeps_are_positive_ints(data) == data
+
+    # missing settings are ignored
+    assert config.TimeframeSchema._keeps_are_positive_ints({}) == {}
+
+    # 0 and negative ints are rejected
+    for bad_value in [0, -1]:
+        data = {"hourly_keep": bad_value}
+        with pytest.raises(vlp.Invalid) as exc:
+            config.TimeframeSchema._keeps_are_positive_ints(data)
+        assert str(exc.value) == config.TimeframeSchema.ErrMsg.INVALID_KEEP + ":\n\t['hourly_keep']"
+
+    # non-ints are rejected, including an explicit null (as opposed to the
+    # setting being absent entirely, which is ignored above)
+    for bad_value in ["foo", 1.5, True, False, None]:
+        data = {"daily_keep": bad_value}
+        with pytest.raises(vlp.Invalid) as exc:
+            config.TimeframeSchema._keeps_are_positive_ints(data)
+        assert str(exc.value) == config.TimeframeSchema.ErrMsg.INVALID_KEEP + ":\n\t['daily_keep']"
+
+    # multiple bad settings are all reported
+    data = {"hourly_keep": 0, "daily_keep": "foo", "weekly_keep": 3}
+    with pytest.raises(vlp.Invalid) as exc:
+        config.TimeframeSchema._keeps_are_positive_ints(data)
+    assert (
+        str(exc.value)
+        == config.TimeframeSchema.ErrMsg.INVALID_KEEP + ":\n\t['hourly_keep', 'daily_keep']"
+    )
+
+
 def test_TimeframeSchema_are_valid_timespecs():
     valid_specs: list[int | str] = ["12:34", "23:59", "00:00", "99:99"]
     valid_expected = [(12, 34), (23, 59), (0, 0), (99, 99)]
