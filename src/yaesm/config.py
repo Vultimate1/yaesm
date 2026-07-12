@@ -134,7 +134,11 @@ class BackupSchema(Schema):
         """
         backup_name = list(d.keys())[0]
         backup_settings = d[backup_name]
-        valid = BackendSchema.valid_settings() | SrcDirDstDirSchema.valid_settings() | TimeframeSchema.valid_settings()
+        valid = (
+            BackendSchema.valid_settings()
+            | SrcDirDstDirSchema.valid_settings()
+            | TimeframeSchema.valid_settings()
+        )
         backend_name = backup_settings.get("backend", "")
         for cls in backendbase.BackendBase.backend_classes():
             if cls.name() == backend_name:
@@ -142,9 +146,7 @@ class BackupSchema(Schema):
                 break
         unknown = sorted(set(backup_settings.keys()) - valid)
         if unknown:
-            raise vlp.Invalid(
-                BackupSchema.ErrMsg.UNKNOWN_SETTING + f"\n\t{unknown}"
-            )
+            raise vlp.Invalid(BackupSchema.ErrMsg.UNKNOWN_SETTING + f"\n\t{unknown}")
         return d
 
     @staticmethod
@@ -329,11 +331,7 @@ class TimeframeSchema(Schema):
                 {
                     vlp.Required("timeframes"): vlp.All(
                         list,
-                        [
-                            vlp.All(
-                                vlp.In(tframe_types_configurable(names=True))
-                            )
-                        ],
+                        [vlp.All(vlp.In(tframe_types_configurable(names=True)))],
                     )
                 },
                 TimeframeSchema.has_required_settings,
@@ -431,7 +429,14 @@ class TimeframeSchema(Schema):
     @staticmethod
     def _keeps_are_positive_ints(spec: dict) -> dict:
         bad_keeps = []
-        for setting in ["5minute_keep", "hourly_keep", "daily_keep", "weekly_keep", "monthly_keep", "yearly_keep"]:
+        for setting in [
+            "5minute_keep",
+            "hourly_keep",
+            "daily_keep",
+            "weekly_keep",
+            "monthly_keep",
+            "yearly_keep",
+        ]:
             if setting in spec:
                 keep = spec[setting]
                 if not isinstance(keep, int) or isinstance(keep, bool) or keep < 1:
@@ -439,7 +444,6 @@ class TimeframeSchema(Schema):
         if bad_keeps:
             raise vlp.Invalid(TimeframeSchema.ErrMsg.INVALID_KEEP + f":\n\t{bad_keeps}")
         return spec
-
 
     @staticmethod
     def are_valid_hours(spec: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -470,7 +474,13 @@ class TimeframeSchema(Schema):
 
         The value paired with 'timeframes' in `spec` is assumed to be entirely valid.
         """
-        timeframe_dict = dict(zip(tframe_types_configurable(names=True), tframe_types_configurable()))
+        timeframe_dict = dict(
+            zip(
+                tframe_types_configurable(names=True),
+                tframe_types_configurable(),
+                strict=True,
+            )
+        )
         timeframes = []
         for timeframe_name in spec["timeframes"]:
             timeframe_obj = timeframe_dict[timeframe_name](

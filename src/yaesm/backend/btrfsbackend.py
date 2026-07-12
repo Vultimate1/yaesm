@@ -77,7 +77,9 @@ class BtrfsBackend(BackendBase):
         backup_path = backup.dst_dir.joinpath(bckp.backup_basename_now(backup, timeframe))
         returncode, _ = _btrfs_take_snapshot_local(src_dir, backup_path, check=False)
         if returncode != 0:
-            bootstrap_snapshot = _btrfs_bootstrap_local_to_local(src_dir, backup_path.parent, backup)
+            bootstrap_snapshot = _btrfs_bootstrap_local_to_local(
+                src_dir, backup_path.parent, backup
+            )
             _, tmp_snapshot = _btrfs_take_snapshot_local(src_dir, src_dir.joinpath(backup_basename))
             _btrfs_send_receive_local_to_local(
                 tmp_snapshot, backup_path.parent, parent=bootstrap_snapshot
@@ -155,9 +157,7 @@ def _btrfs_take_snapshot_remote(
     server.
     """
     p = subprocess.run(
-        src_dir.openssh_cmd(
-            f"btrfs subvolume snapshot -r '{src_dir.path}' '{snapshot.path}'"
-        ),
+        src_dir.openssh_cmd(f"btrfs subvolume snapshot -r '{src_dir.path}' '{snapshot.path}'"),
         check=check,
     )
     return p.returncode, snapshot
@@ -240,9 +240,7 @@ def _btrfs_send_receive_remote_to_local(
     refering to the same SSH server as `snapshot`.
     """
     parent_opt = "" if parent is None else f"-p {shlex.quote(str(parent.path))}"
-    cmd_remote = snapshot.openssh_cmd(
-        f"btrfs send {parent_opt} '{snapshot.path}'", string=True
-    )
+    cmd_remote = snapshot.openssh_cmd(f"btrfs send {parent_opt} '{snapshot.path}'", string=True)
     p = subprocess.run(
         cmd_remote + " | " + f"btrfs receive {shlex.quote(str(dst_dir))}",
         shell=True,
@@ -319,7 +317,9 @@ def _btrfs_bootstrap_local_to_local(src_dir: Path, dst_dir: Path, backup: bckp.B
     return src_bootstrap
 
 
-def _btrfs_bootstrap_local_to_remote(src_dir: Path, dst_dir: SSHTarget, backup: bckp.Backup) -> Path:
+def _btrfs_bootstrap_local_to_remote(
+    src_dir: Path, dst_dir: SSHTarget, backup: bckp.Backup
+) -> Path:
     """Perform the bootstrap phase of a local-to-remote backup.
 
     The bootstrap snapshot is necessary for incremental backups with 'btrfs send -p'.
@@ -345,7 +345,9 @@ def _btrfs_bootstrap_local_to_remote(src_dir: Path, dst_dir: SSHTarget, backup: 
     return src_bootstrap
 
 
-def _btrfs_bootstrap_remote_to_local(src_dir: SSHTarget, dst_dir: Path, backup: bckp.Backup) -> SSHTarget:
+def _btrfs_bootstrap_remote_to_local(
+    src_dir: SSHTarget, dst_dir: Path, backup: bckp.Backup
+) -> SSHTarget:
     """Perform the bootstrap phase of a remote-to-local backup.
 
     The bootstrap snapshot is necessary for incremental backups with 'btrfs send -p'.

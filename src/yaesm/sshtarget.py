@@ -116,8 +116,13 @@ class SSHTarget:
 
         Example usage::
             cmd = sshtarget.openssh_cmd("btrfs send /home/fred/snapshots/snapshot12", string=True)
-            p = subprocess.run(cmd + " | btrfs receive /fred-home-backups/",
-                shell=True, check=True, capture_output=True, encoding="utf-8")
+            p = subprocess.run(
+                cmd + " | btrfs receive /fred-home-backups/",
+                shell=True,
+                check=True,
+                capture_output=True,
+                encoding="utf-8",
+            )
         """
         host = self.host if self.user is None else f"{self.user}@{self.host}"
         parts: list[str | Path] = ["ssh", *self.openssh_opts(), host, cmd]

@@ -104,9 +104,7 @@ def backups_sorted(
     return sorted_backups
 
 
-def backups_collect(
-    backup: Backup, timeframe: Timeframe | None = None
-) -> list[Path | SSHTarget]:
+def backups_collect(backup: Backup, timeframe: Timeframe | None = None) -> list[Path | SSHTarget]:
     """This function collects all the yaesm backups for the Backup `backup`.
     If the Timeframe `timeframe` is given, then only collect the backups in this
     given Timeframe. Remember that all the backups for all the timeframes are
@@ -137,4 +135,6 @@ done"""
         for path in dst_dir.iterdir():
             if path.is_dir() and backup_basename_re_.match(path.name):
                 backups.append(path)
-    return ty.cast(list[Path | SSHTarget], backups_sorted(ty.cast(list[Path | str | SSHTarget], backups)))
+    return ty.cast(
+        list[Path | SSHTarget], backups_sorted(ty.cast(list[Path | str | SSHTarget], backups))
+    )
