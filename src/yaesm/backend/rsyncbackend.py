@@ -117,7 +117,12 @@ class RsyncBackend(BackendBase):
 
         rsync_cmd += [f"{src_dir}/", f"{dst_dir}/"]
 
-        subprocess.run(rsync_cmd, check=True)
+        try:
+            subprocess.run(rsync_cmd, check=True)
+        except subprocess.CalledProcessError:
+            if not isinstance(backup.dst_dir, SSHTarget) and dst_dir.exists():
+                rmtree(dst_dir)
+            raise
 
         if isinstance(backup.dst_dir, SSHTarget):
             return backup.dst_dir.with_path(dst_dir)

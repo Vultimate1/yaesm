@@ -97,6 +97,24 @@ def test_exec_backup(
             assert all(isinstance(x, Path) for x in backups)
 
 
+def test_failed_backup_is_not_collected(monkeypatch, rsync_backend, random_backup_generator):
+    backup = random_backup_generator(backend_type="rsync", backup_type="local_to_local")
+    timeframe = backup.timeframes[0]
+
+    def fail_after_creating_destination(command, **_kwargs):
+        Path(command[-1]).mkdir(parents=True)
+        raise subprocess.CalledProcessError(returncode=23, cmd=command)
+
+    monkeypatch.setattr(rsync.subprocess, "run", fail_after_creating_destination)
+    with (
+        freeze_time("2026-08-15 12:00"),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        rsync_backend.do_backup(backup, timeframe)
+
+    assert bckp.backups_collect(backup, timeframe) == []
+
+
 def test_delete_backups_local(rsync_backend, path_generator):
     dst_dir = path_generator("rsync_test_dst_dir", mkdir=True)
     backups = []
