@@ -1,10 +1,12 @@
 """src/yaesm/subcommand/checksubcommand.py."""
 
 import argparse
+import logging
 
 from yaesm.backup import Backup
-from yaesm.logging import Logging
 from yaesm.subcommand.subcommandbase import SubcommandBase
+
+logger = logging.getLogger(__name__)
 
 
 class CheckSubcommand(SubcommandBase):
@@ -14,7 +16,7 @@ class CheckSubcommand(SubcommandBase):
         if parsed_args.backup_name:
             backups = [b for b in backups if b.name == parsed_args.backup_name]
             if not backups:
-                Logging.get().error(f"no backup named '{parsed_args.backup_name}' in config")
+                logger.error(f"no backup named '{parsed_args.backup_name}' in config")
                 return 2
         checks_passed = True
         for backup in backups:

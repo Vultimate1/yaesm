@@ -5,6 +5,7 @@ can be thought of as a collection of globally available pytest fixtures.
 """
 
 import grp
+import logging
 import os
 import pwd
 import random
@@ -39,9 +40,12 @@ def with_stderr_debug_logging(request):
     except the test_logging.py module.
     """
     if request.module.__name__ != "test_logging":
-        yaesm.logging.Logging.initialize(stderr=True, level="DEBUG")
+        yaesm.logging.configure(stderr=True, level="DEBUG")
         yield
-        yaesm.logging.Logging.disable()
+        root = logging.getLogger()
+        for handler in root.handlers[:]:
+            handler.close()
+            root.removeHandler(handler)
     else:
         yield
 

@@ -1,5 +1,6 @@
 """tests/test_yaesm/test_scheduler.py."""
 
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -407,3 +408,25 @@ def test_job_fail_logs_instead_of_crashes(caplog):
     scheduler.start()
     assert call_count[0] == 4
     assert "TEST EXCEPTION" in caplog.text
+
+
+def test_overlapping_backup_logs_warning(caplog):
+    scheduler = yaesm.scheduler.Scheduler()
+    call_count = [0]
+
+    def slow_func():
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # Still running when the next triggers fire, so those runs are
+            # skipped by apscheduler's max_instances=1 default.
+            time.sleep(0.7)
+        else:
+            scheduler.stop(force=True)
+
+    start_date = datetime.now() + timedelta(seconds=0.2)
+    scheduler._apscheduler.add_job(
+        slow_func, "interval", seconds=0.3, start_date=start_date, name="mybackup"
+    )
+    scheduler.start()
+    assert "mybackup" in caplog.text
+    assert "skipped" in caplog.text

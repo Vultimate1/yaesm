@@ -1,5 +1,7 @@
 """tests/test_yaesm/test_backend.py."""
 
+from pathlib import Path
+
 from freezegun import freeze_time
 
 import yaesm.backup as bckp
@@ -151,14 +153,17 @@ def test_backups_collect(random_backup_generator):
     backup.name = "backup-name"
     for bn in backup_basenames:
         backup.dst_dir.joinpath(bn).mkdir(parents=True, exist_ok=True)
-    assert list(
-        map(
-            lambda d: d.name,
-            bckp.backups_collect(
-                backup, timeframe=tframe.WeeklyTimeframe(1, [(10, 30)], ["monday"])
-            ),
-        )
-    ) == ["yaesm-backup-name-weekly.1999_05_13_10:30", "yaesm-backup-name-weekly.1999_05_13_09:30"]
+    collected = bckp.backups_collect(
+        backup, timeframe=tframe.WeeklyTimeframe(1, [(10, 30)], ["monday"])
+    )
+    collected_names = []
+    for backup_path in collected:
+        assert isinstance(backup_path, Path)
+        collected_names.append(backup_path.name)
+    assert collected_names == [
+        "yaesm-backup-name-weekly.1999_05_13_10:30",
+        "yaesm-backup-name-weekly.1999_05_13_09:30",
+    ]
 
 
 def test_backup_name_valid():

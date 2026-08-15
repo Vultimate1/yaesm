@@ -1,13 +1,15 @@
 import argparse
 import fcntl
+import logging
 import os
 from pathlib import Path
 
 import yaesm.scheduler
 from yaesm.backup import Backup
 from yaesm.cleanup import Cleanup
-from yaesm.logging import Logging
 from yaesm.subcommand.subcommandbase import SubcommandBase
+
+logger = logging.getLogger(__name__)
 
 
 class RunSubcommand(SubcommandBase):
@@ -19,7 +21,7 @@ class RunSubcommand(SubcommandBase):
             fcntl.lockf(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self._lock_fd = lock_fd
         except OSError as e:
-            Logging.get().error(f"could not acquire scheduler lock: {parsed_args.lockfile}: {e}")
+            logger.error(f"could not acquire scheduler lock: {parsed_args.lockfile}: {e}")
             return 1
 
         scheduler = yaesm.scheduler.Scheduler()
@@ -29,10 +31,10 @@ class RunSubcommand(SubcommandBase):
         try:
             scheduler.start()  # blocks
         except (KeyboardInterrupt, SystemExit):
-            Logging.get().info("scheduler stopped gracefully")
+            logger.info("scheduler stopped gracefully")
             return 0
         except Exception:
-            Logging.get().error("scheduler crashed", exc_info=True)
+            logger.error("scheduler crashed", exc_info=True)
             return 1
 
         return 0
