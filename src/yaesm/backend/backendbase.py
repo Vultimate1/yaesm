@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import abc
 import importlib
+import logging
 import shutil
 import subprocess
 from functools import cache
@@ -14,9 +15,10 @@ import voluptuous as vlp
 import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm import config
-from yaesm.logging import Logging
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
+
+logger = logging.getLogger(__name__)
 
 
 class BackendBase(abc.ABC):
@@ -47,7 +49,7 @@ class BackendBase(abc.ABC):
         else:
             backup_exists = backup.dst_dir.joinpath(backup_basename).exists()
         if backup_exists:
-            Logging.get().error(f"backup already exists: {backup_basename}")
+            logger.error(f"backup already exists: {backup_basename}")
             raise bckp.BackupError(f"backup already exists: {backup_basename}")
         if backup.backup_type == "local_to_local":
             self._exec_backup_local_to_local(backup, backup_basename, timeframe)

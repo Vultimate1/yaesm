@@ -1,5 +1,6 @@
 """src/yaesm/backend/btrfsbackend.py."""
 
+import logging
 import shlex
 import subprocess
 import time
@@ -9,9 +10,10 @@ import voluptuous as vlp
 
 import yaesm.backup as bckp
 from yaesm.backend.backendbase import BackendBase
-from yaesm.logging import Logging
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
+
+logger = logging.getLogger(__name__)
 
 
 class BtrfsBackend(BackendBase):
@@ -273,7 +275,7 @@ def _btrfs_maybe_refresh_bootstrap(backup: bckp.Backup, refresh_days: int) -> No
         mtime = src_bootstrap_path.stat().st_mtime
     if time.time() - mtime <= refresh_days * 86400:
         return
-    Logging.get().info(f"refreshing btrfs bootstrap snapshot for backup '{backup.name}'")
+    logger.info(f"refreshing btrfs bootstrap snapshot for backup '{backup.name}'")
     if isinstance(src_dir, SSHTarget):
         _btrfs_delete_subvolumes_remote(src_bootstrap_target)
     else:

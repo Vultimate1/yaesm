@@ -1,5 +1,6 @@
 """src/yaesm/scheduler.py."""
 
+import logging
 from datetime import datetime, timedelta
 
 import apscheduler.events
@@ -7,7 +8,6 @@ import apscheduler.schedulers.blocking
 
 import yaesm.ty as ty
 from yaesm.backup import Backup
-from yaesm.logging import Logging
 from yaesm.timeframe import (
     DailyTimeframe,
     FiveMinuteTimeframe,
@@ -17,27 +17,32 @@ from yaesm.timeframe import (
     weekday_num,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class Scheduler:
     def __init__(self) -> None:
         self._apscheduler = apscheduler.schedulers.blocking.BlockingScheduler()
-        Logging.get("apscheduler").propagate = False
-        Logging.get("apscheduler").setLevel("CRITICAL")
+        logging.getLogger("apscheduler").propagate = False
+        logging.getLogger("apscheduler").setLevel("CRITICAL")
         self._apscheduler.add_listener(
-            lambda event: Logging.get().info(
-                "%s - successful backup", self._job_name(event.job_id)
-            ),
+            lambda event: logger.info("%s - successful backup", self._job_name(event.job_id)),
             apscheduler.events.EVENT_JOB_EXECUTED,
         )
         self._apscheduler.add_listener(
-            lambda event: Logging.get().error(
-                "%s - %s", self._job_name(event.job_id), event.exception
-            ),
+            lambda event: logger.error("%s - %s", self._job_name(event.job_id), event.exception),
             apscheduler.events.EVENT_JOB_ERROR,
         )
         self._apscheduler.add_listener(
-            lambda event: Logging.get().error("%s - missed backup", self._job_name(event.job_id)),
+            lambda event: logger.warning("%s - missed backup", self._job_name(event.job_id)),
             apscheduler.events.EVENT_JOB_MISSED,
+        )
+        self._apscheduler.add_listener(
+            lambda event: logger.warning(
+                "%s - skipped: previous run still running (scheduled too frequently?)",
+                self._job_name(event.job_id),
+            ),
+            apscheduler.events.EVENT_JOB_MAX_INSTANCES,
         )
 
     def start(self) -> None:

@@ -2,14 +2,17 @@
 
 import argparse
 import importlib.metadata
+import logging
 import sys
 from pathlib import Path
 
 import yaesm.config
 import yaesm.ty as ty
 from yaesm.cleanup import Cleanup
-from yaesm.logging import Logging
+from yaesm.logging import configure as configure_logging
 from yaesm.subcommand.subcommandbase import SubcommandBase
+
+logger = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -61,27 +64,29 @@ def main(argv: list[str] | None = None) -> int:
     )
     parsed_args = parser.parse_args(argv)
 
-    try:
-        backups = yaesm.config.parse_config(parsed_args.config)
-    except yaesm.config.ConfigErrors as exc:
-        for err in exc.errors:
-            backup, err_msg = err
-            print(f"yaesm: config error: {backup}: {err_msg}", file=sys.stderr)
-        return 1
-
-    Logging.initialize(
+    configure_logging(
         level=parsed_args.log_level,
         stderr=parsed_args.log_stderr,
+        logfile=parsed_args.log_file,
         syslog=bool(parsed_args.log_syslog),
         syslog_address=parsed_args.log_syslog
         if isinstance(parsed_args.log_syslog, str)
         else "/dev/log",
     )
+
+    try:
+        backups = yaesm.config.parse_config(parsed_args.config)
+    except yaesm.config.ConfigErrors as exc:
+        for err in exc.errors:
+            backup, err_msg = err
+            logger.error("config error: %s: %s", backup, err_msg)
+        return 1
+
     Cleanup.initialize()
 
     try:
         exit_status = subcommand_name_class_map[parsed_args.subcommand]().main(backups, parsed_args)
         return exit_status
     except Exception as exc:
-        print(f"yaesm: error: {exc}", file=sys.stderr)
+        logger.exception("unexpected error: %s", exc)
         return 1

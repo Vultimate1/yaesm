@@ -1,10 +1,12 @@
 import argparse
+import logging
 import sys
 
 from yaesm.backup import Backup
-from yaesm.logging import Logging
 from yaesm.subcommand.subcommandbase import SubcommandBase
 from yaesm.timeframe import ImmediateTimeframe
+
+logger = logging.getLogger(__name__)
 
 
 class BackupSubcommand(SubcommandBase):
@@ -17,23 +19,23 @@ class BackupSubcommand(SubcommandBase):
                 backup = b
                 break
         if backup is None:
-            Logging.get().error(f"backup not found: {parsed_args.backup_name}")
+            logger.error(f"backup not found: {parsed_args.backup_name}")
             return 1
 
         keep = parsed_args.keep if parsed_args.keep is not None else sys.maxsize
         if keep < 1:
-            Logging.get().error(f"--keep must be a positive integer, got {keep}")
+            logger.error(f"--keep must be a positive integer, got {keep}")
             return 1
         timeframe = ImmediateTimeframe(keep=keep)
 
-        Logging.get().info(f"starting backup '{backup.name}'")
+        logger.info(f"starting backup '{backup.name}'")
         try:
             backup.backend.do_backup(backup, timeframe)
         except Exception:
-            Logging.get().error(f"backup '{backup.name}' failed", exc_info=True)
+            logger.error(f"backup '{backup.name}' failed", exc_info=True)
             return 1
 
-        Logging.get().info(f"backup '{backup.name}' completed successfully")
+        logger.info(f"backup '{backup.name}' completed successfully")
         return 0
 
     @classmethod

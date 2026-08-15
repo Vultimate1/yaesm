@@ -1,11 +1,13 @@
 """src/yaesm/cleanup.py."""
 
 import atexit
+import logging
 import signal
 import sys
 
 import yaesm.ty as ty
-from yaesm.logging import Logging
+
+logger = logging.getLogger(__name__)
 
 
 class Cleanup:
@@ -45,6 +47,6 @@ class Cleanup:
                 func()
             except Exception as e:
                 exit_status = 1
-                Logging.get().error("cleanup function failed: %s", e, exc_info=True)
+                logger.error("cleanup function failed: %s", e, exc_info=True)
         if _args:  # called from signal handler, otherwise called from atexit
             sys.exit(exit_status)
