@@ -56,7 +56,7 @@ def test_openssh_opts(sshtarget):
 
 def test_openssh_cmd(sshtarget):
     p = subprocess.run(
-        sshtarget.openssh_cmd("whoami && printf '%s\\n' foo 1>&2 && exit 73"),
+        sshtarget.openssh_cmd(["sh", "-c", "whoami && printf '%s\\n' foo 1>&2 && exit 73"]),
         capture_output=True,
         encoding="utf-8",
     )
@@ -71,8 +71,12 @@ def test_openssh_cmd(sshtarget):
 
     p = subprocess.run(
         sshtarget.openssh_cmd(
-            "(printf '%s\\n' foo && printf '%s\\n' bar && printf '%s\\n' baz"
-            " && 1>&2 printf '%s\\n' quux) | grep ba; exit 42"
+            [
+                "sh",
+                "-c",
+                "(printf '%s\\n' foo && printf '%s\\n' bar && printf '%s\\n' baz"
+                " && 1>&2 printf '%s\\n' quux) | grep ba; exit 42",
+            ]
         ),
         capture_output=True,
         encoding="utf-8",
@@ -83,7 +87,12 @@ def test_openssh_cmd(sshtarget):
 
     p = subprocess.run(
         sshtarget.openssh_cmd(
-            "printf '%s\\n%s\\n' 'hello from remote' 'bar' && 1>&2 printf '%s\\n' 'hello stderr'",
+            [
+                "sh",
+                "-c",
+                "printf '%s\\n%s\\n' 'hello from remote' 'bar'"
+                " && 1>&2 printf '%s\\n' 'hello stderr'",
+            ],
             string=True,
         )
         + " | grep hello; exit 12",
@@ -137,6 +146,12 @@ def test_is_dir(sshtarget, path_generator):
     assert target1.is_dir()
     assert not target2.is_dir()
     assert target2.is_dir(path1)
+
+
+def test_is_dir_quotes_remote_path(sshtarget, path_generator):
+    path = path_generator("O'Brien", mkdir=True, cleanup=True)
+    target = sshtarget.with_path(path)
+    assert target.is_dir()
 
 
 def test_is_file(sshtarget, path_generator):

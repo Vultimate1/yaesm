@@ -81,7 +81,7 @@ class RsyncBackend(BackendBase):
         all at the same host.
         """
         for backup in backups:
-            subprocess.run(backup.openssh_cmd(f"rm -r -f '{backup.path}'"), check=True)
+            subprocess.run(backup.openssh_cmd(["rm", "-r", "-f", "--", backup.path]), check=True)
 
     def _exec_backup(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe

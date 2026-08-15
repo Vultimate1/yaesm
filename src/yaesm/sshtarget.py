@@ -104,18 +104,22 @@ class SSHTarget:
         return opts
 
     @ty.overload
-    def openssh_cmd(self, cmd: str, string: ty.Literal[True]) -> str: ...
+    def openssh_cmd(self, cmd: list[str | Path], string: ty.Literal[True]) -> str: ...
 
     @ty.overload
-    def openssh_cmd(self, cmd: str, string: ty.Literal[False] = ...) -> list[str | Path]: ...
+    def openssh_cmd(
+        self, cmd: list[str | Path], string: ty.Literal[False] = ...
+    ) -> list[str | Path]: ...
 
-    def openssh_cmd(self, cmd: str, string: bool = False) -> list[str | Path] | str:
-        """Returns an exec list (`string=False`) or a string (`string=True`) of
-        an OpenSSH command that executes 'cmd' on the SSHTargets remote server.
+    def openssh_cmd(self, cmd: list[str | Path], string: bool = False) -> list[str | Path] | str:
+        """Return an exec list (`string=False`) or string (`string=True`) for an
+        OpenSSH command that safely quotes and executes `cmd` on the remote server.
         See `openssh_opts()` for details on the OpenSSH options that are used.
 
         Example usage::
-            cmd = sshtarget.openssh_cmd("btrfs send /home/fred/snapshots/snapshot12", string=True)
+            cmd = sshtarget.openssh_cmd(
+                ["btrfs", "send", "/home/fred/snapshots/snapshot12"], string=True
+            )
             p = subprocess.run(
                 cmd + " | btrfs receive /fred-home-backups/",
                 shell=True,
@@ -125,7 +129,8 @@ class SSHTarget:
             )
         """
         host = self.host if self.user is None else f"{self.user}@{self.host}"
-        parts: list[str | Path] = ["ssh", *self.openssh_opts(), host, cmd]
+        remote_cmd = shlex.join(str(arg) for arg in cmd)
+        parts: list[str | Path] = ["ssh", *self.openssh_opts(), host, remote_cmd]
         if string:
             return " ".join([shlex.quote(str(opt)) for opt in parts])
         return parts
@@ -134,7 +139,7 @@ class SSHTarget:
         """Return True if we can establish a connection to the SSH target server
         and return False otherwise.
         """
-        return subprocess.run(self.openssh_cmd("exit 0"), check=False).returncode == 0
+        return subprocess.run(self.openssh_cmd(["true"]), check=False).returncode == 0
 
     def exists(self, p: Path | None = None) -> bool:
         """Return True if `p` exists on the remote SSH server.
@@ -142,9 +147,7 @@ class SSHTarget:
         """
         if p is None:
             p = self.path
-        return (
-            subprocess.run(self.openssh_cmd(f"[ -e '{p}' ]; exit $?"), check=False).returncode == 0
-        )
+        return subprocess.run(self.openssh_cmd(["test", "-e", p]), check=False).returncode == 0
 
     def is_dir(self, d: Path | None = None) -> bool:
         """Return True if `d` is an existing directory on the remote SSH server.
@@ -152,9 +155,7 @@ class SSHTarget:
         """
         if d is None:
             d = self.path
-        return (
-            subprocess.run(self.openssh_cmd(f"[ -d '{d}' ]; exit $?"), check=False).returncode == 0
-        )
+        return subprocess.run(self.openssh_cmd(["test", "-d", d]), check=False).returncode == 0
 
     def is_file(self, f: Path | None = None) -> bool:
         """Return True if `f` is an existing file on the remote SSH server. If
@@ -162,9 +163,7 @@ class SSHTarget:
         """
         if f is None:
             f = self.path
-        return (
-            subprocess.run(self.openssh_cmd(f"[ -f '{f}' ]; exit $?"), check=False).returncode == 0
-        )
+        return subprocess.run(self.openssh_cmd(["test", "-f", f]), check=False).returncode == 0
 
     def mkdir(self, d: Path | None = None, parents: bool = False, check: bool = True) -> bool:
         """Mkdir the directory `d` on the remote SSH server. If `d` is None,
@@ -174,10 +173,14 @@ class SSHTarget:
         """
         if d is None:
             d = self.path
-        p_flag = "-p" if parents else ""
+        cmd: list[str | Path]
+        if parents:
+            cmd = ["mkdir", "-p", "--", d]
+        else:
+            cmd = ["sh", "-c", '[ -d "$1" ] || mkdir -- "$1"', "sh", d]
         return (
             subprocess.run(
-                self.openssh_cmd(f"if ! [ -d '{d}' ]; then mkdir {p_flag} '{d}'; fi"),
+                self.openssh_cmd(cmd),
                 check=check,
             ).returncode
             == 0
@@ -190,7 +193,7 @@ class SSHTarget:
         if f is None:
             f = self.path
         p = subprocess.run(
-            self.openssh_cmd(f"stat -c %Y '{f}'"),
+            self.openssh_cmd(["stat", "-c", "%Y", "--", f]),
             check=True,
             capture_output=True,
             encoding="utf-8",
@@ -204,4 +207,4 @@ class SSHTarget:
         """
         if f is None:
             f = self.path
-        return subprocess.run(self.openssh_cmd(f"touch '{f}'"), check=check).returncode == 0
+        return subprocess.run(self.openssh_cmd(["touch", "--", f]), check=check).returncode == 0

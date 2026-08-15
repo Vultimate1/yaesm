@@ -224,7 +224,7 @@ def check_tool_local(tool: str) -> list[str]:
 
 def check_tool_remote(sshtarget: SSHTarget, tool: str) -> list[str]:
     p = subprocess.run(
-        sshtarget.openssh_cmd(f"type {tool}"),
+        sshtarget.openssh_cmd(["type", tool]),
         check=False,
         capture_output=True,
     )
@@ -235,7 +235,7 @@ def check_tool_remote(sshtarget: SSHTarget, tool: str) -> list[str]:
 
 def check_dir_readable_remote(sshtarget: SSHTarget, label: str) -> list[str]:
     p = subprocess.run(
-        sshtarget.openssh_cmd(f"test -r '{sshtarget.path}'"),
+        sshtarget.openssh_cmd(["test", "-r", sshtarget.path]),
         check=False,
         capture_output=True,
     )
@@ -246,7 +246,7 @@ def check_dir_readable_remote(sshtarget: SSHTarget, label: str) -> list[str]:
 
 def check_dir_writable_remote(sshtarget: SSHTarget, label: str) -> list[str]:
     p = subprocess.run(
-        sshtarget.openssh_cmd(f"test -w '{sshtarget.path}'"),
+        sshtarget.openssh_cmd(["test", "-w", sshtarget.path]),
         check=False,
         capture_output=True,
     )

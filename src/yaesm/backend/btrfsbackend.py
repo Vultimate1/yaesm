@@ -173,9 +173,7 @@ def _btrfs_staging_snapshot_basename() -> str:
 
 def _btrfs_rename_subvolume_remote(snapshot: SSHTarget, destination: SSHTarget) -> None:
     subprocess.run(
-        snapshot.openssh_cmd(
-            f"mv -- {shlex.quote(str(snapshot.path))} {shlex.quote(str(destination.path))}"
-        ),
+        snapshot.openssh_cmd(["mv", "--", snapshot.path, destination.path]),
         check=True,
     )
 
@@ -206,7 +204,7 @@ def _btrfs_take_snapshot_remote(
     server.
     """
     p = subprocess.run(
-        src_dir.openssh_cmd(f"btrfs subvolume snapshot -r '{src_dir.path}' '{snapshot.path}'"),
+        src_dir.openssh_cmd(["btrfs", "subvolume", "snapshot", "-r", src_dir.path, snapshot.path]),
         check=check,
     )
     return p.returncode, snapshot
@@ -233,11 +231,10 @@ def _btrfs_delete_subvolumes_remote(
     Note that it is assumed that all the SSHTargets in `subvolumes` refer to
     the same SSH server.
     """
-    _subvolumes = ""
-    for subvolume in subvolumes:
-        _subvolumes = f"{_subvolumes} '{subvolume.path}'"
     p = subprocess.run(
-        subvolumes[0].openssh_cmd(f"btrfs subvolume delete {_subvolumes}"),
+        subvolumes[0].openssh_cmd(
+            ["btrfs", "subvolume", "delete", *(subvolume.path for subvolume in subvolumes)]
+        ),
         check=check,
     )
     return p.returncode, list(subvolumes)
@@ -269,7 +266,7 @@ def _btrfs_send_receive_local_to_remote(
     """
     parent_opt = "" if parent is None else f"-p {shlex.quote(str(parent))}"
     cmd_local = f"btrfs send {parent_opt} {shlex.quote(str(snapshot))}"
-    cmd_remote = dst_dir.openssh_cmd(f"btrfs receive '{dst_dir.path}'", string=True)
+    cmd_remote = dst_dir.openssh_cmd(["btrfs", "receive", dst_dir.path], string=True)
     p = subprocess.run(
         cmd_local + " | " + cmd_remote,
         shell=True,
@@ -288,8 +285,11 @@ def _btrfs_send_receive_remote_to_local(
     Note that if `parent` is supplied, then it is assumed to be an SSHTarget
     refering to the same SSH server as `snapshot`.
     """
-    parent_opt = "" if parent is None else f"-p {shlex.quote(str(parent.path))}"
-    cmd_remote = snapshot.openssh_cmd(f"btrfs send {parent_opt} '{snapshot.path}'", string=True)
+    send_cmd: list[str | Path] = ["btrfs", "send"]
+    if parent is not None:
+        send_cmd += ["-p", parent.path]
+    send_cmd.append(snapshot.path)
+    cmd_remote = snapshot.openssh_cmd(send_cmd, string=True)
     p = subprocess.run(
         cmd_remote + " | " + f"btrfs receive {shlex.quote(str(dst_dir))}",
         shell=True,
@@ -438,7 +438,7 @@ def check_btrfs_filesystem_local(path: Path, label: str) -> list[str]:
 
 def check_btrfs_filesystem_remote(sshtarget: SSHTarget, label: str) -> list[str]:
     p = subprocess.run(
-        sshtarget.openssh_cmd(f"stat -f -c %T '{sshtarget.path}'"),
+        sshtarget.openssh_cmd(["stat", "-f", "-c", "%T", "--", sshtarget.path]),
         check=False,
         capture_output=True,
         encoding="utf-8",
