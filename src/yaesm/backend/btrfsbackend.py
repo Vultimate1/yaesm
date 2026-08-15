@@ -4,6 +4,7 @@ import logging
 import shlex
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 import voluptuous as vlp
@@ -76,17 +77,28 @@ class BtrfsBackend(BackendBase):
         if self.bootstrap_refresh_days is not None:
             _btrfs_maybe_refresh_bootstrap(backup, self.bootstrap_refresh_days)
         src_dir = backup.src_dir
-        backup_path = backup.dst_dir.joinpath(bckp.backup_basename_now(backup, timeframe))
+        backup_path = backup.dst_dir.joinpath(backup_basename)
         returncode, _ = _btrfs_take_snapshot_local(src_dir, backup_path, check=False)
         if returncode != 0:
+            staging_basename = _btrfs_staging_snapshot_basename()
+            tmp_snapshot = src_dir.joinpath(staging_basename)
+            received_snapshot = backup_path.parent.joinpath(staging_basename)
             bootstrap_snapshot = _btrfs_bootstrap_local_to_local(
                 src_dir, backup_path.parent, backup
             )
-            _, tmp_snapshot = _btrfs_take_snapshot_local(src_dir, src_dir.joinpath(backup_basename))
-            _btrfs_send_receive_local_to_local(
-                tmp_snapshot, backup_path.parent, parent=bootstrap_snapshot
-            )
-            _btrfs_delete_subvolumes_local(tmp_snapshot)
+            try:
+                _btrfs_take_snapshot_local(src_dir, tmp_snapshot)
+                _btrfs_send_receive_local_to_local(
+                    tmp_snapshot, backup_path.parent, parent=bootstrap_snapshot
+                )
+                received_snapshot.rename(backup_path)
+            except Exception:
+                if received_snapshot.is_dir():
+                    _btrfs_delete_subvolumes_local(received_snapshot)
+                raise
+            finally:
+                if tmp_snapshot.is_dir():
+                    _btrfs_delete_subvolumes_local(tmp_snapshot)
 
     def _exec_backup_local_to_remote(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
@@ -97,16 +109,29 @@ class BtrfsBackend(BackendBase):
             _btrfs_maybe_refresh_bootstrap(backup, self.bootstrap_refresh_days)
         src_dir = backup.src_dir
         backup_path = backup.dst_dir.with_path(backup.dst_dir.path.joinpath(backup_basename))
+        staging_basename = _btrfs_staging_snapshot_basename()
+        tmp_snapshot = src_dir.joinpath(staging_basename)
+        received_snapshot = backup_path.with_path(
+            backup_path.path.parent.joinpath(staging_basename)
+        )
         bootstrap_snapshot = _btrfs_bootstrap_local_to_remote(
             src_dir, backup_path.with_path(backup_path.path.parent), backup
         )
-        _, tmp_snapshot = _btrfs_take_snapshot_local(
-            src_dir, src_dir.joinpath(backup_path.path.name)
-        )
-        _btrfs_send_receive_local_to_remote(
-            tmp_snapshot, backup_path.with_path(backup_path.path.parent), parent=bootstrap_snapshot
-        )
-        _btrfs_delete_subvolumes_local(tmp_snapshot)
+        try:
+            _btrfs_take_snapshot_local(src_dir, tmp_snapshot)
+            _btrfs_send_receive_local_to_remote(
+                tmp_snapshot,
+                backup_path.with_path(backup_path.path.parent),
+                parent=bootstrap_snapshot,
+            )
+            _btrfs_rename_subvolume_remote(received_snapshot, backup_path)
+        except Exception:
+            if received_snapshot.is_dir():
+                _btrfs_delete_subvolumes_remote(received_snapshot)
+            raise
+        finally:
+            if tmp_snapshot.is_dir():
+                _btrfs_delete_subvolumes_local(tmp_snapshot)
 
     def _exec_backup_remote_to_local(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
@@ -117,20 +142,42 @@ class BtrfsBackend(BackendBase):
             _btrfs_maybe_refresh_bootstrap(backup, self.bootstrap_refresh_days)
         src_dir = backup.src_dir
         backup_path = backup.dst_dir.joinpath(backup_basename)
+        staging_basename = _btrfs_staging_snapshot_basename()
+        tmp_snapshot = src_dir.with_path(src_dir.path.joinpath(staging_basename))
+        received_snapshot = backup_path.parent.joinpath(staging_basename)
         bootstrap_snapshot = _btrfs_bootstrap_remote_to_local(src_dir, backup_path.parent, backup)
-        _, tmp_snapshot = _btrfs_take_snapshot_remote(
-            src_dir, src_dir.with_path(src_dir.path.joinpath(backup_path.name))
-        )
-        _btrfs_send_receive_remote_to_local(
-            tmp_snapshot, backup_path.parent, parent=bootstrap_snapshot
-        )
-        _btrfs_delete_subvolumes_remote(tmp_snapshot)
+        try:
+            _btrfs_take_snapshot_remote(src_dir, tmp_snapshot)
+            _btrfs_send_receive_remote_to_local(
+                tmp_snapshot, backup_path.parent, parent=bootstrap_snapshot
+            )
+            received_snapshot.rename(backup_path)
+        except Exception:
+            if received_snapshot.is_dir():
+                _btrfs_delete_subvolumes_local(received_snapshot)
+            raise
+        finally:
+            if tmp_snapshot.is_dir():
+                _btrfs_delete_subvolumes_remote(tmp_snapshot)
 
     def _delete_backups_local(self, *backups: Path) -> None:
         _btrfs_delete_subvolumes_local(*backups)
 
     def _delete_backups_remote(self, *backups: SSHTarget) -> None:
         _btrfs_delete_subvolumes_remote(*backups)
+
+
+def _btrfs_staging_snapshot_basename() -> str:
+    return f".yaesm-btrfs-incomplete-{uuid.uuid4().hex}"
+
+
+def _btrfs_rename_subvolume_remote(snapshot: SSHTarget, destination: SSHTarget) -> None:
+    subprocess.run(
+        snapshot.openssh_cmd(
+            f"mv -- {shlex.quote(str(snapshot.path))} {shlex.quote(str(destination.path))}"
+        ),
+        check=True,
+    )
 
 
 def _btrfs_take_snapshot_local(

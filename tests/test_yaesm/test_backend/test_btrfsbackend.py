@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -48,6 +49,42 @@ def test_do_backup_already_exists(btrfs_backend, random_backup_generator):
             btrfs_backend.do_backup(backup, timeframe)
             with pytest.raises(bckp.BackupError, match="backup already exists"):
                 btrfs_backend.do_backup(backup, timeframe)
+
+
+def test_in_progress_backup_is_not_collected(monkeypatch, btrfs_backend, random_backup_generator):
+    backup = random_backup_generator(
+        backend_type="btrfs", backup_type="local_to_local", num_timeframes=1
+    )
+    assert isinstance(backup.src_dir, Path)
+    assert isinstance(backup.dst_dir, Path)
+    timeframe = backup.timeframes[0]
+    btrfs._btrfs_bootstrap_local_to_local(backup.src_dir, backup.dst_dir, backup)
+
+    transfer_started = threading.Event()
+    finish_transfer = threading.Event()
+
+    def pause_receive(snapshot, dst_dir, **_kwargs):
+        received_snapshot = dst_dir.joinpath(snapshot.name)
+        received_snapshot.mkdir()
+        transfer_started.set()
+        if not finish_transfer.wait(timeout=5):
+            raise TimeoutError("test did not release the simulated btrfs receive")
+        return 0, received_snapshot
+
+    monkeypatch.setattr(btrfs, "_btrfs_send_receive_local_to_local", pause_receive)
+
+    with freeze_time("2026-08-15 12:00"):
+        backup_path = backup.dst_dir.joinpath(bckp.backup_basename_now(backup, timeframe))
+        backup_thread = threading.Thread(target=btrfs_backend.do_backup, args=(backup, timeframe))
+        backup_thread.start()
+        assert transfer_started.wait(timeout=5)
+        try:
+            assert bckp.backups_collect(backup, timeframe) == []
+        finally:
+            finish_transfer.set()
+            backup_thread.join(timeout=5)
+            if backup_path.exists():
+                shutil.rmtree(backup_path)
 
 
 def test_exec_backup_local_to_local(btrfs_backend, random_backup_generator):
