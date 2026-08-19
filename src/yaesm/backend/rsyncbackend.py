@@ -125,7 +125,7 @@ class RsyncBackend(BackendBase):
             raise
 
         if isinstance(backup.dst_dir, SSHTarget):
-            return backup.dst_dir.with_path(dst_dir)
+            return backup.dst_dir.with_path(backup.dst_dir.path.joinpath(backup_basename))
         return dst_dir
 
 

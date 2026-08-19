@@ -45,7 +45,7 @@ def test_exec_backup(
     rsync_backend, path_generator, random_backup_generator, random_filesystem_modifier
 ):
     src_dir = path_generator("rsync_src_dir", mkdir=True)
-    for backup_type in ["local_to_local", "local_to_remote,", "remote_to_local"]:
+    for backup_type in ["local_to_local", "local_to_remote", "remote_to_local"]:
         backup = random_backup_generator(backend_type="rsync", backup_type=backup_type)
         timeframe = backup.timeframes[0]
         src_dir = backup.src_dir.path if isinstance(backup.src_dir, SSHTarget) else backup.src_dir
