@@ -85,7 +85,7 @@ class SSHTarget:
             "-o",
             "ControlMaster=auto",
             "-o",
-            "ControlPath=~/.ssh/yaesm-controlmaster-%C",
+            "ControlPath=~/.yaesm-ssh-controlmaster-%C",
             "-o",
             "ControlPersist=310",
             "-o",

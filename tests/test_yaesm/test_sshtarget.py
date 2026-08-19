@@ -59,7 +59,7 @@ def test_openssh_opts(sshtarget):
     assert "ClearAllForwardings=yes" in opts
     assert "ForwardAgent=no" in opts
     assert "ForwardX11=no" in opts
-    assert "ControlPath=~/.ssh/yaesm-controlmaster-%C" in opts
+    assert "ControlPath=~/.yaesm-ssh-controlmaster-%C" in opts
 
 
 def test_openssh_cmd(sshtarget):
