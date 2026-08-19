@@ -80,9 +80,16 @@ class SSHTarget:
         configfile_opt = [] if self.sshconfig is None else ["-F", self.sshconfig]
         port_opt = [] if self.port is None else ["-p", str(self.port)]
         default_opts = [
-            "-q",
-            "-i",
-            self.key,
+            "-o",
+            f"IdentityFile={self.key}",
+            "-o",
+            "ControlMaster=auto",
+            "-o",
+            "ControlPath=~/.ssh/yaesm-controlmaster-%C",
+            "-o",
+            "ControlPersist=310",
+            "-o",
+            "RequestTTY=no",
             "-o",
             "BatchMode=yes",
             "-o",
@@ -90,13 +97,19 @@ class SSHTarget:
             "-o",
             "StrictHostKeyChecking=yes",
             "-o",
+            "ConnectTimeout=60",
+            "-o",
+            "ServerAliveInterval=60",
+            "-o",
+            "ServerAliveCountMax=3",
+            "-o",
             "PasswordAuthentication=no",
             "-o",
-            "ControlMaster=auto",
+            "ClearAllForwardings=yes",
             "-o",
-            "ControlPath=~/.ssh/yaesm-controlmaster-%r@%h:%p",
+            "ForwardAgent=no",
             "-o",
-            "ControlPersist=310",
+            "ForwardX11=no",
         ]
         opts: list[str | Path] = [*configfile_opt, *port_opt, *default_opts]
         if string:

@@ -51,7 +51,15 @@ def test_openssh_opts(sshtarget):
     opts = sshtarget.openssh_opts()
     assert len(opts)
     assert opts[0] != "ssh"
-    assert "-i" in opts
+    assert f"IdentityFile={sshtarget.key}" in opts
+    assert "-q" not in opts
+    assert "ConnectTimeout=60" in opts
+    assert "ServerAliveInterval=60" in opts
+    assert "ServerAliveCountMax=3" in opts
+    assert "ClearAllForwardings=yes" in opts
+    assert "ForwardAgent=no" in opts
+    assert "ForwardX11=no" in opts
+    assert "ControlPath=~/.ssh/yaesm-controlmaster-%C" in opts
 
 
 def test_openssh_cmd(sshtarget):
@@ -63,11 +71,7 @@ def test_openssh_cmd(sshtarget):
     assert p.returncode == 73
     assert p.stdout == f"{sshtarget.user}\n"
     assert p.stderr == "foo\n"
-    assert (
-        Path.home()
-        .joinpath(".ssh", f"yaesm-controlmaster-{sshtarget.user}@{sshtarget.host}:{sshtarget.port}")
-        .exists()
-    )
+    assert len(list(Path.home().joinpath(".ssh").glob("yaesm-controlmaster-*"))) == 1
 
     p = subprocess.run(
         sshtarget.openssh_cmd(
