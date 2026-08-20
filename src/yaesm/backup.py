@@ -104,14 +104,20 @@ def backups_sorted(
     return sorted_backups
 
 
-def backups_collect(backup: Backup, timeframe: Timeframe | None = None) -> list[Path | SSHTarget]:
+def backups_collect(
+    backup: Backup, timeframes: list[Timeframe] | None = None
+) -> list[Path | SSHTarget]:
     """This function collects all the yaesm backups for the Backup `backup`.
-    If the Timeframe `timeframe` is given, then only collect the backups in this
-    given Timeframe. Remember that all the backups for all the timeframes are
+    If `timeframes` is given, then only collect backups in those Timeframes.
+    Remember that all the backups for all the timeframes are
     stored in the same directory.
     """
     backups: list[Path | SSHTarget] = []
-    backup_basename_re_ = backup_basename_re(backup=backup, timeframe=timeframe)
+    backup_basename_res = (
+        [backup_basename_re(backup=backup)]
+        if timeframes is None
+        else [backup_basename_re(backup=backup, timeframe=timeframe) for timeframe in timeframes]
+    )
     if isinstance(backup.dst_dir, SSHTarget):
         sshtarget = backup.dst_dir
         p = subprocess.run(
@@ -136,12 +142,12 @@ def backups_collect(backup: Backup, timeframe: Timeframe | None = None) -> list[
             if not bkp:
                 continue
             bkp = Path(bkp)
-            if backup_basename_re_.match(bkp.name):
+            if any(pattern.match(bkp.name) for pattern in backup_basename_res):
                 backups.append(sshtarget.with_path(bkp))
     else:
         dst_dir = backup.dst_dir
         for path in dst_dir.iterdir():
-            if path.is_dir() and backup_basename_re_.match(path.name):
+            if path.is_dir() and any(pattern.match(path.name) for pattern in backup_basename_res):
                 backups.append(path)
     return ty.cast(
         list[Path | SSHTarget], backups_sorted(ty.cast(list[Path | str | SSHTarget], backups))

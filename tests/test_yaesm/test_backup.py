@@ -153,9 +153,9 @@ def test_backups_collect(random_backup_generator):
     backup.name = "backup-name"
     for bn in backup_basenames:
         backup.dst_dir.joinpath(bn).mkdir(parents=True, exist_ok=True)
-    collected = bckp.backups_collect(
-        backup, timeframe=tframe.WeeklyTimeframe(1, [(10, 30)], ["monday"])
-    )
+    hourly = tframe.HourlyTimeframe(1, [30])
+    weekly = tframe.WeeklyTimeframe(1, [(10, 30)], ["monday"])
+    collected = bckp.backups_collect(backup, timeframes=[weekly])
     collected_names = []
     for backup_path in collected:
         assert isinstance(backup_path, Path)
@@ -164,6 +164,10 @@ def test_backups_collect(random_backup_generator):
         "yaesm-backup-name-weekly.1999_05_13_10:30",
         "yaesm-backup-name-weekly.1999_05_13_09:30",
     ]
+    assert bckp.backups_collect(backup, timeframes=[hourly, weekly]) == list(
+        map(backup.dst_dir.joinpath, backup_basenames)
+    )
+    assert bckp.backups_collect(backup, timeframes=[]) == []
 
 
 def test_backup_name_valid():
