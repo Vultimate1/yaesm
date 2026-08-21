@@ -52,7 +52,7 @@ def test_exec_backup(
         if backup_type == "local_to_remote":
             src_dir.chmod(0o777)
         now = datetime.now()
-        assert len(bckp.backups_collect(backup, timeframe)) == 0
+        assert len(bckp.backups_collect(backup, [timeframe])) == 0
         backups = []
         for i in range(5):
             new_files, deleted_files, modified_files = random_filesystem_modifier(src_dir)
@@ -112,7 +112,7 @@ def test_failed_backup_is_not_collected(monkeypatch, rsync_backend, random_backu
     ):
         rsync_backend.do_backup(backup, timeframe)
 
-    assert bckp.backups_collect(backup, timeframe) == []
+    assert bckp.backups_collect(backup, [timeframe]) == []
 
 
 def test_delete_backups_local(rsync_backend, path_generator):

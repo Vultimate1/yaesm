@@ -33,7 +33,7 @@ def test_do_backup(btrfs_backend, random_backup_generator, path_generator):
             with freeze_time(now + timedelta(hours=i)):
                 expected_backup_basenames.insert(0, bckp.backup_basename_now(backup, timeframe))
                 btrfs_backend.do_backup(backup, timeframe)
-        backups = bckp.backups_collect(backup, timeframe=timeframe)
+        backups = bckp.backups_collect(backup, timeframes=[timeframe])
         backup_basenames = list(
             map(lambda x: x.path.name if isinstance(x, SSHTarget) else x.name, backups)
         )
@@ -79,7 +79,7 @@ def test_in_progress_backup_is_not_collected(monkeypatch, btrfs_backend, random_
         backup_thread.start()
         assert transfer_started.wait(timeout=5)
         try:
-            assert bckp.backups_collect(backup, timeframe) == []
+            assert bckp.backups_collect(backup, [timeframe]) == []
         finally:
             finish_transfer.set()
             backup_thread.join(timeout=5)
@@ -758,7 +758,7 @@ def test_bootstrap_refresh_local_to_local(btrfs_fs_generator, random_backup_gene
     # verify follow-up incremental backup works with the refreshed bootstrap
     with freeze_time("2020-01-03 13:00"):
         backend.do_backup(backup, timeframe)
-    assert len(bckp.backups_collect(backup, timeframe=timeframe)) == 3
+    assert len(bckp.backups_collect(backup, timeframes=[timeframe])) == 3
 
 
 def test_bootstrap_refresh_local_to_remote(
@@ -785,7 +785,7 @@ def test_bootstrap_refresh_local_to_remote(
     # verify follow-up incremental backup works with the refreshed bootstrap
     with freeze_time("2020-01-03 13:00"):
         backend.do_backup(backup, timeframe)
-    assert len(bckp.backups_collect(backup, timeframe=timeframe)) == 3
+    assert len(bckp.backups_collect(backup, timeframes=[timeframe])) == 3
 
 
 def test_bootstrap_refresh_remote_to_local(
@@ -812,7 +812,7 @@ def test_bootstrap_refresh_remote_to_local(
     # verify follow-up incremental backup works with the refreshed bootstrap
     with freeze_time("2020-01-03 13:00"):
         backend.do_backup(backup, timeframe)
-    assert len(bckp.backups_collect(backup, timeframe=timeframe)) == 3
+    assert len(bckp.backups_collect(backup, timeframes=[timeframe])) == 3
 
 
 def test_bootstrap_no_refresh_when_young(btrfs_fs_generator, random_backup_generator):
@@ -870,7 +870,7 @@ def test_bootstrap_refresh_preserves_existing_backups(btrfs_fs_generator, random
     for i in range(3):
         with freeze_time(now + timedelta(hours=i)):
             backend.do_backup(backup, timeframe)
-    backups_before = bckp.backups_collect(backup, timeframe=timeframe)
+    backups_before = bckp.backups_collect(backup, timeframes=[timeframe])
     assert len(backups_before) == 3
     src_bootstrap = backup.src_dir.joinpath(btrfs._btrfs_bootstrap_snapshot_basename(backup.name))
     # set mtime to 2 days before the next frozen time
@@ -878,7 +878,7 @@ def test_bootstrap_refresh_preserves_existing_backups(btrfs_fs_generator, random
     _age_btrfs_snapshot(src_bootstrap, (next_frozen - timedelta(days=2)).timestamp())
     with freeze_time(next_frozen):
         backend.do_backup(backup, timeframe)
-    backups_after = bckp.backups_collect(backup, timeframe=timeframe)
+    backups_after = bckp.backups_collect(backup, timeframes=[timeframe])
     assert len(backups_after) == 4
     for b in backups_before:
         assert b.is_dir()
