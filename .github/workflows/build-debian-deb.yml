@@ -46,6 +46,7 @@ jobs:
 
       - name: Prepare Debian source package
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           version=$(dpkg-parsechangelog --show-field Version)
           upstream_version=${version%-*}
           git archive --format=tar.gz --prefix="yaesm-$upstream_version/" \

@@ -36,6 +36,7 @@ jobs:
 
       - name: Stage RPM sources
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           mkdir -p "$HOME/rpmbuild/SOURCES" "$HOME/rpmbuild/SRPMS"
           version=$(rpmspec --query --queryformat '%{version}\n' \
             packaging/fedora/yaesm.spec | head --lines=1)
