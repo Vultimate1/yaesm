@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       image: debian:latest
-      options: --cap-add=SYS_ADMIN --security-opt systempaths=unconfined
+      options: --privileged
     env:
       DEBIAN_FRONTEND: noninteractive
 
