@@ -1,0 +1,75 @@
+name: build-fedora-rpm
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build package for latest Fedora
+    runs-on: ubuntu-24.04
+    container:
+      image: fedora:latest
+      options: --cap-add=SYS_ADMIN
+
+    steps:
+      - name: Install packaging tools
+        run: |
+          dnf install --assumeyes --setopt=install_weak_deps=False \
+            git \
+            glibc-langpack-en \
+            mock \
+            rpm-build \
+            rpmlint \
+            systemd
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Stage RPM sources
+        run: |
+          mkdir -p "$HOME/rpmbuild/SOURCES" "$HOME/rpmbuild/SRPMS"
+          version=$(rpmspec --query --queryformat '%{version}\n' \
+            packaging/fedora/yaesm.spec | head --lines=1)
+          git archive --format=tar.gz --prefix="yaesm-$version/" \
+            --output="$HOME/rpmbuild/SOURCES/yaesm-$version.tar.gz" HEAD
+          rpmbuild -bs --nodeps packaging/fedora/yaesm.spec
+
+      - name: Build Fedora package
+        run: |
+          mkdir dist
+          mock --root "fedora-$(rpm --eval '%{fedora}')-x86_64" \
+            --isolation=simple \
+            --resultdir="$PWD/dist" \
+            --rebuild "$HOME"/rpmbuild/SRPMS/yaesm-*.src.rpm
+
+      - name: Check Fedora package
+        run: |
+          rpmlint \
+            packaging/fedora/yaesm.spec \
+            dist/yaesm-*.src.rpm \
+            dist/yaesm-*.noarch.rpm
+
+      - name: Install and smoke-test Fedora package
+        run: |
+          dnf install --assumeyes --setopt=install_weak_deps=False \
+            dist/yaesm-*.noarch.rpm
+          yaesm --help
+          systemd-analyze verify --man=no /usr/lib/systemd/system/yaesm.service
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: fedora-latest-rpm-package
+          path: |
+            dist/*.noarch.rpm
+            dist/*.src.rpm
+          if-no-files-found: error

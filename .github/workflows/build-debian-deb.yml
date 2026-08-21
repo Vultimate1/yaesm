@@ -1,0 +1,115 @@
+name: build-debian-deb
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build package for latest Debian
+    runs-on: ubuntu-24.04
+    container:
+      image: debian:latest
+      options: --cap-add=SYS_ADMIN --security-opt systempaths=unconfined
+    env:
+      DEBIAN_FRONTEND: noninteractive
+
+    steps:
+      - name: Install packaging tools
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            ca-certificates \
+            dpkg-dev \
+            git \
+            iproute2 \
+            lintian \
+            mmdebstrap \
+            sbuild \
+            systemd \
+            uidmap \
+            zstd
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Stage Debian packaging
+        run: cp --archive packaging/debian debian
+
+      - name: Prepare Debian source package
+        run: |
+          version=$(dpkg-parsechangelog --show-field Version)
+          upstream_version=${version%-*}
+          git archive --format=tar.gz --prefix="yaesm-$upstream_version/" \
+            --output="../yaesm_$upstream_version.orig.tar.gz" HEAD
+          tar --extract --file="../yaesm_$upstream_version.orig.tar.gz" \
+            --directory=..
+          cp --archive debian "../yaesm-$upstream_version/debian"
+          cd "../yaesm-$upstream_version"
+          dpkg-source --build .
+
+      - name: Prepare clean Debian build environment
+        run: |
+          useradd --create-home --user-group builder
+          if ! grep --quiet '^builder:' /etc/subuid; then
+            usermod --add-subuids 100000-165535 builder
+          fi
+          if ! grep --quiet '^builder:' /etc/subgid; then
+            usermod --add-subgids 100000-165535 builder
+          fi
+
+          . /etc/os-release
+          suite=$VERSION_CODENAME
+          arch=$(dpkg --print-architecture)
+          chroot="/home/builder/.cache/sbuild/$suite-$arch.tar.zst"
+
+          mkdir -p "$(dirname "$chroot")" dist
+          chown -R builder:builder /home/builder dist
+          runuser --user builder -- env HOME=/home/builder \
+            mmdebstrap --include=ca-certificates --skip=output/dev \
+              --variant=buildd "$suite" "$chroot" https://deb.debian.org/debian
+
+      - name: Build Debian package
+        run: |
+          version=$(dpkg-parsechangelog --show-field Version)
+          . /etc/os-release
+          suite=$VERSION_CODENAME
+          arch=$(dpkg --print-architecture)
+
+          runuser --user builder -- env HOME=/home/builder \
+            sbuild --chroot-mode=unshare \
+              --chroot="/home/builder/.cache/sbuild/$suite-$arch.tar.zst" \
+              --dist="$suite" \
+              --arch-all \
+              --no-run-lintian \
+              --no-run-autopkgtest \
+              --no-run-piuparts \
+              --build-dir="$PWD/dist" \
+              "../yaesm_$version.dsc"
+
+      - name: Check Debian package
+        run: lintian --fail-on error dist/yaesm_*.changes
+
+      - name: Install and smoke-test Debian package
+        run: |
+          apt-get install --yes --no-install-recommends ./dist/yaesm_*_all.deb
+          yaesm --help
+          systemd-analyze verify /usr/lib/systemd/system/yaesm.service
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: debian-latest-deb-package
+          path: |
+            dist/*.deb
+            dist/*.buildinfo
+            dist/*.changes
+          if-no-files-found: error

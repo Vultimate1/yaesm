@@ -3,6 +3,7 @@
 import argparse
 import importlib.metadata
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -80,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
         for err in exc.errors:
             backup, err_msg = err
             logger.error("config error: %s: %s", backup, err_msg)
-        return 1
+        return os.EX_CONFIG
 
     Cleanup.initialize()
 

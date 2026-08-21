@@ -1,0 +1,16 @@
+[Unit]
+Description=Yaesm backup scheduler
+Documentation=man:yaesm(1)
+ConditionPathExists=/etc/yaesm/config.yaml
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/yaesm --config /etc/yaesm/config.yaml --log-stderr run
+StandardOutput=journal
+StandardError=journal
+Restart=on-failure
+RestartPreventExitStatus=78
+RestartSec=15s
+
+[Install]
+WantedBy=multi-user.target
