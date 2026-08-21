@@ -71,7 +71,7 @@ def test_openssh_cmd(sshtarget):
     assert p.returncode == 73
     assert p.stdout == f"{sshtarget.user}\n"
     assert p.stderr == "foo\n"
-    assert len(list(Path.home().joinpath(".ssh").glob("yaesm-controlmaster-*"))) == 1
+    assert len(list(Path.home().glob(".yaesm-ssh-controlmaster-*"))) == 1
 
     p = subprocess.run(
         sshtarget.openssh_cmd(
