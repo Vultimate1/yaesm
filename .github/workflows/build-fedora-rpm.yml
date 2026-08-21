@@ -66,11 +66,9 @@ jobs:
           yaesm --help
           systemd-analyze verify --man=no /usr/lib/systemd/system/yaesm.service
 
-      - name: Upload build artifacts
+      - name: Upload Fedora package
         uses: actions/upload-artifact@v7
         with:
-          name: fedora-latest-rpm-package
-          path: |
-            dist/*.noarch.rpm
-            dist/*.src.rpm
+          path: dist/yaesm-*.noarch.rpm
           if-no-files-found: error
+          archive: false

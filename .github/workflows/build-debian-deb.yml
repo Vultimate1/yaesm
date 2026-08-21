@@ -105,12 +105,9 @@ jobs:
           yaesm --help
           systemd-analyze verify /usr/lib/systemd/system/yaesm.service
 
-      - name: Upload build artifacts
+      - name: Upload Debian package
         uses: actions/upload-artifact@v7
         with:
-          name: debian-latest-deb-package
-          path: |
-            dist/*.deb
-            dist/*.buildinfo
-            dist/*.changes
+          path: dist/yaesm_*_all.deb
           if-no-files-found: error
+          archive: false
