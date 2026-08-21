@@ -30,7 +30,7 @@ classifiers = [
 dependencies = [
     "apscheduler>=3.11.0",
     "pyyaml>=6.0.2",
-    "voluptuous>=0.15.2",
+    "voluptuous>=0.14.2",
 ]
 
 [project.scripts]
