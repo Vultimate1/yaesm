@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add the `yaesm(1)` user manual.
 - Allow `backup` and `check` to accept comma-separated backup names.
 - Show detailed `check` results by default, with a quiet option.
 - Log when the backup scheduler starts.
