@@ -1,0 +1,112 @@
+name: release-packages
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+
+jobs:
+  validate-version:
+    name: Validate release version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Compare package versions with release tag
+        run: |
+          project_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)
+          debian_version=$(sed -n '1s/.*(\(.*\)-[^-]*).*/\1/p' packaging/debian/changelog)
+          fedora_version=$(sed -n 's/^Version:[[:space:]]*//p' packaging/fedora/yaesm.spec)
+
+          test "$GITHUB_REF_NAME" = "v$project_version"
+          test "$debian_version" = "$project_version"
+          test "$fedora_version" = "$project_version"
+
+  build-debian:
+    name: Build Debian package
+    needs: validate-version
+    uses: ./.github/workflows/build-debian-deb.yml
+
+  build-fedora:
+    name: Build Fedora package
+    needs: validate-version
+    uses: ./.github/workflows/build-fedora-rpm.yml
+
+  publish:
+    name: Sign and publish packages
+    needs:
+      - build-debian
+      - build-fedora
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: fedora:latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Install signing tools
+        run: |
+          dnf install --assumeyes --setopt=install_weak_deps=False \
+            gh \
+            gnupg2 \
+            rpm-sign
+
+      - name: Download packages
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Sign and verify packages
+        env:
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_KEY_FINGERPRINT: ${{ vars.GPG_KEY_FINGERPRINT }}
+        run: |
+          test -n "$GPG_SIGNING_KEY"
+          test -n "$GPG_KEY_FINGERPRINT"
+
+          export GNUPGHOME
+          GNUPGHOME=$(mktemp --directory /dev/shm/yaesm-gnupg.XXXXXX)
+          trap 'gpgconf --homedir "$GNUPGHOME" --kill gpg-agent || true;
+            rm --force --recursive "$GNUPGHOME"' EXIT
+
+          printf '%s' "$GPG_SIGNING_KEY" | gpg --batch --import
+          gpg --batch --with-colons --list-secret-keys "$GPG_KEY_FINGERPRINT" |
+            grep --quiet "^fpr:::::::::$GPG_KEY_FINGERPRINT:"
+
+          rpmsign --addsign \
+            --define "_openpgp_sign gpg" \
+            --define "_openpgp_sign_id $GPG_KEY_FINGERPRINT" \
+            dist/*.noarch.rpm
+
+          gpg --batch --armor --export "$GPG_KEY_FINGERPRINT" \
+            > dist/yaesm-release.asc
+          rpmkeys --import dist/yaesm-release.asc
+          rpmkeys --checksig --verbose dist/*.noarch.rpm
+
+          cd dist
+          sha256sum -- *.rpm *.deb > SHA256SUMS
+          gpg --batch --armor --local-user "$GPG_KEY_FINGERPRINT" \
+            --detach-sign SHA256SUMS
+          gpg --batch --verify SHA256SUMS.asc SHA256SUMS
+          sha256sum --check SHA256SUMS
+
+      - name: Attach packages to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            dist/*.noarch.rpm \
+            dist/*_all.deb \
+            dist/SHA256SUMS \
+            dist/SHA256SUMS.asc \
+            dist/yaesm-release.asc \
+            --clobber

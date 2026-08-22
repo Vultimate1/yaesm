@@ -1,5 +1,7 @@
 """tests/test_yaesm/test_main.py."""
 
+import os
+
 import yaesm.main
 from yaesm.subcommand.checksubcommand import CheckSubcommand
 
@@ -18,7 +20,7 @@ def test_config_error_writes_to_log_file(path_generator):
     logfile = path_generator("yaesm_config_error.log")
     argv = ["--config", str(config), "--log-file", str(logfile), "check"]
 
-    assert yaesm.main.main(argv) == 1
+    assert yaesm.main.main(argv) == os.EX_CONFIG
     assert "config file does not exist" in logfile.read_text()
 
 
