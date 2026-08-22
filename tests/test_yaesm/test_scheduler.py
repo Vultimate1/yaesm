@@ -2,11 +2,20 @@
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import yaesm.scheduler
 import yaesm.timeframe
+
+
+def test_concurrency_limits():
+    scheduler = yaesm.scheduler.Scheduler()._apscheduler
+    executor = scheduler._executors["default"]
+    assert isinstance(executor._pool, ThreadPoolExecutor)
+    assert executor._pool._max_workers == 10
+    assert scheduler._job_defaults["max_instances"] == 1
 
 
 def test_add_job_5minute_timeframe():
@@ -432,7 +441,7 @@ def test_overlapping_backup_logs_warning(caplog):
         call_count[0] += 1
         if call_count[0] == 1:
             # Still running when the next triggers fire, so those runs are
-            # skipped by apscheduler's max_instances=1 default.
+            # skipped by Yaesm's max_instances=1 setting.
             time.sleep(0.7)
         else:
             scheduler.stop(force=True)

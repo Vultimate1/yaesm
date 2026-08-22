@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timedelta
 
 import apscheduler.events
+import apscheduler.executors.pool
 import apscheduler.schedulers.blocking
 
 import yaesm.ty as ty
@@ -22,7 +23,12 @@ logger = logging.getLogger(__name__)
 
 class Scheduler:
     def __init__(self) -> None:
-        self._apscheduler = apscheduler.schedulers.blocking.BlockingScheduler()
+        self._apscheduler = apscheduler.schedulers.blocking.BlockingScheduler(
+            executors={
+                "default": apscheduler.executors.pool.ThreadPoolExecutor(max_workers=10),
+            },
+            job_defaults={"max_instances": 1},
+        )
         logging.getLogger("apscheduler").propagate = False
         logging.getLogger("apscheduler").setLevel("CRITICAL")
         self._apscheduler.add_listener(
