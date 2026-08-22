@@ -38,9 +38,9 @@ retention is managed separately from scheduled timeframes.
 
 **--keep** *COUNT*
 
-: For each selected backup, keep no more than *COUNT* immediate backups,
-  including the newly created backup. *COUNT* must be a positive integer.
-  Immediate backups are kept indefinitely when this option is omitted.
+For each selected backup, keep no more than *COUNT* immediate backups,
+including the newly created backup. *COUNT* must be a positive integer.
+Immediate backups are kept indefinitely when this option is omitted.
 
 ## check
 
@@ -57,7 +57,7 @@ though later runtime failures are still possible.
 
 **-q**, **--quiet**
 
-: Show only failed checks and their error messages.
+Show only failed checks and their error messages.
 
 Examples:
 
@@ -83,32 +83,32 @@ The following queries are supported:
 
 **all**
 
-: Select every backup. This is the default.
+Select every backup. This is the default.
 
 **newest**
 
-: Select the newest backup.
+Select the newest backup.
 
 **oldest**
 
-: Select the oldest backup.
+Select the oldest backup.
 
 **after** *TIME*
 
-: Select backups newer than *TIME*.
+Select backups newer than *TIME*.
 
 **before** *TIME*
 
-: Select backups older than *TIME*.
+Select backups older than *TIME*.
 
 **between** *TIME* *TIME*
 
-: Select backups between the two times, including the endpoints. The times
-  may be given in either order.
+Select backups between the two times, including the endpoints. The times
+may be given in either order.
 
 **closest** *TIME*
 
-: Select the backup closest to *TIME*.
+Select the backup closest to *TIME*.
 
 *TIME* may have one of these forms:
 
@@ -120,14 +120,14 @@ The following queries are supported:
 
 **-q** *QUERY*, **--query** *QUERY*
 
-: Add another query. This option may be repeated. Results from multiple
-  queries are combined without duplicates.
+Add another query. This option may be repeated. Results from multiple
+queries are combined without duplicates.
 
 **-t** *TIMEFRAME*, **--timeframe** *TIMEFRAME*, **--timeframes** *TIMEFRAME*
 
-: Limit results to one or more timeframes. Values may be comma-separated and
-  the option may be repeated. Valid values are **5minute**, **hourly**,
-  **daily**, **weekly**, **monthly**, **yearly**, and **immediate**.
+Limit results to one or more timeframes. Values may be comma-separated and
+the option may be repeated. Valid values are **5minute**, **hourly**,
+**daily**, **weekly**, **monthly**, **yearly**, and **immediate**.
 
 Examples:
 
@@ -165,19 +165,19 @@ Apart from its name, every backup accepts two common settings:
 
 **backend**
 
-: Required. The backend used to create and manage this backup. The currently
-  supported values are **btrfs** and **rsync**. Backend names are
-  case-sensitive. See [BACKENDS](#backends) for backend-specific settings,
-  requirements, behavior, and examples.
+Required. The backend used to create and manage this backup. The currently
+supported values are **btrfs** and **rsync**. Backend names are case-sensitive.
+See [BACKENDS](#backends) for backend-specific settings, requirements,
+behavior, and examples.
 
 **timeframes**
 
-: Required. A list containing any of **5minute**, **hourly**, **daily**,
-  **weekly**, **monthly**, or **yearly**. Each selected timeframe requires the
-  corresponding settings described under [TIMEFRAMES](#timeframes). Timeframe
-  names are case-sensitive and each should appear only once. An empty list
-  creates no scheduled jobs, but the backup may still be run manually. The
-  **immediate** timeframe is reserved for manual backups and is not valid here.
+Required. A list containing any of **5minute**, **hourly**, **daily**,
+**weekly**, **monthly**, or **yearly**. Each selected timeframe requires the
+corresponding settings described under [TIMEFRAMES](#timeframes). Timeframe
+names are case-sensitive and each should appear only once. An empty list
+creates no scheduled jobs, but the backup may still be run manually. The
+**immediate** timeframe is reserved for manual backups and is not valid here.
 
 ## Timeframes
 
@@ -203,7 +203,7 @@ Run every five minutes.
 
 **5minute_keep**
 
-: Required positive integer specifying how many five-minute backups to retain.
+Required positive integer specifying how many five-minute backups to retain.
 
 ### hourly
 
@@ -211,11 +211,11 @@ Run every hour at each selected minute.
 
 **hourly_keep**
 
-: Required positive integer specifying how many hourly backups to retain.
+Required positive integer specifying how many hourly backups to retain.
 
 **hourly_minutes**
 
-: Required list of one or more integer minute values from 0 through 59.
+Required list of one or more integer minute values from 0 through 59.
 
 ### daily
 
@@ -223,11 +223,11 @@ Run every day at each selected time.
 
 **daily_keep**
 
-: Required positive integer specifying how many daily backups to retain.
+Required positive integer specifying how many daily backups to retain.
 
 **daily_times**
 
-: Required list of one or more quoted `HH:MM` times.
+Required list of one or more quoted `HH:MM` times.
 
 ### weekly
 
@@ -235,17 +235,17 @@ Run on every combination of the selected weekdays and times.
 
 **weekly_keep**
 
-: Required positive integer specifying how many weekly backups to retain.
+Required positive integer specifying how many weekly backups to retain.
 
 **weekly_times**
 
-: Required list of one or more quoted `HH:MM` times.
+Required list of one or more quoted `HH:MM` times.
 
 **weekly_days**
 
-: Required list of one or more weekday names: **monday**, **tuesday**,
-  **wednesday**, **thursday**, **friday**, **saturday**, or **sunday**. Names
-  are case-insensitive.
+Required list of one or more weekday names: **monday**, **tuesday**,
+**wednesday**, **thursday**, **friday**, **saturday**, or **sunday**. Names are
+case-insensitive.
 
 ### monthly
 
@@ -254,15 +254,15 @@ exist in a particular month is skipped for that month.
 
 **monthly_keep**
 
-: Required positive integer specifying how many monthly backups to retain.
+Required positive integer specifying how many monthly backups to retain.
 
 **monthly_times**
 
-: Required list of one or more quoted `HH:MM` times.
+Required list of one or more quoted `HH:MM` times.
 
 **monthly_days**
 
-: Required list of one or more integer days from 1 through 31.
+Required list of one or more integer days from 1 through 31.
 
 ### yearly
 
@@ -272,15 +272,15 @@ not supported.
 
 **yearly_keep**
 
-: Required positive integer specifying how many yearly backups to retain.
+Required positive integer specifying how many yearly backups to retain.
 
 **yearly_times**
 
-: Required list of one or more quoted `HH:MM` times.
+Required list of one or more quoted `HH:MM` times.
 
 **yearly_days**
 
-: Required list of one or more integer days from 1 through 365.
+Required list of one or more integer days from 1 through 365.
 
 # BACKENDS
 
@@ -295,13 +295,13 @@ settings.
 
 **ssh_key**
 
-: Required when a backend uses an SSH target. This must be an absolute path to
-  an existing local private-key file used for SSH authentication.
+Required when a backend uses an SSH target. This must be an absolute path to
+an existing local private-key file used for SSH authentication.
 
 **ssh_config**
 
-: Optional. An absolute path to an existing local OpenSSH configuration file.
-  When set, the file is passed to OpenSSH with **-F**.
+Optional. An absolute path to an existing local OpenSSH configuration file.
+When set, the file is passed to OpenSSH with **-F**.
 
 ## Path-based backends
 
@@ -311,14 +311,14 @@ path is remote:
 
 **src_dir**
 
-: Required. The directory to back up. This may be an absolute path to an
-  existing local directory or an SSH target specification.
+Required. The directory to back up. This may be an absolute path to an
+existing local directory or an SSH target specification.
 
 **dst_dir**
 
-: Required. The directory in which backups are stored. This may be an absolute
-  path to an existing local directory or an SSH target specification. Yaesm
-  creates backups inside this directory.
+Required. The directory in which backups are stored. This may be an absolute
+path to an existing local directory or an SSH target specification. Yaesm
+creates backups inside this directory.
 
 Local paths must begin with `/` and must already exist when the configuration
 is read. `~` and environment variables are not expanded.
@@ -357,9 +357,9 @@ available wherever yaesm operates on them.
 
 **btrfs_bootstrap_refresh**
 
-: Optional positive integer specifying the maximum age, in days, of the
-  bootstrap snapshot used for incremental transfers. A stale bootstrap is
-  recreated without removing existing backups.
+Optional positive integer specifying the maximum age, in days, of the
+bootstrap snapshot used for incremental transfers. A stale bootstrap is
+recreated without removing existing backups.
 
 ## rsync
 
@@ -368,9 +368,8 @@ command must be available wherever yaesm operates on the source or destination.
 
 **rsync_extra_opts**
 
-: Optional rsync options, given as a string or a list of strings. Each value is
-  split on whitespace and passed to rsync in addition to yaesm's default
-  options.
+Optional rsync options, given as a string or a list of strings. Each value is
+split on whitespace and passed to rsync in addition to yaesm's default options.
 
 ## Examples
 
