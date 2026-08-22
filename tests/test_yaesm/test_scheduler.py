@@ -1,5 +1,6 @@
 """tests/test_yaesm/test_scheduler.py."""
 
+import logging
 import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -389,6 +390,19 @@ def test_add_backups_empty_list():
     scheduler.add_backups([])
     jobs = scheduler._apscheduler.get_jobs()
     assert len(jobs) == 0
+
+
+def test_start_logs(caplog):
+    caplog.set_level(logging.INFO)
+    scheduler = yaesm.scheduler.Scheduler()
+    scheduler._apscheduler.add_job(
+        lambda: scheduler.stop(force=True),
+        "interval",
+        seconds=1,
+        start_date=datetime.now() + timedelta(seconds=0.1),
+    )
+    scheduler.start()
+    assert "scheduler started" in caplog.text
 
 
 def test_job_fail_logs_instead_of_crashes(caplog):

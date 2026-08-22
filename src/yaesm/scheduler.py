@@ -26,6 +26,10 @@ class Scheduler:
         logging.getLogger("apscheduler").propagate = False
         logging.getLogger("apscheduler").setLevel("CRITICAL")
         self._apscheduler.add_listener(
+            lambda _event: logger.info("scheduler started"),
+            apscheduler.events.EVENT_SCHEDULER_STARTED,
+        )
+        self._apscheduler.add_listener(
             lambda event: logger.info("%s - successful backup", self._job_name(event.job_id)),
             apscheduler.events.EVENT_JOB_EXECUTED,
         )
