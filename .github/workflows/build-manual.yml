@@ -22,7 +22,7 @@ jobs:
       - name: Build man page
         run: |
           version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          pandoc man/yaesm.1.md -s -t man -o man/yaesm.1 \
+          pandoc man/yaesm.1.md -f markdown-smart -s -t man -o man/yaesm.1 \
             --metadata title=YAESM \
             --metadata section=1 \
             --metadata "footer=yaesm $version"

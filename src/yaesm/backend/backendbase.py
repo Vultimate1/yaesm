@@ -94,6 +94,10 @@ class BackendBase(abc.ABC):
         """
         return config.Schema.schema_empty()
 
+    def format_locator(self, artifact: bckp.BackupArtifact) -> str:
+        """Return the user-facing locator for a backup artifact."""
+        return artifact.locator
+
     @abc.abstractmethod
     def check(self, backup: bckp.Backup) -> list[CheckResult]:
         """Check that preconditions for `backup` are met."""
@@ -140,6 +144,47 @@ class PathBackendBase(BackendBase):
     The destination is expected to be an existing directory.
     """
 
+    src_dir: Path | SSHTarget
+    dst_dir: Path | SSHTarget
+
+    @staticmethod
+    def config_settings() -> set[str]:
+        return config.SrcDirDstDirSchema.valid_settings()
+
+    @staticmethod
+    def config_schema() -> vlp.Schema:
+        def _apply_to_backend(d: dict) -> dict:
+            backend = d["backend"]
+            assert isinstance(backend, PathBackendBase)
+            backend.configure_paths(d["src_dir"], d["dst_dir"])
+            return d
+
+        return vlp.Schema(vlp.All(config.SrcDirDstDirSchema.schema(), _apply_to_backend))
+
+    @staticmethod
+    def config_schema_extra() -> vlp.Schema:
+        return config.SrcDirDstDirSchema.schema_extra()
+
+    def configure_paths(self, src_dir: Path | SSHTarget, dst_dir: Path | SSHTarget) -> None:
+        """Set this backend's validated source and destination directories."""
+        if isinstance(src_dir, SSHTarget) and isinstance(dst_dir, SSHTarget):
+            raise bckp.BackupError("both src_dir and dst_dir are ssh targets")
+        self.src_dir = src_dir
+        self.dst_dir = dst_dir
+
+    @property
+    def backup_type(self) -> str:
+        if isinstance(self.src_dir, SSHTarget):
+            return "remote_to_local"
+        if isinstance(self.dst_dir, SSHTarget):
+            return "local_to_remote"
+        return "local_to_local"
+
+    def format_locator(self, artifact: bckp.BackupArtifact) -> str:
+        if isinstance(self.dst_dir, SSHTarget):
+            return str(self.dst_dir.with_path(Path(artifact.locator)))
+        return artifact.locator
+
     @ty.final
     def check(self, backup: bckp.Backup) -> list[CheckResult]:
         """Check that path backup preconditions are met."""
@@ -150,8 +195,8 @@ class PathBackendBase(BackendBase):
             results.append(result)
             return result
 
-        src_dir = backup.src_dir
-        dst_dir = backup.dst_dir
+        src_dir = self.src_dir
+        dst_dir = self.dst_dir
         sshtarget = src_dir if isinstance(src_dir, SSHTarget) else None
         if isinstance(dst_dir, SSHTarget):
             sshtarget = dst_dir
@@ -209,7 +254,7 @@ class PathBackendBase(BackendBase):
         self, backup: bckp.Backup, timeframes: list[Timeframe] | None = None
     ) -> list[bckp.BackupArtifact]:
         """Collect directory-backed artifacts from newest to oldest."""
-        return bckp.path_artifacts_collect(backup, timeframes=timeframes)
+        return bckp.path_artifacts_collect(backup, self.dst_dir, timeframes=timeframes)
 
     def check_extra(self, backup: bckp.Backup) -> list[CheckResult]:
         """Perform backend-specific path checks."""

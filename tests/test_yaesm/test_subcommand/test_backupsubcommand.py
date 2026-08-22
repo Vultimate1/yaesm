@@ -171,7 +171,8 @@ def test_backup_creates_immediate_named_directory(
     caplog.set_level(logging.INFO)
     src_dir = path_generator("naming-src", mkdir=True)
     dst_dir = path_generator("naming-dst", mkdir=True)
-    backup = bckp.Backup("testbackup", rsync_backend, src_dir, dst_dir, [])
+    rsync_backend.configure_paths(src_dir, dst_dir)
+    backup = bckp.Backup("testbackup", rsync_backend, [])
     args = _parse_args([backup.name])
     with freeze_time("2026-03-23 14:30"):
         assert backupsubcommand.main([backup], args) == 0
@@ -191,7 +192,8 @@ def test_keep_deletes_old_immediate_backups(
     total = 5
     src_dir = path_generator("keep-src", mkdir=True)
     dst_dir = path_generator("keep-dst", mkdir=True)
-    backup = bckp.Backup("keeptest", rsync_backend, src_dir, dst_dir, [])
+    rsync_backend.configure_paths(src_dir, dst_dir)
+    backup = bckp.Backup("keeptest", rsync_backend, [])
     args = _parse_args([backup.name, "--keep", str(keep)])
     now = datetime.now()
     for i in range(total):

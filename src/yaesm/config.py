@@ -134,16 +134,14 @@ class BackupSchema(Schema):
         """
         backup_name = list(d.keys())[0]
         backup_settings = d[backup_name]
-        valid = (
-            BackendSchema.valid_settings()
-            | SrcDirDstDirSchema.valid_settings()
-            | TimeframeSchema.valid_settings()
-        )
+        valid = BackendSchema.valid_settings() | TimeframeSchema.valid_settings()
         backend_name = backup_settings.get("backend", "")
         for cls in backendbase.BackendBase.backend_classes():
             if cls.name() == backend_name:
                 valid |= cls.config_settings()
                 break
+        else:
+            return d
         unknown = sorted(set(backup_settings.keys()) - valid)
         if unknown:
             raise vlp.Invalid(BackupSchema.ErrMsg.UNKNOWN_SETTING + f"\n\t{unknown}")
@@ -151,11 +149,10 @@ class BackupSchema(Schema):
 
     @staticmethod
     def _apply_sub_schemas(d: dict) -> dict:
-        """Apply all of the sub schemas (TimeframeSchema, SrcDirDstDirSchema, etc)
-        to `d`, mutating d. Collects all errors, and raises a `vlp.MultipleInvalid`
-        exception with all found errors, if any. This function is also
-        responsible for applying the proper backend-specific schema. Only call
-        this function after ensuring `d` contains just a single backup.
+        """Apply the common and selected backend schemas to `d`, mutating it.
+
+        Collect all errors and raise `vlp.MultipleInvalid` if any are found.
+        Only call this after ensuring `d` contains one backup.
         """
         backup_name = list(d.keys())[0]
         backup_settings = d[backup_name]
@@ -166,7 +163,7 @@ class BackupSchema(Schema):
             BackupSchema._reject_unknown_settings(d)
         except vlp.Invalid as exc:
             errors.append(exc)
-        for schema_class in [BackendSchema, SrcDirDstDirSchema, TimeframeSchema]:
+        for schema_class in [BackendSchema, TimeframeSchema]:
             schema = schema_class.schema()
             try:
                 backup_settings = schema(backup_settings)
@@ -191,12 +188,8 @@ class BackupSchema(Schema):
         backup_name = list(d.keys())[0]
         backup_settings = d[backup_name]
         backend_obj = backup_settings["backend"]
-        if backup_settings.get("extra_opts"):
-            backend_obj.extra_opts = backup_settings["extra_opts"]
         timeframes = backup_settings["timeframes"]
-        src_dir = backup_settings["src_dir"]
-        dst_dir = backup_settings["dst_dir"]
-        return bckp.Backup(backup_name, backend_obj, src_dir, dst_dir, timeframes)
+        return bckp.Backup(backup_name, backend_obj, timeframes)
 
     @staticmethod
     def _ensure_single_backup(d: dict) -> dict:
@@ -246,7 +239,6 @@ class BackendSchema(Schema):
                     )
                 },
                 BackendSchema._dict_promote_backend_name_to_backend_class,
-                BackendSchema._apply_backend_specific_schema,
             ),
             extra=vlp.ALLOW_EXTRA,
         )
@@ -259,14 +251,6 @@ class BackendSchema(Schema):
             if backend_name == backend_class.name():
                 d["backend"] = backend_class()  # Create an instance!
                 break
-        return d
-
-    @staticmethod
-    def _apply_backend_specific_schema(d: dict) -> dict:
-        """Apply the backend-specific configuration schema to the backup settings dict."""
-        backend_instance = d["backend"]
-        backend_schema = type(backend_instance).config_schema()
-        d = backend_schema(d)
         return d
 
 

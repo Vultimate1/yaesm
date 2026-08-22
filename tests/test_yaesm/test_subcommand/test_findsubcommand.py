@@ -35,19 +35,24 @@ def _make_backup(tmp_path: Path, name: str) -> Backup:
     src_dir.mkdir()
     dst_dir.mkdir()
     backend = MagicMock()
-    backend.collect.side_effect = bckp.path_artifacts_collect
+    backend.src_dir = src_dir
+    backend.dst_dir = dst_dir
+    backend.collect.side_effect = lambda backup, timeframes=None: bckp.path_artifacts_collect(
+        backup, dst_dir, timeframes
+    )
+    backend.format_locator.side_effect = lambda artifact: artifact.locator
     return Backup(
         name,
         backend,
-        src_dir,
-        dst_dir,
         [HourlyTimeframe(keep=24, minutes=[0]), DailyTimeframe(keep=7, times=[(0, 0)])],
     )
 
 
 def _create_backup_dir(backup: Backup, timeframe: str, hour: int, minute: int = 0) -> Path:
-    assert isinstance(backup.dst_dir, Path)
-    path = backup.dst_dir / (f"yaesm-{backup.name}-{timeframe}.2026_08_20_{hour:02}:{minute:02}")
+    assert isinstance(backup.backend.dst_dir, Path)
+    path = backup.backend.dst_dir / (
+        f"yaesm-{backup.name}-{timeframe}.2026_08_20_{hour:02}:{minute:02}"
+    )
     path.mkdir()
     return path
 
@@ -289,11 +294,15 @@ def test_find_main_supports_multiple_backup_names(tmp_path, capsys):
 
 def test_find_main_supports_remote_backups(capsys):
     target = SSHTarget("ssh://p2222:backup@backup.example:/backups", Path("/key"))
+    backend = MagicMock()
+    backend.src_dir = Path("/source")
+    backend.dst_dir = target
+    backend.format_locator.side_effect = lambda artifact: str(
+        target.with_path(Path(artifact.locator))
+    )
     backup = Backup(
         "foo",
-        MagicMock(),
-        Path("/source"),
-        target,
+        backend,
         [HourlyTimeframe(keep=24, minutes=[0])],
     )
     snapshot = _snapshot(12)

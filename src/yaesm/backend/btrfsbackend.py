@@ -38,7 +38,7 @@ class BtrfsBackend(PathBackendBase):
 
     @staticmethod
     def config_settings() -> set[str]:
-        return {"btrfs_bootstrap_refresh"}
+        return PathBackendBase.config_settings() | {"btrfs_bootstrap_refresh"}
 
     @staticmethod
     def config_schema() -> vlp.Schema:
@@ -49,6 +49,7 @@ class BtrfsBackend(PathBackendBase):
 
         return vlp.Schema(
             vlp.All(
+                PathBackendBase.config_schema(),
                 {vlp.Optional("btrfs_bootstrap_refresh"): vlp.All(int, vlp.Range(min=1))},
                 _apply_to_backend,
             ),
@@ -57,8 +58,8 @@ class BtrfsBackend(PathBackendBase):
 
     def check_extra(self, backup: bckp.Backup) -> list[CheckResult]:
         results: list[CheckResult] = []
-        src_dir = backup.src_dir
-        dst_dir = backup.dst_dir
+        src_dir = self.src_dir
+        dst_dir = self.dst_dir
         if isinstance(src_dir, SSHTarget):
             results.append(
                 CheckResult(
@@ -90,9 +91,9 @@ class BtrfsBackend(PathBackendBase):
         return results
 
     def create(self, backup: bckp.Backup, timeframe: Timeframe, name: str) -> bckp.BackupArtifact:
-        if backup.backup_type == "local_to_local":
+        if self.backup_type == "local_to_local":
             locator = self._exec_backup_local_to_local(backup, name, timeframe)
-        elif backup.backup_type == "local_to_remote":
+        elif self.backup_type == "local_to_remote":
             locator = self._exec_backup_local_to_remote(backup, name, timeframe)
         else:
             locator = self._exec_backup_remote_to_local(backup, name, timeframe)
@@ -102,12 +103,12 @@ class BtrfsBackend(PathBackendBase):
     def _exec_backup_local_to_local(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
     ) -> Path:
-        assert isinstance(backup.src_dir, Path)
-        assert isinstance(backup.dst_dir, Path)
+        assert isinstance(self.src_dir, Path)
+        assert isinstance(self.dst_dir, Path)
         if self.bootstrap_refresh_days is not None:
             _btrfs_maybe_refresh_bootstrap(backup, self.bootstrap_refresh_days)
-        src_dir = backup.src_dir
-        backup_path = backup.dst_dir.joinpath(backup_basename)
+        src_dir = self.src_dir
+        backup_path = self.dst_dir.joinpath(backup_basename)
         returncode, _ = _btrfs_take_snapshot_local(src_dir, backup_path, check=False)
         if returncode != 0:
             staging_basename = _btrfs_staging_snapshot_basename()
@@ -134,12 +135,12 @@ class BtrfsBackend(PathBackendBase):
     def _exec_backup_local_to_remote(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
     ) -> SSHTarget:
-        assert isinstance(backup.src_dir, Path)
-        assert isinstance(backup.dst_dir, SSHTarget)
+        assert isinstance(self.src_dir, Path)
+        assert isinstance(self.dst_dir, SSHTarget)
         if self.bootstrap_refresh_days is not None:
             _btrfs_maybe_refresh_bootstrap(backup, self.bootstrap_refresh_days)
-        src_dir = backup.src_dir
-        backup_path = backup.dst_dir.with_path(backup.dst_dir.path.joinpath(backup_basename))
+        src_dir = self.src_dir
+        backup_path = self.dst_dir.with_path(self.dst_dir.path.joinpath(backup_basename))
         staging_basename = _btrfs_staging_snapshot_basename()
         tmp_snapshot = src_dir.joinpath(staging_basename)
         received_snapshot = backup_path.with_path(
@@ -168,12 +169,12 @@ class BtrfsBackend(PathBackendBase):
     def _exec_backup_remote_to_local(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
     ) -> Path:
-        assert isinstance(backup.src_dir, SSHTarget)
-        assert isinstance(backup.dst_dir, Path)
+        assert isinstance(self.src_dir, SSHTarget)
+        assert isinstance(self.dst_dir, Path)
         if self.bootstrap_refresh_days is not None:
             _btrfs_maybe_refresh_bootstrap(backup, self.bootstrap_refresh_days)
-        src_dir = backup.src_dir
-        backup_path = backup.dst_dir.joinpath(backup_basename)
+        src_dir = self.src_dir
+        backup_path = self.dst_dir.joinpath(backup_basename)
         staging_basename = _btrfs_staging_snapshot_basename()
         tmp_snapshot = src_dir.with_path(src_dir.path.joinpath(staging_basename))
         received_snapshot = backup_path.parent.joinpath(staging_basename)
@@ -194,9 +195,9 @@ class BtrfsBackend(PathBackendBase):
         return backup_path
 
     def delete(self, backup: bckp.Backup, artifacts: list[bckp.BackupArtifact]) -> None:
-        if isinstance(backup.dst_dir, SSHTarget):
+        if isinstance(self.dst_dir, SSHTarget):
             _btrfs_delete_subvolumes_remote(
-                *(backup.dst_dir.with_path(Path(artifact.locator)) for artifact in artifacts)
+                *(self.dst_dir.with_path(Path(artifact.locator)) for artifact in artifacts)
             )
         else:
             _btrfs_delete_subvolumes_local(*(Path(artifact.locator) for artifact in artifacts))
@@ -342,8 +343,10 @@ def _btrfs_maybe_refresh_bootstrap(backup: bckp.Backup, refresh_days: int) -> No
     recreating both.
     """
     basename = _btrfs_bootstrap_snapshot_basename(backup.name)
-    src_dir = backup.src_dir
-    dst_dir = backup.dst_dir
+    backend = backup.backend
+    assert isinstance(backend, BtrfsBackend)
+    src_dir = backend.src_dir
+    dst_dir = backend.dst_dir
     if isinstance(src_dir, SSHTarget):
         src_bootstrap_path = src_dir.path.joinpath(basename)
         src_bootstrap_target = src_dir.with_path(src_bootstrap_path)

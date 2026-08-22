@@ -27,30 +27,11 @@ class BackupArtifact:
 
 @dataclasses.dataclass
 class Backup:
-    def __init__(
-        self,
-        name: str,
-        backend: ty.Any,
-        src_dir: Path | SSHTarget,
-        dst_dir: Path | SSHTarget,
-        timeframes: list[Timeframe],
-    ) -> None:
-        self.name = name
-        self.backend = backend
-        self.src_dir = src_dir
-        self.dst_dir = dst_dir
-        self.timeframes = timeframes
-        src_is_sshtarget = isinstance(self.src_dir, SSHTarget)
-        dst_is_sshtarget = isinstance(self.dst_dir, SSHTarget)
+    """A named backend and its configured backup timeframes."""
 
-        if not src_is_sshtarget and not dst_is_sshtarget:
-            self.backup_type = "local_to_local"
-        elif not src_is_sshtarget and dst_is_sshtarget:
-            self.backup_type = "local_to_remote"
-        elif src_is_sshtarget and not dst_is_sshtarget:
-            self.backup_type = "remote_to_local"
-        else:  # remote_to_remote
-            raise BackupError(f"backup {self.name} has both src_dir and dst_dir as ssh targets")
+    name: str
+    backend: ty.Any
+    timeframes: list[Timeframe]
 
 
 def backup_name_valid(backup_name: str) -> bool:
@@ -122,9 +103,11 @@ def backups_collect(
 
 
 def path_artifacts_collect(
-    backup: Backup, timeframes: list[Timeframe] | None = None
+    backup: Backup,
+    dst_dir: Path | SSHTarget,
+    timeframes: list[Timeframe] | None = None,
 ) -> list[BackupArtifact]:
-    """Collect directory backup artifacts sorted from newest to oldest.
+    """Collect directory backup artifacts from `dst_dir`, newest to oldest.
 
     If `timeframes` is given, then only collect backups in those Timeframes.
     Remember that all the backups for all the timeframes are
@@ -136,8 +119,8 @@ def path_artifacts_collect(
         if timeframes is None
         else [backup_basename_re(backup=backup, timeframe=timeframe) for timeframe in timeframes]
     )
-    if isinstance(backup.dst_dir, SSHTarget):
-        sshtarget = backup.dst_dir
+    if isinstance(dst_dir, SSHTarget):
+        sshtarget = dst_dir
         p = subprocess.run(
             sshtarget.openssh_cmd(
                 [
@@ -157,7 +140,6 @@ def path_artifacts_collect(
             if any(pattern.match(bkp.name) for pattern in backup_basename_res):
                 artifacts.append(_backup_artifact_from_path(backup, bkp))
     else:
-        dst_dir = backup.dst_dir
         for path in dst_dir.iterdir():
             if path.is_dir() and any(pattern.match(path.name) for pattern in backup_basename_res):
                 artifacts.append(_backup_artifact_from_path(backup, path))

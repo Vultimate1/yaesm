@@ -21,36 +21,61 @@ def rsync_backend():
     return rsync.RsyncBackend()
 
 
+def _backup(name, backend, src_dir, dst_dir, timeframes):
+    backend.configure_paths(src_dir, dst_dir)
+    return Backup(name, backend, timeframes)
+
+
 def _errors(results):
     return [error for result in results for error in result.errors]
 
 
-def test_config_schema():
+def test_config_schema(path_generator):
     schema = rsync.RsyncBackend.config_schema()
-    d = {"rsync_extra_opts": "--exclude /mnt/* --size-only"}
-    assert schema(d) == {"extra_opts": ["--exclude", "/mnt/*", "--size-only"]}
-    d = {"rsync_extra_opts": ["--exclude /mnt/*", "--size-only"]}
-    assert schema(d) == {"extra_opts": ["--exclude", "/mnt/*", "--size-only"]}
-    d = {"rsync_extra_opts": ["--exclude", "/mnt/*", "--size-only"]}
-    assert schema(d) == {"extra_opts": ["--exclude", "/mnt/*", "--size-only"]}
-    d = {"rsync_extra_opts": ["--exclude", "/mnt/*", "--size-only"], "extra_opt": "foo"}
-    assert schema(d) == {"extra_opts": ["--exclude", "/mnt/*", "--size-only"], "extra_opt": "foo"}
-    d = {"random_opt1": "foo", "random_opt2": "bar"}
-    assert schema(d) == {"random_opt1": "foo", "random_opt2": "bar"}
-    d = {}
-    assert schema(d) == {}
+    src_dir = path_generator("src", mkdir=True)
+    dst_dir = path_generator("dst", mkdir=True)
+
+    def apply(options):
+        backend = rsync.RsyncBackend()
+        data = schema({"backend": backend, "src_dir": src_dir, "dst_dir": dst_dir, **options})
+        assert backend.src_dir == src_dir
+        assert backend.dst_dir == dst_dir
+        return backend, data
+
+    backend, _ = apply({"rsync_extra_opts": "--exclude /mnt/* --size-only"})
+    assert backend.extra_opts == ["--exclude", "/mnt/*", "--size-only"]
+    backend, _ = apply({"rsync_extra_opts": ["--exclude /mnt/*", "--size-only"]})
+    assert backend.extra_opts == ["--exclude", "/mnt/*", "--size-only"]
+    backend, _ = apply({"rsync_extra_opts": ["--exclude", "/mnt/*", "--size-only"]})
+    assert backend.extra_opts == ["--exclude", "/mnt/*", "--size-only"]
+    backend, data = apply(
+        {"rsync_extra_opts": ["--exclude", "/mnt/*", "--size-only"], "extra_opt": "foo"}
+    )
+    assert backend.extra_opts == ["--exclude", "/mnt/*", "--size-only"]
+    assert data["extra_opt"] == "foo"
+    backend, data = apply({"random_opt1": "foo", "random_opt2": "bar"})
+    assert backend.extra_opts is None
+    assert data["random_opt1"] == "foo"
+    assert data["random_opt2"] == "bar"
+    backend, _ = apply({})
+    assert backend.extra_opts is None
     with pytest.raises(vlp.Invalid) as exc:
-        d = {"rsync_extra_opts": 12}
-        schema(d)
+        apply({"rsync_extra_opts": 12})
     assert str(exc.value).startswith("expected str for dictionary value @")
 
 
 def test_create(rsync_backend, path_generator, random_backup_generator, random_filesystem_modifier):
     src_dir = path_generator("rsync_src_dir", mkdir=True)
     for backup_type in ["local_to_local", "local_to_remote", "remote_to_local"]:
-        backup = random_backup_generator(backend_type="rsync", backup_type=backup_type)
+        backup = random_backup_generator(
+            backend_type="rsync", backend=rsync_backend, backup_type=backup_type
+        )
         timeframe = backup.timeframes[0]
-        src_dir = backup.src_dir.path if isinstance(backup.src_dir, SSHTarget) else backup.src_dir
+        src_dir = (
+            backup.backend.src_dir.path
+            if isinstance(backup.backend.src_dir, SSHTarget)
+            else backup.backend.src_dir
+        )
         if backup_type == "local_to_remote":
             src_dir.chmod(0o777)
         now = datetime.now()
@@ -62,8 +87,8 @@ def test_create(rsync_backend, path_generator, random_backup_generator, random_f
                 name = bckp.backup_basename_now(backup, timeframe)
                 artifact = rsync_backend.create(backup, timeframe, name)
                 backup_path = (
-                    backup.dst_dir.with_path(Path(artifact.locator))
-                    if isinstance(backup.dst_dir, SSHTarget)
+                    backup.backend.dst_dir.with_path(Path(artifact.locator))
+                    if isinstance(backup.backend.dst_dir, SSHTarget)
                     else Path(artifact.locator)
                 )
                 backups.insert(0, backup_path)
@@ -103,7 +128,9 @@ def test_create(rsync_backend, path_generator, random_backup_generator, random_f
 
 
 def test_failed_backup_is_not_collected(monkeypatch, rsync_backend, random_backup_generator):
-    backup = random_backup_generator(backend_type="rsync", backup_type="local_to_local")
+    backup = random_backup_generator(
+        backend_type="rsync", backend=rsync_backend, backup_type="local_to_local"
+    )
     timeframe = backup.timeframes[0]
 
     def fail_after_creating_destination(command, **_kwargs):
@@ -128,7 +155,7 @@ def test_delete_backups_local(rsync_backend, path_generator):
         backup.mkdir()
         backup_paths.append(backup)
     assert all(path.is_dir() for path in backup_paths)
-    backup = Backup("test-backup", rsync_backend, dst_dir, dst_dir, [])
+    backup = _backup("test-backup", rsync_backend, dst_dir, dst_dir, [])
     artifacts = [
         bckp.BackupArtifact(path.name, "5minute", datetime(1999, 5, 13), str(path))
         for path in backup_paths
@@ -147,7 +174,7 @@ def test_delete_backups_remote(rsync_backend, sshtarget, path_generator):
     saved_backup = backup_paths[0]
     backup_paths = backup_paths[1:]
     assert all(path.is_dir() for path in backup_paths)
-    backup = Backup("test-backup", rsync_backend, dst_dir, sshtarget.with_path(dst_dir), [])
+    backup = _backup("test-backup", rsync_backend, dst_dir, sshtarget.with_path(dst_dir), [])
     artifacts = [
         bckp.BackupArtifact(
             path.path.name,
@@ -168,7 +195,7 @@ def test_delete_backups_remote(rsync_backend, sshtarget, path_generator):
 def test_check_local_to_local_pass(rsync_backend, path_generator, random_timeframes_generator):
     src_dir = path_generator("rsync-src", mkdir=True)
     dst_dir = path_generator("rsync-dst", mkdir=True)
-    backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     errors = _errors(rsync_backend.check(backup))
     assert errors == []
 
@@ -178,7 +205,7 @@ def test_check_local_to_local_src_dir_missing(
 ):
     src_dir = path_generator("nonexistent-src")
     dst_dir = path_generator("rsync-dst", mkdir=True)
-    backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     errors = _errors(rsync_backend.check(backup))
     assert any("src_dir" in e and "does not exist" in e for e in errors)
 
@@ -188,7 +215,7 @@ def test_check_local_to_local_dst_dir_missing(
 ):
     src_dir = path_generator("rsync-src", mkdir=True)
     dst_dir = path_generator("nonexistent-dst")
-    backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     errors = _errors(rsync_backend.check(backup))
     assert any("dst_dir" in e and "does not exist" in e for e in errors)
 
@@ -198,7 +225,7 @@ def test_check_local_to_local_tool_missing(
 ):
     src_dir = path_generator("rsync-src", mkdir=True)
     dst_dir = path_generator("rsync-dst", mkdir=True)
-    backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     monkeypatch.setattr(shutil, "which", lambda _tool: None)
     errors = _errors(rsync_backend.check(backup))
     assert any("not found locally" in e and "rsync" in e for e in errors)
@@ -214,7 +241,7 @@ def test_check_local_to_remote_pass(
     dst_dir_path = path_generator("rsync-dst", mkdir=True)
     sshtarget = sshtarget_generator()
     dst_dir = sshtarget.with_path(dst_dir_path)
-    backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     errors = _errors(rsync_backend.check(backup))
     assert errors == []
 
@@ -228,7 +255,7 @@ def test_check_local_to_remote_ssh_fail(
     dst_dir = sshtarget.with_path(dst_dir_path)
     dst_dir.key = path_generator("bad-key", touch=True)
     dst_dir.user = "nonexistent-user"
-    backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     errors = _errors(rsync_backend.check(backup))
     assert any("SSH" in e or "ssh" in e or "cannot" in e.lower() for e in errors)
 
@@ -239,7 +266,7 @@ def test_check_local_to_remote_remote_dir_missing(
     src_dir = path_generator("rsync-src", mkdir=True)
     sshtarget = sshtarget_generator()
     dst_dir = sshtarget.with_path(path_generator("nonexistent-remote-dst"))
-    backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     errors = _errors(rsync_backend.check(backup))
     assert any("dst_dir" in e and "does not exist" in e for e in errors)
 
@@ -250,7 +277,7 @@ def test_check_local_to_remote_checks_dst_when_src_missing(
     src_dir = path_generator("nonexistent-src")
     sshtarget = sshtarget_generator()
     dst_dir = sshtarget.with_path(path_generator("nonexistent-remote-dst"))
-    backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     errors = _errors(rsync_backend.check(backup))
     assert any("src_dir" in e and "does not exist" in e for e in errors)
     assert any("dst_dir" in e and "does not exist" in e for e in errors)
@@ -263,7 +290,7 @@ def test_check_local_to_remote_remote_tool_missing(
     dst_dir_path = path_generator("rsync-dst", mkdir=True)
     sshtarget = sshtarget_generator()
     dst_dir = sshtarget.with_path(dst_dir_path)
-    backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     original_run = subprocess.run
 
     def fake_run(cmd, **kwargs):
@@ -286,7 +313,7 @@ def test_check_remote_to_local_pass(
     dst_dir = path_generator("rsync-dst", mkdir=True)
     sshtarget = sshtarget_generator()
     src_dir = sshtarget.with_path(src_dir_path)
-    backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     errors = _errors(rsync_backend.check(backup))
     assert errors == []
 
@@ -300,7 +327,7 @@ def test_check_remote_to_local_ssh_fail(
     src_dir = sshtarget.with_path(src_dir_path)
     src_dir.key = path_generator("bad-key", touch=True)
     src_dir.user = "nonexistent-user"
-    backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     errors = _errors(rsync_backend.check(backup))
     assert any("SSH" in e or "ssh" in e or "cannot" in e.lower() for e in errors)
 
@@ -311,7 +338,7 @@ def test_check_remote_to_local_remote_dir_missing(
     sshtarget = sshtarget_generator()
     src_dir = sshtarget.with_path(path_generator("nonexistent-remote-src"))
     dst_dir = path_generator("rsync-dst", mkdir=True)
-    backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     errors = _errors(rsync_backend.check(backup))
     assert any("src_dir" in e and "does not exist" in e for e in errors)
 
@@ -323,7 +350,7 @@ def test_check_remote_to_local_remote_tool_missing(
     dst_dir = path_generator("rsync-dst", mkdir=True)
     sshtarget = sshtarget_generator()
     src_dir = sshtarget.with_path(src_dir_path)
-    backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     original_run = subprocess.run
 
     def fake_run(cmd, **kwargs):
@@ -343,7 +370,7 @@ def test_check_local_to_remote_remote_dst_not_writable(
     dst_dir_path = path_generator("rsync-dst", mkdir=True)
     sshtarget = sshtarget_generator()
     dst_dir = sshtarget.with_path(dst_dir_path)
-    backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     original_run = subprocess.run
 
     def fake_run(cmd, **kwargs):
@@ -363,7 +390,7 @@ def test_check_remote_to_local_remote_src_not_readable(
     dst_dir = path_generator("rsync-dst", mkdir=True)
     sshtarget = sshtarget_generator()
     src_dir = sshtarget.with_path(src_dir_path)
-    backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     original_run = subprocess.run
 
     def fake_run(cmd, **kwargs):

@@ -8,6 +8,14 @@ import yaesm.backup as bckp
 import yaesm.timeframe as tframe
 
 
+def test_backup_has_only_backend_agnostic_settings():
+    backend = object()
+    timeframes: list[tframe.Timeframe] = [tframe.HourlyTimeframe(keep=1, minutes=[0])]
+    backup = bckp.Backup("home", backend, timeframes)
+
+    assert vars(backup) == {"name": "home", "backend": backend, "timeframes": timeframes}
+
+
 def test_backup_artifact():
     created_at = datetime(2026, 8, 22, 12, 30)
     artifact = bckp.BackupArtifact(
@@ -146,7 +154,7 @@ def test_backups_collect(random_backup_generator):
     backup = random_backup_generator(backup_type="local_to_local")
     backup.name = "backup-name"
     for bn in backup_basenames:
-        backup.dst_dir.joinpath(bn).mkdir(parents=True, exist_ok=True)
+        backup.backend.dst_dir.joinpath(bn).mkdir(parents=True, exist_ok=True)
     artifacts = bckp.backups_collect(backup)
     assert [artifact.name for artifact in artifacts] == backup_basenames
     assert [artifact.timeframe for artifact in artifacts] == [
@@ -161,24 +169,24 @@ def test_backups_collect(random_backup_generator):
         bckp.backup_to_datetime(basename) for basename in backup_basenames
     ]
     assert [artifact.locator for artifact in artifacts] == [
-        str(backup.dst_dir.joinpath(basename)) for basename in backup_basenames
+        str(backup.backend.dst_dir.joinpath(basename)) for basename in backup_basenames
     ]
 
     ### Test collection from an SSHTarget (remember that sshtarget is on the localhost)
     backup = random_backup_generator(backup_type="local_to_remote")
     backup.name = "backup-name"
     for bn in backup_basenames:
-        backup.dst_dir.path.joinpath(bn).mkdir(parents=True, exist_ok=True)
+        backup.backend.dst_dir.path.joinpath(bn).mkdir(parents=True, exist_ok=True)
     got = bckp.backups_collect(backup)
     assert all(isinstance(artifact, bckp.BackupArtifact) for artifact in got)
     assert [artifact.locator for artifact in got] == [
-        str(backup.dst_dir.path.joinpath(basename)) for basename in backup_basenames
+        str(backup.backend.dst_dir.path.joinpath(basename)) for basename in backup_basenames
     ]
 
     backup = random_backup_generator(backup_type="local_to_local")
     backup.name = "backup-name"
     for bn in backup_basenames:
-        backup.dst_dir.joinpath(bn).mkdir(parents=True, exist_ok=True)
+        backup.backend.dst_dir.joinpath(bn).mkdir(parents=True, exist_ok=True)
     hourly = tframe.HourlyTimeframe(1, [30])
     weekly = tframe.WeeklyTimeframe(1, [(10, 30)], ["monday"])
     collected = bckp.backups_collect(backup, timeframes=[weekly])
@@ -188,7 +196,7 @@ def test_backups_collect(random_backup_generator):
     ]
     assert [
         artifact.locator for artifact in bckp.backups_collect(backup, timeframes=[hourly, weekly])
-    ] == [str(backup.dst_dir.joinpath(basename)) for basename in backup_basenames]
+    ] == [str(backup.backend.dst_dir.joinpath(basename)) for basename in backup_basenames]
     assert bckp.backups_collect(backup, timeframes=[]) == []
 
 

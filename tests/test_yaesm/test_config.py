@@ -12,7 +12,7 @@ import yaml
 
 import yaesm.backup as bckp
 import yaesm.config as config
-from yaesm.backend.backendbase import BackendBase
+from yaesm.backend.backendbase import BackendBase, CheckResult
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import (
     DailyTimeframe,
@@ -626,6 +626,46 @@ def test_BackupSchema_rejects_non_dict_settings():
         assert config.BackupSchema.ErrMsg.INVALID_SETTINGS in str(exc.value)
 
 
+def test_BackupSchema_supports_backend_without_paths(monkeypatch):
+    class DatasetBackend(BackendBase):
+        @staticmethod
+        def config_settings() -> set[str]:
+            return {"dataset"}
+
+        @staticmethod
+        def config_schema() -> vlp.Schema:
+            def apply(d):
+                d["backend"].dataset = d.pop("dataset")
+                return d
+
+            return vlp.Schema(vlp.All({vlp.Required("dataset"): str}, apply), extra=vlp.ALLOW_EXTRA)
+
+        def check(self, backup: bckp.Backup) -> list[CheckResult]:
+            return []
+
+        def create(self, backup, timeframe, name) -> bckp.BackupArtifact:
+            raise NotImplementedError
+
+        def collect(self, backup, timeframes=None) -> list[bckp.BackupArtifact]:
+            return []
+
+        def delete(self, backup, artifacts) -> None:
+            raise NotImplementedError
+
+    monkeypatch.setattr(BackendBase, "backend_classes", staticmethod(lambda: [DatasetBackend]))
+
+    backup = config.BackupSchema.schema()(
+        {"archive": {"backend": "dataset", "dataset": "pool/home", "timeframes": []}}
+    )
+
+    assert vars(backup) == {
+        "name": "archive",
+        "backend": backup.backend,
+        "timeframes": [],
+    }
+    assert backup.backend.dataset == "pool/home"
+
+
 def test_BackupSchema_apply_sub_schemas(valid_raw_config, path_generator):
     # success tests
     for backup_name in sorted(valid_raw_config.keys()):
@@ -647,7 +687,7 @@ def test_BackupSchema_apply_sub_schemas(valid_raw_config, path_generator):
         backup_spec[backup_name]["timeframes"].append("INVALIDTIMEFRAMENAME")
         with pytest.raises(vlp.MultipleInvalid) as exc:
             backup_spec = config.BackupSchema._apply_sub_schemas(backup_spec)
-        assert len(exc.value.errors) == 3
+        assert len(exc.value.errors) == 2
 
 
 def test_BackupSchema_promote_to_backup_object(valid_raw_config):
@@ -669,15 +709,15 @@ def test_BackupSchema_schema(valid_raw_config, path_generator):
         for tframe in backup.timeframes:
             assert isinstance(tframe, Timeframe)
         assert backup.backend.name() == backup_spec[backup_name]["backend"].name()
-        if backup.backup_type == "local_to_local":
-            assert isinstance(backup.src_dir, Path)
-            assert isinstance(backup.dst_dir, Path)
-        elif backup.backup_type == "local_to_remote":
-            assert isinstance(backup.src_dir, Path)
-            assert isinstance(backup.dst_dir, SSHTarget)
-        else:  # backup.backup_type == "remote_to_local"
-            assert isinstance(backup.src_dir, SSHTarget)
-            assert isinstance(backup.dst_dir, Path)
+        if backup.backend.backup_type == "local_to_local":
+            assert isinstance(backup.backend.src_dir, Path)
+            assert isinstance(backup.backend.dst_dir, Path)
+        elif backup.backend.backup_type == "local_to_remote":
+            assert isinstance(backup.backend.src_dir, Path)
+            assert isinstance(backup.backend.dst_dir, SSHTarget)
+        else:  # backup.backend.backup_type == "remote_to_local"
+            assert isinstance(backup.backend.src_dir, SSHTarget)
+            assert isinstance(backup.backend.dst_dir, Path)
         raw_config_copy = copy.deepcopy(valid_raw_config)
         raw_config_copy[backup_name]["INVALIDSETTING"] = "foo"
         with pytest.raises(vlp.MultipleInvalid) as exc:
@@ -790,11 +830,12 @@ def test_parse_config(path_generator, valid_config_file_generator):
 
     with pytest.raises(config.ConfigErrors) as exc:
         config.parse_config(config_file_invalid)
-    assert len(exc.value.errors) == 6
+    assert len(exc.value.errors) == 2
     for e in exc.value.errors:
         backup_name, err = e
         assert backup_name.startswith("backup_")
         assert isinstance(err, vlp.Invalid)
+        assert str(err).startswith(config.BackendSchema.ErrMsg.INVALID_BACKEND_NAME)
 
     with pytest.raises(config.ConfigErrors) as exc:
         config.parse_config(config_file_copy)

@@ -17,7 +17,7 @@ class RsyncBackend(PathBackendBase):
 
     @staticmethod
     def config_settings() -> set[str]:
-        return {"rsync_extra_opts"}
+        return PathBackendBase.config_settings() | {"rsync_extra_opts"}
 
     @staticmethod
     def config_schema() -> vlp.Schema:
@@ -25,7 +25,7 @@ class RsyncBackend(PathBackendBase):
         'rsync_extra_opts' setting. This setting can associate to a string
         containing the options, or a list of strings containing the options. In
         either case the value is promoted to a list of string split on whitespace.
-        The 'rsync_extra_opts' key is renamed to 'extra_opts' in the outputted dict.
+        The options are stored on the backend instance.
         """
 
         def _promote_options_to_list_of_strings(d: dict) -> dict:
@@ -37,17 +37,17 @@ class RsyncBackend(PathBackendBase):
                     d["rsync_extra_opts"] = [word for opt in opts for word in opt.split()]
             return d
 
-        def _rename_key_extra_opts(d: dict) -> dict:
+        def _apply_to_backend(d: dict) -> dict:
             if "rsync_extra_opts" in d:
-                d["extra_opts"] = d["rsync_extra_opts"]
-                del d["rsync_extra_opts"]
+                d["backend"].extra_opts = d.pop("rsync_extra_opts")
             return d
 
         return vlp.Schema(
             vlp.All(
+                PathBackendBase.config_schema(),
                 {vlp.Optional("rsync_extra_opts"): vlp.Any(str, [str])},
                 _promote_options_to_list_of_strings,
-                _rename_key_extra_opts,
+                _apply_to_backend,
             ),
             extra=vlp.ALLOW_EXTRA,
         )
@@ -58,12 +58,10 @@ class RsyncBackend(PathBackendBase):
         return bckp.BackupArtifact(name, timeframe.name, bckp.backup_to_datetime(name), str(path))
 
     def delete(self, backup: bckp.Backup, artifacts: list[bckp.BackupArtifact]) -> None:
-        if isinstance(backup.dst_dir, SSHTarget):
+        if isinstance(self.dst_dir, SSHTarget):
             for artifact in artifacts:
                 path = Path(artifact.locator)
-                subprocess.run(
-                    backup.dst_dir.openssh_cmd(["rm", "-r", "-f", "--", path]), check=True
-                )
+                subprocess.run(self.dst_dir.openssh_cmd(["rm", "-r", "-f", "--", path]), check=True)
         else:
             for artifact in artifacts:
                 rmtree(artifact.locator)
@@ -85,29 +83,29 @@ class RsyncBackend(PathBackendBase):
         if backups:
             rsync_cmd += [f"--link-dest={backups[0].locator}"]
 
-        if isinstance(backup.dst_dir, SSHTarget):
-            rsync_cmd += ["-e", "ssh " + backup.dst_dir.openssh_opts(string=True)]
-            dst_dir = Path(_rsync_translate_sshtarget(backup.dst_dir)).joinpath(backup_basename)
+        if isinstance(self.dst_dir, SSHTarget):
+            rsync_cmd += ["-e", "ssh " + self.dst_dir.openssh_opts(string=True)]
+            dst_dir = Path(_rsync_translate_sshtarget(self.dst_dir)).joinpath(backup_basename)
         else:
-            dst_dir = backup.dst_dir.joinpath(backup_basename)
+            dst_dir = self.dst_dir.joinpath(backup_basename)
 
-        if isinstance(backup.src_dir, SSHTarget):
-            rsync_cmd += ["-e", "ssh " + backup.src_dir.openssh_opts(string=True)]
-            src_dir: str | Path = _rsync_translate_sshtarget(backup.src_dir)
+        if isinstance(self.src_dir, SSHTarget):
+            rsync_cmd += ["-e", "ssh " + self.src_dir.openssh_opts(string=True)]
+            src_dir: str | Path = _rsync_translate_sshtarget(self.src_dir)
         else:
-            src_dir = backup.src_dir
+            src_dir = self.src_dir
 
         rsync_cmd += [f"{src_dir}/", f"{dst_dir}/"]
 
         try:
             subprocess.run(rsync_cmd, check=True)
         except subprocess.CalledProcessError:
-            if not isinstance(backup.dst_dir, SSHTarget) and dst_dir.exists():
+            if not isinstance(self.dst_dir, SSHTarget) and dst_dir.exists():
                 rmtree(dst_dir)
             raise
 
-        if isinstance(backup.dst_dir, SSHTarget):
-            return backup.dst_dir.with_path(backup.dst_dir.path.joinpath(backup_basename))
+        if isinstance(self.dst_dir, SSHTarget):
+            return self.dst_dir.with_path(self.dst_dir.path.joinpath(backup_basename))
         return dst_dir
 
 
