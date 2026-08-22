@@ -37,14 +37,8 @@ class CheckResult:
 class BackendBase(abc.ABC):
     """Abstract base class for execution backend classes such as `RsyncBackend` and `BtrfsBackend`.
 
-    Backend implementations are expected to overload
-    `_exec_backup_local_to_local()`, `_exec_backup_local_to_remote()`,
-    `_exec_backup_remote_to_local()`, `_delete_backups_local()`, and
-    `_delete_backups_remote()`. Any code using a backend only needs to interact
-    with the `do_backup()` method, which is defined in this class.
-
-    It is important to note that it is expected that `backup.dst_dir` is an existing
-    directory (Path or SSHTarget).
+    Backend implementations are expected to implement `check()`, `create()`,
+    `collect()`, and `delete()`.
     """
 
     def __init__(self, extra_opts: list[str] | None = None) -> None:
@@ -57,28 +51,15 @@ class BackendBase(abc.ABC):
         Note that this function also cleans up old backups.
         """
         backup_basename = bckp.backup_basename_now(backup, timeframe)
-        if isinstance(backup.dst_dir, SSHTarget):
-            backup_exists = backup.dst_dir.exists(backup.dst_dir.path / backup_basename)
-        else:
-            backup_exists = backup.dst_dir.joinpath(backup_basename).exists()
-        if backup_exists:
+        backups = self.collect(backup, timeframes=[timeframe])
+        if any(artifact.name == backup_basename for artifact in backups):
             logger.error(f"backup already exists: {backup_basename}")
             raise bckp.BackupError(f"backup already exists: {backup_basename}")
-        if backup.backup_type == "local_to_local":
-            self._exec_backup_local_to_local(backup, backup_basename, timeframe)
-        elif backup.backup_type == "local_to_remote":
-            self._exec_backup_local_to_remote(backup, backup_basename, timeframe)
-        else:  # remote_to_local
-            self._exec_backup_remote_to_local(backup, backup_basename, timeframe)
-        backups = bckp.backups_collect(backup, timeframes=[timeframe])
-        to_delete = []
-        while len(backups) > timeframe.keep:
-            to_delete.append(backups.pop())
+        backups.append(self.create(backup, timeframe, backup_basename))
+        backups.sort(key=lambda artifact: artifact.created_at, reverse=True)
+        to_delete = backups[timeframe.keep :]
         if to_delete:
-            if isinstance(backup.dst_dir, SSHTarget):
-                self._delete_backups_remote(*ty.cast(list[SSHTarget], to_delete))
-            else:
-                self._delete_backups_local(*ty.cast(list[Path], to_delete))
+            self.delete(backup, to_delete)
 
     @classmethod
     @ty.final
@@ -113,129 +94,23 @@ class BackendBase(abc.ABC):
         """
         return config.Schema.schema_empty()
 
-    @ty.final
+    @abc.abstractmethod
     def check(self, backup: bckp.Backup) -> list[CheckResult]:
-        """Check that preconditions for `backup` are met.
-
-        Returns the result of each check that was performed.
-        """
-        results: list[CheckResult] = []
-        src_dir = backup.src_dir
-        dst_dir = backup.dst_dir
-        sshtarget = src_dir if isinstance(src_dir, SSHTarget) else None
-        if sshtarget is None and isinstance(dst_dir, SSHTarget):
-            sshtarget = dst_dir
-        if isinstance(src_dir, SSHTarget):
-            results.append(
-                CheckResult(
-                    f"SSH connection to {src_dir.host}", tuple(check_ssh_connectivity(src_dir))
-                )
-            )
-            if results[-1].passed:
-                results.append(
-                    CheckResult(
-                        f"src_dir exists on remote {src_dir.host}: {src_dir.path}",
-                        tuple(check_dir_exists_remote(src_dir, "src_dir")),
-                    )
-                )
-                results.append(
-                    CheckResult(
-                        f"src_dir is readable on remote {src_dir.host}: {src_dir.path}",
-                        tuple(check_dir_readable_remote(src_dir, "src_dir")),
-                    )
-                )
-        else:
-            results.append(
-                CheckResult(
-                    f"src_dir exists locally: {src_dir}",
-                    tuple(check_dir_exists_local(src_dir, "src_dir")),
-                )
-            )
-        if isinstance(dst_dir, SSHTarget):
-            results.append(
-                CheckResult(
-                    f"SSH connection to {dst_dir.host}", tuple(check_ssh_connectivity(dst_dir))
-                )
-            )
-            if all(result.passed for result in results):
-                results.append(
-                    CheckResult(
-                        f"dst_dir exists on remote {dst_dir.host}: {dst_dir.path}",
-                        tuple(check_dir_exists_remote(dst_dir, "dst_dir")),
-                    )
-                )
-                results.append(
-                    CheckResult(
-                        f"dst_dir is writable on remote {dst_dir.host}: {dst_dir.path}",
-                        tuple(check_dir_writable_remote(dst_dir, "dst_dir")),
-                    )
-                )
-        else:
-            results.append(
-                CheckResult(
-                    f"dst_dir exists locally: {dst_dir}",
-                    tuple(check_dir_exists_local(dst_dir, "dst_dir")),
-                )
-            )
-        results.append(
-            CheckResult(f"{self.name()} is installed locally", tuple(check_tool_local(self.name())))
-        )
-        errors = [error for result in results for error in result.errors]
-        if sshtarget is not None and not any(
-            "SSH" in error or "cannot" in error for error in errors
-        ):
-            results.append(
-                CheckResult(
-                    f"{self.name()} is installed on remote {sshtarget.host}",
-                    tuple(check_tool_remote(sshtarget, self.name())),
-                )
-            )
-        results += self.check_extra(backup)
-        return results
+        """Check that preconditions for `backup` are met."""
 
     @abc.abstractmethod
-    def check_extra(self, backup: bckp.Backup) -> list[CheckResult]:
-        """Backend-specific checks beyond the common ones.
-
-        Returns the result of each check that was performed.
-        """
+    def create(self, backup: bckp.Backup, timeframe: Timeframe, name: str) -> bckp.BackupArtifact:
+        """Create and return a stored backup artifact."""
 
     @abc.abstractmethod
-    def _exec_backup_local_to_local(
-        self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ) -> None:
-        """Execute a single local to local backup for the Backup `backup` in Timeframe `timeframe`.
-
-        The resulting backup will have basename `backup_basename`.
-        Note that this function does not perform any cleanup.
-        """
+    def collect(
+        self, backup: bckp.Backup, timeframes: list[Timeframe] | None = None
+    ) -> list[bckp.BackupArtifact]:
+        """Collect stored backup artifacts from newest to oldest."""
 
     @abc.abstractmethod
-    def _exec_backup_local_to_remote(
-        self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ) -> None:
-        """Execute a single local to remote backup for the Backup `backup` in
-        the Timeframe `timeframe`. The resulting backup backup will have
-        basename `backup_basename`. Note that this function does not perform any
-        cleanup.
-        """
-
-    @abc.abstractmethod
-    def _exec_backup_remote_to_local(
-        self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ) -> None:
-        """Execute a single remote to local backup for the Backup `backup` in
-        the Timeframe `timeframe`. The resulting backup will have basename
-        `backup_basename`. Note that this function does not perform any cleanup.
-        """
-
-    @abc.abstractmethod
-    def _delete_backups_local(self, *backups: Path) -> None:
-        """Delete all the local backups in `*backups` (Paths)."""
-
-    @abc.abstractmethod
-    def _delete_backups_remote(self, *backups: SSHTarget) -> None:
-        """Delete all the remote backups in `*backups` (SSHTargets)."""
+    def delete(self, backup: bckp.Backup, artifacts: list[bckp.BackupArtifact]) -> None:
+        """Delete stored backup artifacts."""
 
     @staticmethod
     @ty.final
@@ -257,6 +132,88 @@ class BackendBase(abc.ABC):
             backend_class = getattr(module, class_name)
             backend_classes.append(backend_class)
         return backend_classes
+
+
+class PathBackendBase(BackendBase):
+    """Base class for backends with Path or SSHTarget sources and destinations.
+
+    The destination is expected to be an existing directory.
+    """
+
+    @ty.final
+    def check(self, backup: bckp.Backup) -> list[CheckResult]:
+        """Check that path backup preconditions are met."""
+        results: list[CheckResult] = []
+
+        def add_result(description: str, errors: list[str]) -> CheckResult:
+            result = CheckResult(description, tuple(errors))
+            results.append(result)
+            return result
+
+        src_dir = backup.src_dir
+        dst_dir = backup.dst_dir
+        sshtarget = src_dir if isinstance(src_dir, SSHTarget) else None
+        if isinstance(dst_dir, SSHTarget):
+            sshtarget = dst_dir
+        ssh_connected = True
+        if sshtarget is not None:
+            ssh_connected = add_result(
+                f"SSH connection to {sshtarget.host}", check_ssh_connectivity(sshtarget)
+            ).passed
+
+        if isinstance(src_dir, SSHTarget):
+            if ssh_connected:
+                add_result(
+                    f"src_dir exists on remote {src_dir.host}: {src_dir.path}",
+                    check_dir_exists_remote(src_dir, "src_dir"),
+                )
+                add_result(
+                    f"src_dir is readable on remote {src_dir.host}: {src_dir.path}",
+                    check_dir_readable_remote(src_dir, "src_dir"),
+                )
+        else:
+            add_result(
+                f"src_dir exists locally: {src_dir}",
+                check_dir_exists_local(src_dir, "src_dir"),
+            )
+
+        if isinstance(dst_dir, SSHTarget):
+            if ssh_connected:
+                add_result(
+                    f"dst_dir exists on remote {dst_dir.host}: {dst_dir.path}",
+                    check_dir_exists_remote(dst_dir, "dst_dir"),
+                )
+                add_result(
+                    f"dst_dir is writable on remote {dst_dir.host}: {dst_dir.path}",
+                    check_dir_writable_remote(dst_dir, "dst_dir"),
+                )
+        else:
+            add_result(
+                f"dst_dir exists locally: {dst_dir}",
+                check_dir_exists_local(dst_dir, "dst_dir"),
+            )
+
+        add_result(
+            f"{self.name()} is installed locally",
+            check_tool_local(self.name()),
+        )
+        if sshtarget is not None and ssh_connected:
+            add_result(
+                f"{self.name()} is installed on remote {sshtarget.host}",
+                check_tool_remote(sshtarget, self.name()),
+            )
+        results += self.check_extra(backup)
+        return results
+
+    def collect(
+        self, backup: bckp.Backup, timeframes: list[Timeframe] | None = None
+    ) -> list[bckp.BackupArtifact]:
+        """Collect directory-backed artifacts from newest to oldest."""
+        return bckp.path_artifacts_collect(backup, timeframes=timeframes)
+
+    def check_extra(self, backup: bckp.Backup) -> list[CheckResult]:
+        """Perform backend-specific path checks."""
+        return []
 
 
 def check_dir_exists_local(path: Path, label: str) -> list[str]:

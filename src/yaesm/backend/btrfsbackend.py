@@ -10,14 +10,14 @@ from pathlib import Path
 import voluptuous as vlp
 
 import yaesm.backup as bckp
-from yaesm.backend.backendbase import BackendBase, CheckResult
+from yaesm.backend.backendbase import CheckResult, PathBackendBase
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
 
 logger = logging.getLogger(__name__)
 
 
-class BtrfsBackend(BackendBase):
+class BtrfsBackend(PathBackendBase):
     """The btrfs backup execution backend. See `BackendBase` for more details on
     backup execution backends in general.
 
@@ -27,7 +27,7 @@ class BtrfsBackend(BackendBase):
     efficient.
 
     Note that if local-to-remote or remote-to-local btrfs backups are to be
-    peformed, then the remote SSH user must have sufficient privileges to run
+    performed, then the remote SSH user must have sufficient privileges to run
     'btrfs subvolume snapshot', 'btrfs subvolume delete', 'btrfs send', and
     'btrfs receive'.
     """
@@ -89,9 +89,19 @@ class BtrfsBackend(BackendBase):
             )
         return results
 
+    def create(self, backup: bckp.Backup, timeframe: Timeframe, name: str) -> bckp.BackupArtifact:
+        if backup.backup_type == "local_to_local":
+            locator = self._exec_backup_local_to_local(backup, name, timeframe)
+        elif backup.backup_type == "local_to_remote":
+            locator = self._exec_backup_local_to_remote(backup, name, timeframe)
+        else:
+            locator = self._exec_backup_remote_to_local(backup, name, timeframe)
+        path = locator.path if isinstance(locator, SSHTarget) else locator
+        return bckp.BackupArtifact(name, timeframe.name, bckp.backup_to_datetime(name), str(path))
+
     def _exec_backup_local_to_local(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ) -> None:
+    ) -> Path:
         assert isinstance(backup.src_dir, Path)
         assert isinstance(backup.dst_dir, Path)
         if self.bootstrap_refresh_days is not None:
@@ -119,10 +129,11 @@ class BtrfsBackend(BackendBase):
             finally:
                 if tmp_snapshot.is_dir():
                     _btrfs_delete_subvolumes_local(tmp_snapshot)
+        return backup_path
 
     def _exec_backup_local_to_remote(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ) -> None:
+    ) -> SSHTarget:
         assert isinstance(backup.src_dir, Path)
         assert isinstance(backup.dst_dir, SSHTarget)
         if self.bootstrap_refresh_days is not None:
@@ -152,10 +163,11 @@ class BtrfsBackend(BackendBase):
         finally:
             if tmp_snapshot.is_dir():
                 _btrfs_delete_subvolumes_local(tmp_snapshot)
+        return backup_path
 
     def _exec_backup_remote_to_local(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ) -> None:
+    ) -> Path:
         assert isinstance(backup.src_dir, SSHTarget)
         assert isinstance(backup.dst_dir, Path)
         if self.bootstrap_refresh_days is not None:
@@ -179,12 +191,15 @@ class BtrfsBackend(BackendBase):
         finally:
             if tmp_snapshot.is_dir():
                 _btrfs_delete_subvolumes_remote(tmp_snapshot)
+        return backup_path
 
-    def _delete_backups_local(self, *backups: Path) -> None:
-        _btrfs_delete_subvolumes_local(*backups)
-
-    def _delete_backups_remote(self, *backups: SSHTarget) -> None:
-        _btrfs_delete_subvolumes_remote(*backups)
+    def delete(self, backup: bckp.Backup, artifacts: list[bckp.BackupArtifact]) -> None:
+        if isinstance(backup.dst_dir, SSHTarget):
+            _btrfs_delete_subvolumes_remote(
+                *(backup.dst_dir.with_path(Path(artifact.locator)) for artifact in artifacts)
+            )
+        else:
+            _btrfs_delete_subvolumes_local(*(Path(artifact.locator) for artifact in artifacts))
 
 
 def _btrfs_staging_snapshot_basename() -> str:

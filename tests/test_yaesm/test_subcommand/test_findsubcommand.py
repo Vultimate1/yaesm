@@ -19,8 +19,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _snapshot(hour: int, minute: int = 0, timeframe: str = "hourly") -> Path:
-    return Path(f"/backups/yaesm-foo-{timeframe}.2026_08_20_{hour:02}:{minute:02}")
+def _snapshot(hour: int, minute: int = 0, timeframe: str = "hourly") -> bckp.BackupArtifact:
+    name = f"yaesm-foo-{timeframe}.2026_08_20_{hour:02}:{minute:02}"
+    return bckp.BackupArtifact(
+        name=name,
+        timeframe=timeframe,
+        created_at=datetime(2026, 8, 20, hour, minute),
+        locator=str(Path("/backups", name)),
+    )
 
 
 def _make_backup(tmp_path: Path, name: str) -> Backup:
@@ -28,9 +34,11 @@ def _make_backup(tmp_path: Path, name: str) -> Backup:
     dst_dir = tmp_path / f"{name}-dst"
     src_dir.mkdir()
     dst_dir.mkdir()
+    backend = MagicMock()
+    backend.collect.side_effect = bckp.path_artifacts_collect
     return Backup(
         name,
-        MagicMock(),
+        backend,
         src_dir,
         dst_dir,
         [HourlyTimeframe(keep=24, minutes=[0]), DailyTimeframe(keep=7, times=[(0, 0)])],
@@ -279,7 +287,7 @@ def test_find_main_supports_multiple_backup_names(tmp_path, capsys):
     assert capsys.readouterr().out.splitlines() == [str(foo_snapshot), str(bar_snapshot)]
 
 
-def test_find_main_supports_remote_backups(monkeypatch, capsys):
+def test_find_main_supports_remote_backups(capsys):
     target = SSHTarget("ssh://backup.example:/backups", Path("/key"))
     backup = Backup(
         "foo",
@@ -288,13 +296,13 @@ def test_find_main_supports_remote_backups(monkeypatch, capsys):
         target,
         [HourlyTimeframe(keep=24, minutes=[0])],
     )
-    snapshot = target.with_path(_snapshot(12))
-    collect = MagicMock(return_value=[snapshot])
-    monkeypatch.setattr(bckp, "backups_collect", collect)
+    snapshot = _snapshot(12)
+    collect = backup.backend.collect
+    collect.return_value = [snapshot]
 
     args = _parse_args(["foo", "after", "2026-08-20T11:00"])
     assert FindSubcommand().main([backup], args) == 0
-    assert capsys.readouterr().out.splitlines() == [str(snapshot.path)]
+    assert capsys.readouterr().out.splitlines() == [snapshot.locator]
     collect.assert_called_once_with(backup, timeframes=None)
 
 

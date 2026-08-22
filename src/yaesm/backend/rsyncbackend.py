@@ -7,18 +7,13 @@ from shutil import rmtree
 import voluptuous as vlp
 
 import yaesm.backup as bckp
-from yaesm.backend.backendbase import BackendBase, CheckResult
+from yaesm.backend.backendbase import PathBackendBase
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
 
 
-class RsyncBackend(BackendBase):
-    """The rysnc backup execution backend. See BackendBase for more details on
-    backup execution backends in general.
-    """
-
-    def check_extra(self, backup: bckp.Backup) -> list[CheckResult]:
-        return []
+class RsyncBackend(PathBackendBase):
+    """The rsync backup execution backend."""
 
     @staticmethod
     def config_settings() -> set[str]:
@@ -57,31 +52,21 @@ class RsyncBackend(BackendBase):
             extra=vlp.ALLOW_EXTRA,
         )
 
-    def _exec_backup_local_to_local(
-        self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ) -> None:
-        self._exec_backup(backup, backup_basename, timeframe)
+    def create(self, backup: bckp.Backup, timeframe: Timeframe, name: str) -> bckp.BackupArtifact:
+        locator = self._exec_backup(backup, name, timeframe)
+        path = locator.path if isinstance(locator, SSHTarget) else locator
+        return bckp.BackupArtifact(name, timeframe.name, bckp.backup_to_datetime(name), str(path))
 
-    def _exec_backup_local_to_remote(
-        self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ) -> None:
-        self._exec_backup(backup, backup_basename, timeframe)
-
-    def _exec_backup_remote_to_local(
-        self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
-    ) -> None:
-        self._exec_backup(backup, backup_basename, timeframe)
-
-    def _delete_backups_local(self, *backups: Path) -> None:
-        for backup in backups:
-            rmtree(backup)
-
-    def _delete_backups_remote(self, *backups: SSHTarget) -> None:
-        """Note that all the backups in `backups` are assumed to be SSHTarget's
-        all at the same host.
-        """
-        for backup in backups:
-            subprocess.run(backup.openssh_cmd(["rm", "-r", "-f", "--", backup.path]), check=True)
+    def delete(self, backup: bckp.Backup, artifacts: list[bckp.BackupArtifact]) -> None:
+        if isinstance(backup.dst_dir, SSHTarget):
+            for artifact in artifacts:
+                path = Path(artifact.locator)
+                subprocess.run(
+                    backup.dst_dir.openssh_cmd(["rm", "-r", "-f", "--", path]), check=True
+                )
+        else:
+            for artifact in artifacts:
+                rmtree(artifact.locator)
 
     def _exec_backup(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
@@ -96,12 +81,9 @@ class RsyncBackend(BackendBase):
         if self.extra_opts:
             rsync_cmd += self.extra_opts
 
-        backups = bckp.backups_collect(backup)  # note that we dont pass timeframe here
+        backups = self.collect(backup)  # note that we dont pass timeframe here
         if backups:
-            newest_backup = backups[0]
-            if isinstance(newest_backup, SSHTarget):
-                newest_backup = newest_backup.path
-            rsync_cmd += [f"--link-dest={newest_backup}"]
+            rsync_cmd += [f"--link-dest={backups[0].locator}"]
 
         if isinstance(backup.dst_dir, SSHTarget):
             rsync_cmd += ["-e", "ssh " + backup.dst_dir.openssh_opts(string=True)]

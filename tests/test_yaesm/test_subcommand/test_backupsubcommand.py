@@ -132,8 +132,9 @@ def test_backup_creates_immediate_named_directory(
     immediate_tf = ImmediateTimeframe(keep=sys.maxsize)
     backups = bckp.backups_collect(backup, timeframes=[immediate_tf])
     assert len(backups) == 1
-    assert isinstance(backups[0], Path)
+    assert isinstance(backups[0], bckp.BackupArtifact)
     assert backups[0].name == "yaesm-testbackup-immediate.2026_03_23_14:30"
+    assert Path(backups[0].locator).is_dir()
 
 
 def test_keep_deletes_old_immediate_backups(
@@ -155,7 +156,8 @@ def test_keep_deletes_old_immediate_backups(
     assert len(remaining) == keep
     # remaining should be the newest backups, sorted newest to oldest
     for i, b in enumerate(remaining):
-        assert isinstance(b, Path)
+        assert isinstance(b, bckp.BackupArtifact)
         expected_time = now + timedelta(hours=total - 1 - i)
         expected_basename = expected_time.strftime(f"yaesm-{backup.name}-immediate.%Y_%m_%d_%H:%M")
         assert b.name == expected_basename
+        assert Path(b.locator).is_dir()

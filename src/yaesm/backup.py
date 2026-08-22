@@ -15,6 +15,16 @@ from yaesm.timeframe import Timeframe
 class BackupError(Exception): ...
 
 
+@dataclasses.dataclass(frozen=True)
+class BackupArtifact:
+    """Backend-neutral backup metadata with a backend-defined locator."""
+
+    name: str
+    timeframe: str
+    created_at: datetime
+    locator: str
+
+
 @dataclasses.dataclass
 class Backup:
     def __init__(
@@ -106,13 +116,21 @@ def backups_sorted(
 
 def backups_collect(
     backup: Backup, timeframes: list[Timeframe] | None = None
-) -> list[Path | SSHTarget]:
-    """This function collects all the yaesm backups for the Backup `backup`.
+) -> list[BackupArtifact]:
+    """Collect backup artifacts from newest to oldest."""
+    return backup.backend.collect(backup, timeframes=timeframes)
+
+
+def path_artifacts_collect(
+    backup: Backup, timeframes: list[Timeframe] | None = None
+) -> list[BackupArtifact]:
+    """Collect directory backup artifacts sorted from newest to oldest.
+
     If `timeframes` is given, then only collect backups in those Timeframes.
     Remember that all the backups for all the timeframes are
     stored in the same directory.
     """
-    backups: list[Path | SSHTarget] = []
+    artifacts: list[BackupArtifact] = []
     backup_basename_res = (
         [backup_basename_re(backup=backup)]
         if timeframes is None
@@ -143,12 +161,21 @@ def backups_collect(
                 continue
             bkp = Path(bkp)
             if any(pattern.match(bkp.name) for pattern in backup_basename_res):
-                backups.append(sshtarget.with_path(bkp))
+                artifacts.append(_backup_artifact_from_path(backup, bkp))
     else:
         dst_dir = backup.dst_dir
         for path in dst_dir.iterdir():
             if path.is_dir() and any(pattern.match(path.name) for pattern in backup_basename_res):
-                backups.append(path)
-    return ty.cast(
-        list[Path | SSHTarget], backups_sorted(ty.cast(list[Path | str | SSHTarget], backups))
+                artifacts.append(_backup_artifact_from_path(backup, path))
+    return sorted(artifacts, key=lambda artifact: artifact.created_at, reverse=True)
+
+
+def _backup_artifact_from_path(backup: Backup, path: Path) -> BackupArtifact:
+    match = backup_basename_re(backup=backup).match(path.name)
+    assert match is not None
+    return BackupArtifact(
+        name=path.name,
+        timeframe=match.group(2),
+        created_at=backup_to_datetime(path),
+        locator=str(path),
     )

@@ -4,11 +4,8 @@ import logging
 import re
 from collections.abc import Sequence
 from datetime import datetime, time, timedelta
-from pathlib import Path
 
-import yaesm.backup as bckp
-from yaesm.backup import Backup
-from yaesm.sshtarget import SSHTarget
+from yaesm.backup import Backup, BackupArtifact
 from yaesm.subcommand.subcommandbase import SubcommandBase
 from yaesm.timeframe import ImmediateTimeframe, tframe_types
 
@@ -22,7 +19,7 @@ class FindSubcommand(SubcommandBase):
     """Find existing backups by name, timeframe, and time."""
 
     def main(self, backups: list[Backup], parsed_args: argparse.Namespace) -> int:
-        """Find snapshots matching the requested queries."""
+        """Find backup artifacts matching the requested queries."""
         backups_by_name = {backup.name: backup for backup in backups}
         unknown_names = [name for name in parsed_args.backup_names if name not in backups_by_name]
         if not parsed_args.backup_names:
@@ -55,11 +52,11 @@ class FindSubcommand(SubcommandBase):
                     if name in timeframes_by_name
                 ]
 
-            snapshots = bckp.backups_collect(backup, timeframes=timeframes)
-            matches = {snapshot for query in queries for snapshot in query.select(snapshots)}
-            for snapshot in snapshots:
-                if snapshot in matches:
-                    print(snapshot.path if isinstance(snapshot, SSHTarget) else snapshot)
+            artifacts = backup.backend.collect(backup, timeframes=timeframes)
+            matches = {artifact for query in queries for artifact in query.select(artifacts)}
+            for artifact in artifacts:
+                if artifact in matches:
+                    print(artifact.locator)
 
         return 0
 
@@ -99,7 +96,7 @@ class FindSubcommand(SubcommandBase):
 
 
 class FindQuery:
-    """Parse and apply a time-based query to an ordered sequence of backups."""
+    """Parse and apply a query to backup artifacts ordered newest to oldest."""
 
     Type = enum.Enum(
         "Type",
@@ -145,40 +142,28 @@ class FindQuery:
                     "between TIME TIME, or closest TIME"
                 )
 
-    def select(self, snapshots: Sequence[Path | SSHTarget]) -> list[Path | SSHTarget]:
-        """Return snapshots matching this query.
-
-        ``snapshots`` must be sorted from newest to oldest, as returned by
-        :func:`yaesm.backup.backups_collect`.
-        """
+    def select(self, artifacts: Sequence[BackupArtifact]) -> list[BackupArtifact]:
+        """Return backup artifacts matching this query."""
         match self.type:
             case self.Type.ALL:
-                return list(snapshots)
+                return list(artifacts)
             case self.Type.NEWEST:
-                return list(snapshots[:1])
+                return list(artifacts[:1])
             case self.Type.OLDEST:
-                return list(snapshots[-1:])
+                return list(artifacts[-1:])
             case self.Type.AFTER:
                 assert self.target is not None
-                return [
-                    snapshot
-                    for snapshot in snapshots
-                    if bckp.backup_to_datetime(snapshot) > self.target
-                ]
+                return [artifact for artifact in artifacts if artifact.created_at > self.target]
             case self.Type.BEFORE:
                 assert self.target is not None
-                return [
-                    snapshot
-                    for snapshot in snapshots
-                    if bckp.backup_to_datetime(snapshot) < self.target
-                ]
+                return [artifact for artifact in artifacts if artifact.created_at < self.target]
             case self.Type.BETWEEN:
                 assert self.start is not None
                 assert self.end is not None
                 return [
-                    snapshot
-                    for snapshot in snapshots
-                    if self.start <= bckp.backup_to_datetime(snapshot) <= self.end
+                    artifact
+                    for artifact in artifacts
+                    if self.start <= artifact.created_at <= self.end
                 ]
             case self.Type.CLOSEST:
                 target = self.target
@@ -186,11 +171,11 @@ class FindQuery:
                 return (
                     [
                         min(
-                            snapshots,
-                            key=lambda snapshot: abs(bckp.backup_to_datetime(snapshot) - target),
+                            artifacts,
+                            key=lambda artifact: abs(artifact.created_at - target),
                         )
                     ]
-                    if snapshots
+                    if artifacts
                     else []
                 )
             case _:

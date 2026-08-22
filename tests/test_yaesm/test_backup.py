@@ -1,12 +1,26 @@
 """tests/test_yaesm/test_backend.py."""
 
-from pathlib import Path
+from datetime import datetime
 
 from freezegun import freeze_time
 
 import yaesm.backup as bckp
 import yaesm.timeframe as tframe
-from yaesm.sshtarget import SSHTarget
+
+
+def test_backup_artifact():
+    created_at = datetime(2026, 8, 22, 12, 30)
+    artifact = bckp.BackupArtifact(
+        name="yaesm-home-hourly.2026_08_22_12:30",
+        timeframe="hourly",
+        created_at=created_at,
+        locator="/backups/yaesm-home-hourly.2026_08_22_12:30",
+    )
+
+    assert artifact.name == "yaesm-home-hourly.2026_08_22_12:30"
+    assert artifact.timeframe == "hourly"
+    assert artifact.created_at == created_at
+    assert artifact.locator == "/backups/yaesm-home-hourly.2026_08_22_12:30"
 
 
 def test_backup_to_datetime(sshtarget):
@@ -133,7 +147,22 @@ def test_backups_collect(random_backup_generator):
     backup.name = "backup-name"
     for bn in backup_basenames:
         backup.dst_dir.joinpath(bn).mkdir(parents=True, exist_ok=True)
-    assert bckp.backups_collect(backup) == list(map(backup.dst_dir.joinpath, backup_basenames))
+    artifacts = bckp.backups_collect(backup)
+    assert [artifact.name for artifact in artifacts] == backup_basenames
+    assert [artifact.timeframe for artifact in artifacts] == [
+        "hourly",
+        "hourly",
+        "hourly",
+        "weekly",
+        "weekly",
+        "hourly",
+    ]
+    assert [artifact.created_at for artifact in artifacts] == [
+        bckp.backup_to_datetime(basename) for basename in backup_basenames
+    ]
+    assert [artifact.locator for artifact in artifacts] == [
+        str(backup.dst_dir.joinpath(basename)) for basename in backup_basenames
+    ]
 
     ### Test collection from an SSHTarget (remember that sshtarget is on the localhost)
     backup = random_backup_generator(backup_type="local_to_remote")
@@ -141,13 +170,10 @@ def test_backups_collect(random_backup_generator):
     for bn in backup_basenames:
         backup.dst_dir.path.joinpath(bn).mkdir(parents=True, exist_ok=True)
     got = bckp.backups_collect(backup)
-    expected = list(
-        map(lambda bn: backup.dst_dir.with_path(backup.dst_dir.path.joinpath(bn)), backup_basenames)
-    )
-    for x, y in zip(got, expected, strict=True):
-        assert isinstance(x, SSHTarget)
-        assert isinstance(y, SSHTarget)
-        assert x.path == y.path
+    assert all(isinstance(artifact, bckp.BackupArtifact) for artifact in got)
+    assert [artifact.locator for artifact in got] == [
+        str(backup.dst_dir.path.joinpath(basename)) for basename in backup_basenames
+    ]
 
     backup = random_backup_generator(backup_type="local_to_local")
     backup.name = "backup-name"
@@ -156,17 +182,13 @@ def test_backups_collect(random_backup_generator):
     hourly = tframe.HourlyTimeframe(1, [30])
     weekly = tframe.WeeklyTimeframe(1, [(10, 30)], ["monday"])
     collected = bckp.backups_collect(backup, timeframes=[weekly])
-    collected_names = []
-    for backup_path in collected:
-        assert isinstance(backup_path, Path)
-        collected_names.append(backup_path.name)
-    assert collected_names == [
+    assert [artifact.name for artifact in collected] == [
         "yaesm-backup-name-weekly.1999_05_13_10:30",
         "yaesm-backup-name-weekly.1999_05_13_09:30",
     ]
-    assert bckp.backups_collect(backup, timeframes=[hourly, weekly]) == list(
-        map(backup.dst_dir.joinpath, backup_basenames)
-    )
+    assert [
+        artifact.locator for artifact in bckp.backups_collect(backup, timeframes=[hourly, weekly])
+    ] == [str(backup.dst_dir.joinpath(basename)) for basename in backup_basenames]
     assert bckp.backups_collect(backup, timeframes=[]) == []
 
 

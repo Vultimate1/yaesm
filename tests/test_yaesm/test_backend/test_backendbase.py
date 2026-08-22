@@ -5,9 +5,17 @@ every backend test script should have their own tests for the abstract methods i
 BackendBase class.
 """
 
-from yaesm.backend.backendbase import CheckResult
+from yaesm.backend.backendbase import BackendBase, CheckResult, PathBackendBase
+from yaesm.backend.btrfsbackend import BtrfsBackend
+from yaesm.backend.rsyncbackend import RsyncBackend
 
 
 def test_check_result_passed():
     assert CheckResult("check").passed
     assert not CheckResult("check", ("error",)).passed
+
+
+def test_path_backend_classes():
+    assert issubclass(PathBackendBase, BackendBase)
+    assert issubclass(BtrfsBackend, PathBackendBase)
+    assert issubclass(RsyncBackend, PathBackendBase)

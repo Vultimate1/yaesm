@@ -14,7 +14,6 @@ from freezegun import freeze_time
 import yaesm.backend.btrfsbackend as btrfs
 import yaesm.backup as bckp
 from yaesm.backup import Backup
-from yaesm.sshtarget import SSHTarget
 
 
 @pytest.fixture(scope="session")
@@ -38,9 +37,7 @@ def test_do_backup(btrfs_backend, random_backup_generator, path_generator):
                 expected_backup_basenames.insert(0, bckp.backup_basename_now(backup, timeframe))
                 btrfs_backend.do_backup(backup, timeframe)
         backups = bckp.backups_collect(backup, timeframes=[timeframe])
-        backup_basenames = list(
-            map(lambda x: x.path.name if isinstance(x, SSHTarget) else x.name, backups)
-        )
+        backup_basenames = [artifact.name for artifact in backups]
         assert len(backups) == timeframe.keep
         assert expected_backup_basenames[0 : timeframe.keep] == backup_basenames
 
@@ -91,7 +88,7 @@ def test_in_progress_backup_is_not_collected(monkeypatch, btrfs_backend, random_
                 shutil.rmtree(backup_path)
 
 
-def test_exec_backup_local_to_local(btrfs_backend, random_backup_generator):
+def test_create_local_to_local(btrfs_backend, random_backup_generator):
     with freeze_time("1999-05-13 23:59"):
         backup_diff_fs = random_backup_generator(backend_type="btrfs", backup_type="local_to_local")
         timeframe = backup_diff_fs.timeframes[0]
@@ -99,9 +96,10 @@ def test_exec_backup_local_to_local(btrfs_backend, random_backup_generator):
             f"yaesm-{backup_diff_fs.name}-{timeframe.name}.1999_05_13_23:59"
         )
         assert not backup_path.is_dir()
-        btrfs_backend._exec_backup_local_to_local(
-            backup_diff_fs, bckp.backup_basename_now(backup_diff_fs, timeframe), timeframe
-        )
+        name = bckp.backup_basename_now(backup_diff_fs, timeframe)
+        artifact = btrfs_backend.create(backup_diff_fs, timeframe, name)
+        assert artifact.name == name
+        assert artifact.locator == str(backup_path)
         assert backup_path.is_dir()
 
     with freeze_time("1999-05-13 23:59"):
@@ -111,13 +109,14 @@ def test_exec_backup_local_to_local(btrfs_backend, random_backup_generator):
             f"yaesm-{backup_same_fs.name}-{timeframe.name}.1999_05_13_23:59"
         )
         assert not backup_path.is_dir()
-        btrfs_backend._exec_backup_local_to_local(
-            backup_same_fs, bckp.backup_basename_now(backup_same_fs, timeframe), timeframe
-        )
+        name = bckp.backup_basename_now(backup_same_fs, timeframe)
+        artifact = btrfs_backend.create(backup_same_fs, timeframe, name)
+        assert artifact.name == name
+        assert artifact.locator == str(backup_path)
         assert backup_path.is_dir()
 
 
-def test_exec_backup_local_to_remote(btrfs_backend, random_backup_generator):
+def test_create_local_to_remote(btrfs_backend, random_backup_generator):
     backup = random_backup_generator(backend_type="btrfs", backup_type="local_to_remote")
     timeframe = backup.timeframes[0]
     with freeze_time("1999-05-13 23:59"):
@@ -125,13 +124,14 @@ def test_exec_backup_local_to_remote(btrfs_backend, random_backup_generator):
             f"yaesm-{backup.name}-{timeframe.name}.1999_05_13_23:59"
         )
         assert not backup_path.is_dir()
-        btrfs_backend._exec_backup_local_to_remote(
-            backup, bckp.backup_basename_now(backup, timeframe), timeframe
-        )
+        name = bckp.backup_basename_now(backup, timeframe)
+        artifact = btrfs_backend.create(backup, timeframe, name)
+        assert artifact.name == name
+        assert artifact.locator == str(backup_path)
         assert backup_path.is_dir()
 
 
-def test_exec_backup_remote_to_local(btrfs_backend, random_backup_generator):
+def test_create_remote_to_local(btrfs_backend, random_backup_generator):
     backup = random_backup_generator(backend_type="btrfs", backup_type="remote_to_local")
     timeframe = backup.timeframes[0]
     with freeze_time("1999-05-13 23:59"):
@@ -139,9 +139,10 @@ def test_exec_backup_remote_to_local(btrfs_backend, random_backup_generator):
             f"yaesm-{backup.name}-{timeframe.name}.1999_05_13_23:59"
         )
         assert not backup_path.is_dir()
-        btrfs_backend._exec_backup_remote_to_local(
-            backup, bckp.backup_basename_now(backup, timeframe), timeframe
-        )
+        name = bckp.backup_basename_now(backup, timeframe)
+        artifact = btrfs_backend.create(backup, timeframe, name)
+        assert artifact.name == name
+        assert artifact.locator == str(backup_path)
         assert backup_path.is_dir()
 
 
@@ -223,7 +224,17 @@ def test_delete_backups_local(btrfs_backend, btrfs_fs, path_generator):
     _, snapshot2 = btrfs._btrfs_take_snapshot_local(btrfs_fs, snapshot2)
     assert Path(snapshot1).is_dir()
     assert Path(snapshot2).is_dir()
-    btrfs_backend._delete_backups_local(snapshot1, snapshot2)
+    backup = Backup("foo-backup", btrfs_backend, btrfs_fs, dst_dir1, [])
+    artifacts = [
+        bckp.BackupArtifact(
+            backup_basename,
+            "hourly",
+            datetime(1999, 5, 13, 23, 59),
+            str(snapshot),
+        )
+        for snapshot in (snapshot1, snapshot2)
+    ]
+    btrfs_backend.delete(backup, artifacts)
     assert not Path(snapshot1).is_dir()
     assert not Path(snapshot2).is_dir()
 
@@ -239,7 +250,17 @@ def test_delete_backups_remote(btrfs_backend, btrfs_fs, sshtarget, path_generato
     _, snapshot2 = btrfs._btrfs_take_snapshot_remote(src_dir, snapshot2)
     assert snapshot1.path.is_dir()
     assert snapshot2.path.is_dir()
-    btrfs_backend._delete_backups_remote(snapshot1, snapshot2)
+    backup = Backup("foo-backup", btrfs_backend, btrfs_fs, dst_dir1, [])
+    artifacts = [
+        bckp.BackupArtifact(
+            backup_basename,
+            "hourly",
+            datetime(1999, 5, 13, 23, 59),
+            str(snapshot.path),
+        )
+        for snapshot in (snapshot1, snapshot2)
+    ]
+    btrfs_backend.delete(backup, artifacts)
     assert not snapshot1.path.is_dir()
     assert not snapshot2.path.is_dir()
 
@@ -884,5 +905,5 @@ def test_bootstrap_refresh_preserves_existing_backups(btrfs_fs_generator, random
         backend.do_backup(backup, timeframe)
     backups_after = bckp.backups_collect(backup, timeframes=[timeframe])
     assert len(backups_after) == 4
-    for b in backups_before:
-        assert b.is_dir()
+    for artifact in backups_before:
+        assert Path(artifact.locator).is_dir()
