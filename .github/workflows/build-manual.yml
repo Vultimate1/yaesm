@@ -26,7 +26,10 @@ jobs:
             --metadata title=YAESM \
             --metadata section=1 \
             --metadata "footer=yaesm $version"
+          source_hash=$(sha256sum man/yaesm.1.md | cut -d ' ' -f 1)
+          sed -i '1i .\\" Source-SHA256: '"$source_hash" man/yaesm.1
           sed -i '1i .\\" Auto-generated from man/yaesm.1.md by pandoc. Do not edit.' man/yaesm.1
+          sh packaging/check-manual.sh
       - name: Commit man page
         run: |
           git config user.name "github-actions[bot]"

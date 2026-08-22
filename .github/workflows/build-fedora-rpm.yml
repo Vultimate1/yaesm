@@ -14,7 +14,24 @@ permissions:
   contents: read
 
 jobs:
+  manual-current:
+    name: Check generated manual
+    runs-on: ubuntu-latest
+    outputs:
+      current: ${{ steps.check.outputs.current }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: check
+        run: |
+          if sh packaging/check-manual.sh; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: manual-current
+    if: needs.manual-current.outputs.current == 'true'
     name: Build package for latest Fedora
     runs-on: ubuntu-latest
     container:
