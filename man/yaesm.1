@@ -50,8 +50,9 @@ failure status.
 .PP
 Immediate backups use each selected backup\[aq]s configured backend.
 Their retention is managed separately from scheduled timeframes.
-.TP
+.PP
 \f[B]--keep\f[R] \f[I]COUNT\f[R]
+.PP
 For each selected backup, keep no more than \f[I]COUNT\f[R] immediate
 backups, including the newly created backup.
 \f[I]COUNT\f[R] must be a positive integer.
@@ -73,8 +74,9 @@ The command succeeds only if every selected backup passes all of its
 checks.
 If all checks pass, the backups are very likely to run successfully,
 though later runtime failures are still possible.
-.TP
+.PP
 \f[B]-q\f[R], \f[B]--quiet\f[R]
+.PP
 Show only failed checks and their error messages.
 .PP
 Examples:
@@ -104,28 +106,35 @@ With no query, all matching backups are printed.
 Finding no matching backups is not an error.
 .PP
 The following queries are supported:
-.TP
+.PP
 \f[B]all\f[R]
+.PP
 Select every backup.
 This is the default.
-.TP
+.PP
 \f[B]newest\f[R]
+.PP
 Select the newest backup.
-.TP
+.PP
 \f[B]oldest\f[R]
+.PP
 Select the oldest backup.
-.TP
+.PP
 \f[B]after\f[R] \f[I]TIME\f[R]
+.PP
 Select backups newer than \f[I]TIME\f[R].
-.TP
+.PP
 \f[B]before\f[R] \f[I]TIME\f[R]
+.PP
 Select backups older than \f[I]TIME\f[R].
-.TP
+.PP
 \f[B]between\f[R] \f[I]TIME\f[R] \f[I]TIME\f[R]
+.PP
 Select backups between the two times, including the endpoints.
 The times may be given in either order.
-.TP
+.PP
 \f[B]closest\f[R] \f[I]TIME\f[R]
+.PP
 Select the backup closest to \f[I]TIME\f[R].
 .PP
 \f[I]TIME\f[R] may have one of these forms:
@@ -138,13 +147,16 @@ number of minutes, hours, or days before the current time
 \f[B]YYYY-MM-DDTHH:MM\f[R] for a date and time
 .IP \[bu] 2
 \f[B]HH:MM\f[R] for a time today
-.TP
+.PP
 \f[B]-q\f[R] \f[I]QUERY\f[R], \f[B]--query\f[R] \f[I]QUERY\f[R]
+.PP
 Add another query.
 This option may be repeated.
 Results from multiple queries are combined without duplicates.
-.TP
-\f[B]-t\f[R] \f[I]TIMEFRAME\f[R], \f[B]--timeframe\f[R] \f[I]TIMEFRAME\f[R], \f[B]--timeframes\f[R] \f[I]TIMEFRAME\f[R]
+.PP
+\f[B]-t\f[R] \f[I]TIMEFRAME\f[R], \f[B]--timeframe\f[R]
+\f[I]TIMEFRAME\f[R], \f[B]--timeframes\f[R] \f[I]TIMEFRAME\f[R]
+.PP
 Limit results to one or more timeframes.
 Values may be comma-separated and the option may be repeated.
 Valid values are \f[B]5minute\f[R], \f[B]hourly\f[R], \f[B]daily\f[R],
@@ -193,16 +205,18 @@ The remaining characters may be ASCII letters, digits, hyphens,
 underscores, colons, or \f[V]\[at]\f[R] signs.
 .PP
 Apart from its name, every backup accepts two common settings:
-.TP
+.PP
 \f[B]backend\f[R]
+.PP
 Required.
 The backend used to create and manage this backup.
 The currently supported values are \f[B]btrfs\f[R] and \f[B]rsync\f[R].
 Backend names are case-sensitive.
 See BACKENDS for backend-specific settings, requirements, behavior, and
 examples.
-.TP
+.PP
 \f[B]timeframes\f[R]
+.PP
 Required.
 A list containing any of \f[B]5minute\f[R], \f[B]hourly\f[R],
 \f[B]daily\f[R], \f[B]weekly\f[R], \f[B]monthly\f[R], or
@@ -239,39 +253,47 @@ Choose different times when concurrent runs are not wanted.
 .SS 5minute
 .PP
 Run every five minutes.
-.TP
+.PP
 \f[B]5minute_keep\f[R]
+.PP
 Required positive integer specifying how many five-minute backups to
 retain.
 .SS hourly
 .PP
 Run every hour at each selected minute.
-.TP
+.PP
 \f[B]hourly_keep\f[R]
+.PP
 Required positive integer specifying how many hourly backups to retain.
-.TP
+.PP
 \f[B]hourly_minutes\f[R]
+.PP
 Required list of one or more integer minute values from 0 through 59.
 .SS daily
 .PP
 Run every day at each selected time.
-.TP
+.PP
 \f[B]daily_keep\f[R]
+.PP
 Required positive integer specifying how many daily backups to retain.
-.TP
+.PP
 \f[B]daily_times\f[R]
+.PP
 Required list of one or more quoted \f[V]HH:MM\f[R] times.
 .SS weekly
 .PP
 Run on every combination of the selected weekdays and times.
-.TP
+.PP
 \f[B]weekly_keep\f[R]
+.PP
 Required positive integer specifying how many weekly backups to retain.
-.TP
+.PP
 \f[B]weekly_times\f[R]
+.PP
 Required list of one or more quoted \f[V]HH:MM\f[R] times.
-.TP
+.PP
 \f[B]weekly_days\f[R]
+.PP
 Required list of one or more weekday names: \f[B]monday\f[R],
 \f[B]tuesday\f[R], \f[B]wednesday\f[R], \f[B]thursday\f[R],
 \f[B]friday\f[R], \f[B]saturday\f[R], or \f[B]sunday\f[R].
@@ -281,14 +303,17 @@ Names are case-insensitive.
 Run on every combination of the selected days and times.
 A day that does not exist in a particular month is skipped for that
 month.
-.TP
+.PP
 \f[B]monthly_keep\f[R]
+.PP
 Required positive integer specifying how many monthly backups to retain.
-.TP
+.PP
 \f[B]monthly_times\f[R]
+.PP
 Required list of one or more quoted \f[V]HH:MM\f[R] times.
-.TP
+.PP
 \f[B]monthly_days\f[R]
+.PP
 Required list of one or more integer days from 1 through 31.
 .SS yearly
 .PP
@@ -296,14 +321,17 @@ Run on every combination of the selected days and times.
 Days use their position in a non-leap year: 1 is January 1 and 365 is
 December 31.
 Day 366 is not supported.
-.TP
+.PP
 \f[B]yearly_keep\f[R]
+.PP
 Required positive integer specifying how many yearly backups to retain.
-.TP
+.PP
 \f[B]yearly_times\f[R]
+.PP
 Required list of one or more quoted \f[V]HH:MM\f[R] times.
-.TP
+.PP
 \f[B]yearly_days\f[R]
+.PP
 Required list of one or more integer days from 1 through 365.
 .SH BACKENDS
 .PP
@@ -316,13 +344,15 @@ See CONFIGURATION for backup names and timeframes.
 .PP
 Backends that connect to remote systems over SSH may share the following
 settings.
-.TP
+.PP
 \f[B]ssh_key\f[R]
+.PP
 Required when a backend uses an SSH target.
 This must be an absolute path to an existing local private-key file used
 for SSH authentication.
-.TP
+.PP
 \f[B]ssh_config\f[R]
+.PP
 Optional.
 An absolute path to an existing local OpenSSH configuration file.
 When set, the file is passed to OpenSSH with \f[B]-F\f[R].
@@ -332,14 +362,16 @@ The \f[B]btrfs\f[R] and \f[B]rsync\f[R] backends operate on local or
 remote directory paths.
 They share the following path settings and use the SSH settings above
 when a path is remote:
-.TP
+.PP
 \f[B]src_dir\f[R]
+.PP
 Required.
 The directory to back up.
 This may be an absolute path to an existing local directory or an SSH
 target specification.
-.TP
+.PP
 \f[B]dst_dir\f[R]
+.PP
 Required.
 The directory in which backups are stored.
 This may be an absolute path to an existing local directory or an SSH
@@ -390,8 +422,9 @@ The \f[B]btrfs\f[R] backend accepts the shared path settings above.
 The source and destination must be on btrfs filesystems, and the
 \f[V]btrfs\f[R] command must be available wherever yaesm operates on
 them.
-.TP
+.PP
 \f[B]btrfs_bootstrap_refresh\f[R]
+.PP
 Optional positive integer specifying the maximum age, in days, of the
 bootstrap snapshot used for incremental transfers.
 A stale bootstrap is recreated without removing existing backups.
@@ -400,8 +433,9 @@ A stale bootstrap is recreated without removing existing backups.
 The \f[B]rsync\f[R] backend accepts the shared path settings above.
 The \f[V]rsync\f[R] command must be available wherever yaesm operates on
 the source or destination.
-.TP
+.PP
 \f[B]rsync_extra_opts\f[R]
+.PP
 Optional rsync options, given as a string or a list of strings.
 Each value is split on whitespace and passed to rsync in addition to
 yaesm\[aq]s default options.
