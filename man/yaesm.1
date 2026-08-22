@@ -34,6 +34,54 @@ a YAML configuration file.
 .PP
 Yaesm may be run interactively or continuously as a scheduler under an
 init system.
+.SH GLOBAL OPTIONS
+.PP
+Global options apply to every subcommand and must appear before the
+subcommand.
+Running \f[B]yaesm --help\f[R] shows the global help; running a
+subcommand with \f[B]--help\f[R] shows help for that subcommand.
+.PP
+\f[B]-h\f[R], \f[B]--help\f[R]
+.PP
+Show help and exit.
+.PP
+\f[B]--version\f[R]
+.PP
+Show the installed yaesm version and exit.
+.PP
+\f[B]-c\f[R] \f[I]FILE\f[R], \f[B]--config\f[R] \f[I]FILE\f[R]
+.PP
+Read configuration from \f[I]FILE\f[R].
+The default is \f[V]/etc/yaesm/config.yaml\f[R].
+.PP
+\f[B]--log-level\f[R] \f[I]LEVEL\f[R]
+.PP
+Set the minimum logging level.
+Valid values are \f[B]DEBUG\f[R], \f[B]INFO\f[R], \f[B]WARNING\f[R],
+\f[B]ERROR\f[R], and \f[B]CRITICAL\f[R].
+The default is \f[B]INFO\f[R].
+At \f[B]DEBUG\f[R], every external command executed by yaesm is also
+logged.
+.PP
+\f[B]--log-stderr\f[R]
+.PP
+Log to standard error.
+.PP
+\f[B]--log-file\f[R] \f[I]FILE\f[R]
+.PP
+Append logs to \f[I]FILE\f[R].
+.PP
+\f[B]--log-syslog\f[R][=\f[I]ADDRESS\f[R]]
+.PP
+Log to syslog.
+\f[I]ADDRESS\f[R] is the Unix socket path and defaults to
+\f[V]/dev/log\f[R].
+When this option immediately precedes a subcommand, use
+\f[V]--log-syslog=/dev/log\f[R] to avoid treating the subcommand as
+\f[I]ADDRESS\f[R].
+.PP
+More than one logging destination may be selected.
+If none is selected, yaesm logs to standard error.
 .SH SUBCOMMANDS
 .SS backup
 .PP
@@ -177,6 +225,28 @@ $ yaesm find home-backup,root-backup --query oldest --query newest
 $ yaesm find home-backup --timeframe hourly --timeframe daily
 \f[R]
 .fi
+.SS run
+.PP
+\f[B]yaesm\f[R] [\f[I]OPTIONS\f[R]] \f[B]run\f[R] [\f[B]--lockfile\f[R]
+\f[I]FILE\f[R]]
+.PP
+Start the backup scheduler and continue running until it is stopped.
+Every configured timeframe for every backup is scheduled.
+This command is intended to be managed by an init system, but it may
+also be run directly in a terminal.
+.PP
+Only one scheduler may use a given lock file.
+If the lock cannot be acquired, the command reports an error and exits
+with a failure status.
+\f[B]SIGINT\f[R] and \f[B]SIGTERM\f[R] stop the scheduler gracefully and
+wait for running backups to finish.
+.PP
+\f[B]--lockfile\f[R] \f[I]FILE\f[R]
+.PP
+Use \f[I]FILE\f[R] as the scheduler lock file.
+The default is \f[V]/run/lock/yaesm-run.lock\f[R].
+The file is created if needed, but its parent directory must already
+exist and be writable by the running user.
 .SH CONFIGURATION
 .PP
 The configuration file is the heart of yaesm.
