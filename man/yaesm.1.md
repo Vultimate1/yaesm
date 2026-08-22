@@ -22,6 +22,47 @@ configuration file.
 Yaesm may be run interactively or continuously as a scheduler under an init
 system.
 
+# GLOBAL OPTIONS
+
+Global options apply to every subcommand and must appear before the subcommand.
+Running **yaesm --help** shows the global help; running a subcommand with
+**--help** shows help for that subcommand.
+
+**-h**, **--help**
+
+Show help and exit.
+
+**--version**
+
+Show the installed yaesm version and exit.
+
+**-c** *FILE*, **--config** *FILE*
+
+Read configuration from *FILE*. The default is `/etc/yaesm/config.yaml`.
+
+**--log-level** *LEVEL*
+
+Set the minimum logging level. Valid values are **DEBUG**, **INFO**,
+**WARNING**, **ERROR**, and **CRITICAL**. The default is **INFO**. At
+**DEBUG**, every external command executed by yaesm is also logged.
+
+**--log-stderr**
+
+Log to standard error.
+
+**--log-file** *FILE*
+
+Append logs to *FILE*.
+
+**--log-syslog**[=*ADDRESS*]
+
+Log to syslog. *ADDRESS* is the Unix socket path and defaults to `/dev/log`.
+When this option immediately precedes a subcommand, use
+`--log-syslog=/dev/log` to avoid treating the subcommand as *ADDRESS*.
+
+More than one logging destination may be selected. If none is selected, yaesm
+logs to standard error.
+
 # SUBCOMMANDS
 
 ## backup
@@ -141,6 +182,25 @@ $ yaesm find home-backup closest 12:30
 $ yaesm find home-backup,root-backup --query oldest --query newest
 $ yaesm find home-backup --timeframe hourly --timeframe daily
 ```
+
+## run
+
+**yaesm** [*OPTIONS*] **run** [**--lockfile** *FILE*]
+
+Start the backup scheduler and continue running until it is stopped. Every
+configured timeframe for every backup is scheduled. This command is intended
+to be managed by an init system, but it may also be run directly in a terminal.
+
+Only one scheduler may use a given lock file. If the lock cannot be acquired,
+the command reports an error and exits with a failure status. **SIGINT** and
+**SIGTERM** stop the scheduler gracefully and wait for running backups to
+finish.
+
+**--lockfile** *FILE*
+
+Use *FILE* as the scheduler lock file. The default is
+`/run/lock/yaesm-run.lock`. The file is created if needed, but its parent
+directory must already exist and be writable by the running user.
 
 # CONFIGURATION
 
