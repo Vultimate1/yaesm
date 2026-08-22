@@ -27,7 +27,7 @@ class BackupArtifact:
 
 @dataclasses.dataclass
 class Backup:
-    """A named backend and its configured backup timeframes."""
+    """A named backup with its configured backend and timeframes."""
 
     name: str
     backend: ty.Any

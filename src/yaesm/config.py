@@ -210,9 +210,7 @@ class BackupSchema(Schema):
 
 
 class BackendSchema(Schema):
-    """Schema for ensuring a valid backend was specified, and if so promoting the
-    backend name to an actual backend class.
-    """
+    """Validate a backend name and replace it with a backend instance."""
 
     @dataclasses.dataclass
     class ErrMsg:
@@ -224,12 +222,7 @@ class BackendSchema(Schema):
 
     @staticmethod
     def schema() -> vlp.Schema:
-        """Schema that accepts a dict with a single key 'backend' with a value
-        that is a string dentoting a valid backend name (like 'btrfs' or 'rsync').
-
-        This schema Outputs a dict with the backend name promoted to its
-        corresponding backend class.
-        """
+        """Return a schema that promotes a valid backend name to an instance."""
         return vlp.Schema(
             vlp.All(
                 {
@@ -238,14 +231,14 @@ class BackendSchema(Schema):
                         msg=BackendSchema.ErrMsg.INVALID_BACKEND_NAME,
                     )
                 },
-                BackendSchema._dict_promote_backend_name_to_backend_class,
+                BackendSchema._dict_promote_backend_name_to_backend_instance,
             ),
             extra=vlp.ALLOW_EXTRA,
         )
 
     @staticmethod
-    def _dict_promote_backend_name_to_backend_class(d: dict) -> dict:
-        """Promotes a backend name to its corresponding backend class."""
+    def _dict_promote_backend_name_to_backend_instance(d: dict) -> dict:
+        """Promote a backend name to an instance of its backend class."""
         backend_name = d["backend"]
         for backend_class in backendbase.BackendBase.backend_classes():
             if backend_name == backend_class.name():

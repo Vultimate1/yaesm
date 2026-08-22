@@ -93,12 +93,12 @@ def test_BackendSchema_schema():
 
 def test_BackendSchema_dict_promote_backend_name_to_backend_instance():
     data = {"backend": "btrfs"}
-    data = config.BackendSchema._dict_promote_backend_name_to_backend_class(data)
-    assert isinstance(data["backend"], BackendBase)  # Changed from issubclass
+    data = config.BackendSchema._dict_promote_backend_name_to_backend_instance(data)
+    assert isinstance(data["backend"], BackendBase)
     assert len(data) == 1
     with pytest.raises(KeyError):
         data = {"FOO": "BAR", "BAZ": "QUUX"}
-        config.BackendSchema._dict_promote_backend_name_to_backend_class(data)
+        config.BackendSchema._dict_promote_backend_name_to_backend_instance(data)
 
 
 def test_TimeframeSchema_has_required_settings():

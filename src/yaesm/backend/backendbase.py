@@ -166,7 +166,7 @@ class PathBackendBase(BackendBase):
         return config.SrcDirDstDirSchema.schema_extra()
 
     def configure_paths(self, src_dir: Path | SSHTarget, dst_dir: Path | SSHTarget) -> None:
-        """Set this backend's validated source and destination directories."""
+        """Set the source and destination, rejecting remote-to-remote backups."""
         if isinstance(src_dir, SSHTarget) and isinstance(dst_dir, SSHTarget):
             raise bckp.BackupError("both src_dir and dst_dir are ssh targets")
         self.src_dir = src_dir
