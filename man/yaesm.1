@@ -24,5 +24,403 @@ yaesm - a backup tool with support for multiple file systems
 .PP
 \f[B]yaesm\f[R] [\f[I]OPTIONS\f[R]] \f[I]SUBCOMMAND\f[R]
 [\f[I]SUBCOMMAND-OPTIONS\f[R]]
+.SH DESCRIPTION
+.PP
+Yaesm creates and schedules filesystem backups.
+Backups may stay on the local system, be sent to a remote system, or be
+pulled from a remote system.
+Backup schedules, retention limits, and storage locations are defined in
+a YAML configuration file.
+.PP
+Yaesm may be run interactively or continuously as a scheduler under an
+init system.
 .SH SUBCOMMANDS
+.SS backup
+.PP
+\f[B]yaesm\f[R] [\f[I]OPTIONS\f[R]] \f[B]backup\f[R]
+\f[I]BACKUP\f[R][,\f[I]BACKUP\f[R]...]
+[\f[B]--keep\f[R] \f[I]COUNT\f[R]]
+.PP
+Create one or more immediate backups.
+Multiple configured backup names may be given as a comma-separated list.
+The names are validated before any backups begin, then the backups run
+sequentially in the requested order.
+If one fails, the remaining backups still run and the command returns a
+failure status.
+.PP
+Immediate backups use each configured backup\[aq]s source, destination,
+and backend.
+Their retention is managed separately from scheduled timeframes.
+.TP
+\f[B]--keep\f[R] \f[I]COUNT\f[R]
+For each selected backup, keep no more than \f[I]COUNT\f[R] immediate
+backups, including the newly created backup.
+\f[I]COUNT\f[R] must be a positive integer.
+Immediate backups are kept indefinitely when this option is omitted.
+.SS check
+.PP
+\f[B]yaesm\f[R] [\f[I]OPTIONS\f[R]] \f[B]check\f[R]
+[\f[I]BACKUP\f[R][,\f[I]BACKUP\f[R]...]] [\f[B]-q\f[R] |
+\f[B]--quiet\f[R]]
+.PP
+Check whether configured backups meet the requirements needed to run.
+With no backup names, all configured backups are checked.
+Multiple names may be given as a comma-separated list.
+The names are validated before any checks begin.
+.PP
+By default, every check is shown as \f[B]PASS\f[R] or \f[B]FAIL\f[R],
+followed by any error messages.
+The command succeeds only if every selected backup passes all of its
+checks.
+If all checks pass, the backups are very likely to run successfully,
+though later runtime failures are still possible.
+.TP
+\f[B]-q\f[R], \f[B]--quiet\f[R]
+Show only failed checks and their error messages.
+.PP
+Examples:
+.IP
+.nf
+\f[C]
+$ yaesm check
+$ yaesm check home-backup
+$ yaesm check home-backup,root-backup --quiet
+\f[R]
+.fi
+.SS find
+.PP
+\f[B]yaesm\f[R] [\f[I]OPTIONS\f[R]] \f[B]find\f[R]
+\f[I]BACKUP\f[R][,\f[I]BACKUP\f[R]...]
+[\f[I]QUERY\f[R]...]
+[\f[B]--query\f[R] \f[I]QUERY\f[R]...]
+[\f[B]--timeframe\f[R] \f[I]TIMEFRAME\f[R][,\f[I]TIMEFRAME\f[R]...]]
+.PP
+Print the locations of existing backups.
+For each configured backup, results are printed from newest to oldest.
+Multiple backup names may be given as a comma-separated list.
+Each result is printed as a backup locator.
+Its format depends on the backend and storage location.
+.PP
+With no query, all matching backups are printed.
+Finding no matching backups is not an error.
+.PP
+The following queries are supported:
+.TP
+\f[B]all\f[R]
+Select every backup.
+This is the default.
+.TP
+\f[B]newest\f[R]
+Select the newest backup.
+.TP
+\f[B]oldest\f[R]
+Select the oldest backup.
+.TP
+\f[B]after\f[R] \f[I]TIME\f[R]
+Select backups newer than \f[I]TIME\f[R].
+.TP
+\f[B]before\f[R] \f[I]TIME\f[R]
+Select backups older than \f[I]TIME\f[R].
+.TP
+\f[B]between\f[R] \f[I]TIME\f[R] \f[I]TIME\f[R]
+Select backups between the two times, including the endpoints.
+The times may be given in either order.
+.TP
+\f[B]closest\f[R] \f[I]TIME\f[R]
+Select the backup closest to \f[I]TIME\f[R].
+.PP
+\f[I]TIME\f[R] may have one of these forms:
+.IP \[bu] 2
+\f[V]now-Nm\f[R], \f[V]now-Nh\f[R], or \f[V]now-Nd\f[R] for a positive
+number of minutes, hours, or days before the current time
+.IP \[bu] 2
+\f[B]YYYY-MM-DD\f[R] for midnight on a date
+.IP \[bu] 2
+\f[B]YYYY-MM-DDTHH:MM\f[R] for a date and time
+.IP \[bu] 2
+\f[B]HH:MM\f[R] for a time today
+.TP
+\f[B]-q\f[R] \f[I]QUERY\f[R], \f[B]--query\f[R] \f[I]QUERY\f[R]
+Add another query.
+This option may be repeated.
+Results from multiple queries are combined without duplicates.
+.TP
+\f[B]-t\f[R] \f[I]TIMEFRAME\f[R], \f[B]--timeframe\f[R] \f[I]TIMEFRAME\f[R], \f[B]--timeframes\f[R] \f[I]TIMEFRAME\f[R]
+Limit results to one or more timeframes.
+Values may be comma-separated and the option may be repeated.
+Valid values are \f[B]5minute\f[R], \f[B]hourly\f[R], \f[B]daily\f[R],
+\f[B]weekly\f[R], \f[B]monthly\f[R], \f[B]yearly\f[R], and
+\f[B]immediate\f[R].
+.PP
+Examples:
+.IP
+.nf
+\f[C]
+$ yaesm find home-backup
+$ yaesm find home-backup,root-backup newest
+$ yaesm find home-backup after now-7d --timeframes daily,weekly
+$ yaesm find home-backup before 2026-08-01T12:00
+$ yaesm find home-backup between 2026-08-01 2026-08-15
+$ yaesm find home-backup closest 12:30
+$ yaesm find home-backup,root-backup --query oldest --query newest
+$ yaesm find home-backup --timeframe hourly --timeframe daily
+\f[R]
+.fi
 .SH CONFIGURATION
+.PP
+Yaesm reads its YAML configuration from \f[V]/etc/yaesm/config.yaml\f[R]
+by default.
+Use \f[B]--config\f[R] to select another file.
+Configuration files use YAML 1.1.
+.PP
+The top level of the file must be a nonempty mapping.
+Each key is a backup name and its value is a mapping of settings for
+that backup.
+Yaesm provides no global backup settings or inheritance; each backup is
+configured and validated independently.
+Unknown settings are rejected.
+Yaesm reports configuration errors before running the selected
+subcommand.
+.PP
+Backup names must begin with an ASCII letter.
+The remaining characters may be ASCII letters, digits, hyphens,
+underscores, colons, or \f[V]\[at]\f[R] signs.
+Whitespace, slashes, and commas are not allowed.
+Commas are reserved for selecting multiple backups on the command line.
+.PP
+Each backup accepts the following common settings:
+.TP
+\f[B]backend\f[R]
+Required.
+The backend used to create and manage this backup.
+The currently supported values are \f[B]btrfs\f[R] and \f[B]rsync\f[R].
+Backend names are case-sensitive.
+See BACKENDS for backend-specific settings, requirements, behavior, and
+examples.
+.TP
+\f[B]timeframes\f[R]
+Required.
+A list containing any of \f[B]5minute\f[R], \f[B]hourly\f[R],
+\f[B]daily\f[R], \f[B]weekly\f[R], \f[B]monthly\f[R], or
+\f[B]yearly\f[R].
+Each selected timeframe requires the corresponding settings described
+under TIMEFRAMES.
+Timeframe names are case-sensitive and each should appear only once.
+An empty list creates no scheduled jobs, but the backup may still be run
+manually.
+The \f[B]immediate\f[R] timeframe is reserved for manual backups and is
+not valid here.
+.SS Timeframes
+.PP
+Timeframes control when scheduled backups run and how many backups are
+retained.
+Every \f[V]*_keep\f[R] setting must be an integer greater than zero.
+After a successful backup, yaesm retains at most that many backups for
+the same backup and timeframe.
+Retention for manual backups is controlled separately by \f[B]yaesm
+backup --keep\f[R].
+.PP
+All schedules use the local time zone of the system running yaesm.
+Values in a \f[V]*_times\f[R] list use 24-hour \f[V]HH:MM\f[R] notation.
+Hours range from 00 through 23 and minutes from 00 through 59.
+Quote these values so YAML always treats them as times rather than
+numbers.
+Every selected list of minutes, times, or days must contain at least one
+value.
+.PP
+Each timeframe is scheduled independently.
+If two timeframes for the same backup select the same time, both jobs
+may run concurrently.
+Choose different times when concurrent runs are not wanted.
+.SS 5minute
+.PP
+Run every five minutes.
+.TP
+\f[B]5minute_keep\f[R]
+Required positive integer specifying how many five-minute backups to
+retain.
+.SS hourly
+.PP
+Run every hour at each selected minute.
+.TP
+\f[B]hourly_keep\f[R]
+Required positive integer specifying how many hourly backups to retain.
+.TP
+\f[B]hourly_minutes\f[R]
+Required list of one or more integer minute values from 0 through 59.
+.SS daily
+.PP
+Run every day at each selected time.
+.TP
+\f[B]daily_keep\f[R]
+Required positive integer specifying how many daily backups to retain.
+.TP
+\f[B]daily_times\f[R]
+Required list of one or more quoted \f[V]HH:MM\f[R] times.
+.SS weekly
+.PP
+Run on every combination of the selected weekdays and times.
+.TP
+\f[B]weekly_keep\f[R]
+Required positive integer specifying how many weekly backups to retain.
+.TP
+\f[B]weekly_times\f[R]
+Required list of one or more quoted \f[V]HH:MM\f[R] times.
+.TP
+\f[B]weekly_days\f[R]
+Required list of one or more weekday names: \f[B]monday\f[R],
+\f[B]tuesday\f[R], \f[B]wednesday\f[R], \f[B]thursday\f[R],
+\f[B]friday\f[R], \f[B]saturday\f[R], or \f[B]sunday\f[R].
+Names are case-insensitive.
+.SS monthly
+.PP
+Run on every combination of the selected days and times.
+A day that does not exist in a particular month is skipped for that
+month.
+.TP
+\f[B]monthly_keep\f[R]
+Required positive integer specifying how many monthly backups to retain.
+.TP
+\f[B]monthly_times\f[R]
+Required list of one or more quoted \f[V]HH:MM\f[R] times.
+.TP
+\f[B]monthly_days\f[R]
+Required list of one or more integer days from 1 through 31.
+.SS yearly
+.PP
+Run on every combination of the selected days and times.
+Days use their position in a non-leap year: 1 is January 1 and 365 is
+December 31.
+Day 366 is not supported.
+.TP
+\f[B]yearly_keep\f[R]
+Required positive integer specifying how many yearly backups to retain.
+.TP
+\f[B]yearly_times\f[R]
+Required list of one or more quoted \f[V]HH:MM\f[R] times.
+.TP
+\f[B]yearly_days\f[R]
+Required list of one or more integer days from 1 through 365.
+.SH BACKENDS
+.PP
+A backend determines how a backup is created, stored, checked, and
+removed.
+Each backend may add its own configuration settings and system
+requirements.
+See CONFIGURATION for the configuration file and settings shared by all
+backends.
+.SS Path-based backends
+.PP
+The \f[B]btrfs\f[R] and \f[B]rsync\f[R] backends share settings for
+local and remote directory paths:
+.TP
+\f[B]src_dir\f[R]
+Required.
+The directory to back up.
+This may be an absolute path to an existing local directory or an SSH
+target specification.
+.TP
+\f[B]dst_dir\f[R]
+Required.
+The directory in which backups are stored.
+This may be an absolute path to an existing local directory or an SSH
+target specification.
+Yaesm creates backup artifacts inside this directory.
+.TP
+\f[B]ssh_key\f[R]
+Required when \f[B]src_dir\f[R] or \f[B]dst_dir\f[R] is remote.
+This must be an absolute path to an existing local private-key file used
+for SSH authentication.
+.TP
+\f[B]ssh_config\f[R]
+Optional.
+An absolute path to an existing local OpenSSH configuration file.
+When set, the file is passed to OpenSSH with \f[B]-F\f[R].
+.PP
+Local paths must begin with \f[V]/\f[R] and must already exist when the
+configuration is read.
+\f[V]\[ti]\f[R] and environment variables are not expanded.
+.SS Remote sources and destinations
+.PP
+An SSH target has this form:
+.IP
+.nf
+\f[C]
+ssh://[pPORT:][USER\[at]]HOST:/ABSOLUTE/PATH
+\f[R]
+.fi
+.PP
+The \f[V]p\f[R] before \f[I]PORT\f[R] is literal.
+\f[I]USER\f[R] and \f[I]PORT\f[R] are optional.
+\f[I]HOST\f[R] may be a hostname or an alias from the selected OpenSSH
+configuration.
+For example:
+.IP
+.nf
+\f[C]
+ssh://backup.example:/srv/backups
+ssh://backup\[at]backup.example:/srv/backups
+ssh://p2222:backup\[at]backup.example:/srv/backups
+\f[R]
+.fi
+.PP
+At most one of \f[B]src_dir\f[R] and \f[B]dst_dir\f[R] may be remote;
+remote-to-remote backups are not supported.
+An explicit \f[B]ssh_key\f[R] is required even if the key is also named
+in the OpenSSH configuration.
+Authentication must work without interactive input, and the remote host
+key must already be trusted.
+.PP
+Configuration parsing validates the SSH target syntax and the local key
+and configuration files.
+Run \f[B]yaesm check\f[R] to test the connection, remote directory, and
+backend requirements.
+.SS Examples
+.PP
+A local rsync backup using every configurable timeframe:
+.IP
+.nf
+\f[C]
+home-backup:
+  backend: rsync
+  src_dir: /home
+  dst_dir: /srv/backups
+  timeframes:
+    - 5minute
+    - hourly
+    - daily
+    - weekly
+    - monthly
+    - yearly
+  5minute_keep: 12
+  hourly_keep: 24
+  hourly_minutes: [1]
+  daily_keep: 7
+  daily_times: [\[dq]02:02\[dq]]
+  weekly_keep: 4
+  weekly_times: [\[dq]03:03\[dq]]
+  weekly_days: [sunday]
+  monthly_keep: 12
+  monthly_times: [\[dq]04:04\[dq]]
+  monthly_days: [1]
+  yearly_keep: 5
+  yearly_times: [\[dq]05:06\[dq]]
+  yearly_days: [1]
+\f[R]
+.fi
+.PP
+An rsync backup sent to a remote destination:
+.IP
+.nf
+\f[C]
+offsite-home-backup:
+  backend: rsync
+  src_dir: /home
+  dst_dir: ssh://p2222:backup\[at]backup.example:/srv/backups
+  ssh_key: /root/.ssh/yaesm
+  ssh_config: /root/.ssh/config
+  timeframes: [daily]
+  daily_keep: 7
+  daily_times: [\[dq]02:00\[dq]]
+\f[R]
+.fi
