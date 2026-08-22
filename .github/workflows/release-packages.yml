@@ -18,15 +18,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Compare package versions with release tag
+      - name: Compare project version with release tag
         run: |
           project_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)
-          debian_version=$(sed -n '1s/.*(\(.*\)-[^-]*).*/\1/p' packaging/debian/changelog)
-          fedora_version=$(sed -n 's/^Version:[[:space:]]*//p' packaging/fedora/yaesm.spec)
 
+          printf '%s\n' "$project_version" | \
+            grep --extended-regexp --quiet '^[0-9]+\.[0-9]+\.[0-9]+$'
           test "$GITHUB_REF_NAME" = "v$project_version"
-          test "$debian_version" = "$project_version"
-          test "$fedora_version" = "$project_version"
 
   build-debian:
     name: Build Debian package

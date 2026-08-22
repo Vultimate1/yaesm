@@ -38,12 +38,21 @@ jobs:
       - name: Stage RPM sources
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          mkdir -p "$HOME/rpmbuild/SOURCES" "$HOME/rpmbuild/SRPMS"
-          version=$(rpmspec --query --queryformat '%{version}\n' \
-            packaging/fedora/yaesm.spec | head --lines=1)
+          mkdir -p \
+            "$HOME/rpmbuild/SOURCES" \
+            "$HOME/rpmbuild/SPECS" \
+            "$HOME/rpmbuild/SRPMS"
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)
+          changelog_date=$(LC_ALL=C git log -1 \
+            --date='format:%a %b %d %Y' --format=%cd)
+          sed \
+            -e "s/@VERSION@/$version/g" \
+            -e "s/@CHANGELOG_DATE@/$changelog_date/" \
+            packaging/fedora/yaesm.spec \
+            > "$HOME/rpmbuild/SPECS/yaesm.spec"
           git archive --format=tar.gz --prefix="yaesm-$version/" \
             --output="$HOME/rpmbuild/SOURCES/yaesm-$version.tar.gz" HEAD
-          rpmbuild -bs --nodeps packaging/fedora/yaesm.spec
+          rpmbuild -bs --nodeps "$HOME/rpmbuild/SPECS/yaesm.spec"
 
       - name: Build Fedora package
         run: |
@@ -56,7 +65,7 @@ jobs:
       - name: Check Fedora package
         run: |
           rpmlint \
-            packaging/fedora/yaesm.spec \
+            "$HOME/rpmbuild/SPECS/yaesm.spec" \
             dist/yaesm-*.src.rpm \
             dist/yaesm-*.noarch.rpm
 

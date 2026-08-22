@@ -22,20 +22,30 @@ Note that to run the test suite you will need to install [Vagrant](https://www.v
 
 # RELEASE
 
+Yaesm uses `X.Y.Z` release versions. Debian and Fedora packages are generated
+with package revision `1`; a packaging correction requires a new Yaesm patch
+release rather than a separate package revision.
+
 Follow these steps to create a new release:
 
 1. **Update version in `pyproject.toml`**
    - Update the `version` field to the new version (e.g., `0.0.2`)
+   - This is the only version that must be updated manually; CI generates the
+     package versions and the manual's version footer from it
 
 2. **Update CHANGELOG.md**
    - Find the `## [Unreleased]` section
    - Replace it with `## [X.X.X] - YYYY-MM-DD` (use the version from step 1 and today's date)
    - Add a new `## [Unreleased]` section at the top of the changelog
 
-3. **Commit your changes**
+3. **Commit and merge your changes**
    - Have the commit message follow the template: `Release vX.X.X`
 
-4. **Create the release on GitHub**
+4. **Wait for CI to finish**
+   - Confirm that the tests and package builds pass
+   - The manual workflow will commit the regenerated man page to `main`
+
+5. **Create the release on GitHub**
    - Go to **Releases** → **Create a new release**
    - **Tag name:** `vX.X.X` (must match the version from `pyproject.toml`)
    - **Target branch:** `main`

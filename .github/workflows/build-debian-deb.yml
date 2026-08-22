@@ -43,11 +43,17 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Stage Debian packaging
-        run: cp --archive packaging/debian debian
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)
+          changelog_date=$(git log -1 --format=%cD)
+
+          cp --archive packaging/debian debian
+          printf 'yaesm (%s-1) unstable; urgency=medium\n\n  * New upstream release.\n\n -- Nicholas B. Hubbard <nicholashubbard@posteo.net>  %s\n' \
+            "$version" "$changelog_date" > debian/changelog
 
       - name: Prepare Debian source package
         run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           version=$(dpkg-parsechangelog --show-field Version)
           upstream_version=${version%-*}
           git archive --format=tar.gz --prefix="yaesm-$upstream_version/" \

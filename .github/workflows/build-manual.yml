@@ -5,6 +5,7 @@ on:
       - main
     paths:
       - 'man/yaesm.1.md'
+      - 'pyproject.toml'
       - '.github/workflows/build-manual.yml'
 
 permissions:

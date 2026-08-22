@@ -1,5 +1,5 @@
 Name:           yaesm
-Version:        0.0.1
+Version:        @VERSION@
 Release:        1%{?dist}
 Summary:        Backup tool with support for multiple filesystems
 
@@ -62,7 +62,7 @@ install -dm 0755 %{buildroot}%{_sysconfdir}/yaesm
 
 %files -f %{pyproject_files}
 %license LICENSE
-%doc README.md
+%doc CHANGELOG.md README.md
 %{_bindir}/yaesm
 %{_unitdir}/yaesm.service
 %{_mandir}/man1/yaesm.1*
@@ -70,5 +70,5 @@ install -dm 0755 %{buildroot}%{_sysconfdir}/yaesm
 
 
 %changelog
-* Fri Aug 21 2026 Nicholas B. Hubbard <nicholashubbard@posteo.net> - 0.0.1-1
-- Initial package
+* @CHANGELOG_DATE@ Nicholas B. Hubbard <nicholashubbard@posteo.net> - @VERSION@-1
+- New upstream release
