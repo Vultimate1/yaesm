@@ -33,8 +33,8 @@ given as a comma-separated list. The names are validated before any backups
 begin, then the backups run sequentially in the requested order. If one fails,
 the remaining backups still run and the command returns a failure status.
 
-Immediate backups use each configured backup's source, destination, and
-backend. Their retention is managed separately from scheduled timeframes.
+Immediate backups use each selected backup's configured backend. Their
+retention is managed separately from scheduled timeframes.
 
 **--keep** *COUNT*
 
@@ -144,21 +144,24 @@ $ yaesm find home-backup --timeframe hourly --timeframe daily
 
 # CONFIGURATION
 
-Yaesm reads its YAML configuration from `/etc/yaesm/config.yaml` by default.
-Use **--config** to select another file. Configuration files use YAML 1.1.
+The configuration file is the heart of yaesm. It defines the backups and
+drives how they are created, scheduled, checked, found, and retained. Yaesm
+reads its YAML configuration from `/etc/yaesm/config.yaml` by default. Use
+**--config** to select another file. Configuration files use YAML 1.1.
 
-The top level of the file must be a nonempty mapping. Each key is a backup name
-and its value is a mapping of settings for that backup. Yaesm provides no global
-backup settings or inheritance; each backup is configured and validated
-independently. Unknown settings are rejected. Yaesm reports configuration
-errors before running the selected subcommand.
+The top level of the file must be a nonempty mapping defining one or more
+backups. Each entry consists of a backup name, a configured backend, and a list
+of timeframes. Backend-specific settings determine how and where its backups
+are stored.
+
+Yaesm provides no global backup settings or inheritance; each backup is
+configured and validated independently. Unknown settings are rejected. Yaesm
+reports configuration errors before running the selected subcommand.
 
 Backup names must begin with an ASCII letter. The remaining characters may be
-ASCII letters, digits, hyphens, underscores, colons, or `@` signs. Whitespace,
-slashes, and commas are not allowed. Commas are reserved for selecting multiple
-backups on the command line.
+ASCII letters, digits, hyphens, underscores, colons, or `@` signs.
 
-Each backup accepts the following common settings:
+Apart from its name, every backup accepts two common settings:
 
 **backend**
 
@@ -281,15 +284,30 @@ not supported.
 
 # BACKENDS
 
-A backend determines how a backup is created, stored, checked, and removed.
-Each backend may add its own configuration settings and system requirements.
-See [CONFIGURATION](#configuration) for the configuration file and settings
-shared by all backends.
+A backend determines how backups are created, located, checked, and removed.
+Each backend accepts its own settings and has its own system requirements. See
+[CONFIGURATION](#configuration) for backup names and timeframes.
+
+## SSH settings
+
+Backends that connect to remote systems over SSH may share the following
+settings.
+
+**ssh_key**
+
+: Required when a backend uses an SSH target. This must be an absolute path to
+  an existing local private-key file used for SSH authentication.
+
+**ssh_config**
+
+: Optional. An absolute path to an existing local OpenSSH configuration file.
+  When set, the file is passed to OpenSSH with **-F**.
 
 ## Path-based backends
 
-The **btrfs** and **rsync** backends share settings for local and remote
-directory paths:
+The **btrfs** and **rsync** backends operate on local or remote directory paths.
+They share the following path settings and use the SSH settings above when a
+path is remote:
 
 **src_dir**
 
@@ -300,24 +318,14 @@ directory paths:
 
 : Required. The directory in which backups are stored. This may be an absolute
   path to an existing local directory or an SSH target specification. Yaesm
-  creates backup artifacts inside this directory.
-
-**ssh_key**
-
-: Required when **src_dir** or **dst_dir** is remote. This must be an absolute
-  path to an existing local private-key file used for SSH authentication.
-
-**ssh_config**
-
-: Optional. An absolute path to an existing local OpenSSH configuration file.
-  When set, the file is passed to OpenSSH with **-F**.
+  creates backups inside this directory.
 
 Local paths must begin with `/` and must already exist when the configuration
 is read. `~` and environment variables are not expanded.
 
 ### Remote sources and destinations
 
-An SSH target has this form:
+For path-based backends, an SSH target has this form:
 
 ```text
 ssh://[pPORT:][USER@]HOST:/ABSOLUTE/PATH
@@ -337,11 +345,34 @@ backups are not supported. An explicit **ssh_key** is required even if the key
 is also named in the OpenSSH configuration. Authentication must work without
 interactive input, and the remote host key must already be trusted.
 
-Configuration parsing validates the SSH target syntax and the local key and
-configuration files. Run **yaesm check** to test the connection, remote
-directory, and backend requirements.
+Yaesm rejects invalid SSH target syntax and invalid local key or configuration
+files. Run **yaesm check** to test the connection, remote directory, and backend
+requirements.
 
-### Examples
+## btrfs
+
+The **btrfs** backend accepts the shared path settings above. The source and
+destination must be on btrfs filesystems, and the `btrfs` command must be
+available wherever yaesm operates on them.
+
+**btrfs_bootstrap_refresh**
+
+: Optional positive integer specifying the maximum age, in days, of the
+  bootstrap snapshot used for incremental transfers. A stale bootstrap is
+  recreated without removing existing backups.
+
+## rsync
+
+The **rsync** backend accepts the shared path settings above. The `rsync`
+command must be available wherever yaesm operates on the source or destination.
+
+**rsync_extra_opts**
+
+: Optional rsync options, given as a string or a list of strings. Each value is
+  split on whitespace and passed to rsync in addition to yaesm's default
+  options.
+
+## Examples
 
 A local rsync backup using every configurable timeframe:
 
@@ -373,11 +404,11 @@ home-backup:
   yearly_days: [1]
 ```
 
-An rsync backup sent to a remote destination:
+A btrfs backup sent to a remote destination:
 
 ```text
 offsite-home-backup:
-  backend: rsync
+  backend: btrfs
   src_dir: /home
   dst_dir: ssh://p2222:backup@backup.example:/srv/backups
   ssh_key: /root/.ssh/yaesm
