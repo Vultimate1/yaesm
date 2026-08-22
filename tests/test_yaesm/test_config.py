@@ -593,6 +593,10 @@ def test_BackupSchema_ensure_backup_name_valid():
     with pytest.raises(vlp.Invalid) as exc:
         config.BackupSchema._ensure_backup_name_valid(d)
     assert str(exc.value) == config.BackupSchema.ErrMsg.INVALID_BACKUP_NAME
+    d = {"foo,bar": {"bar": 1, "baz": 2}}
+    with pytest.raises(vlp.Invalid) as exc:
+        config.BackupSchema._ensure_backup_name_valid(d)
+    assert str(exc.value) == config.BackupSchema.ErrMsg.INVALID_BACKUP_NAME
 
 
 def test_BackupSchema_reject_unknown_settings(valid_raw_config):

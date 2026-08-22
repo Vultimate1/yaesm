@@ -220,6 +220,7 @@ def test_backup_name_valid():
     assert not bckp.backup_name_valid("1")
     assert not bckp.backup_name_valid("0foo")
     assert not bckp.backup_name_valid("foo/bar")
+    assert not bckp.backup_name_valid("foo,bar")
     assert not bckp.backup_name_valid("foo*bar")
     assert not bckp.backup_name_valid("@foo")
     assert not bckp.backup_name_valid("-foo")
