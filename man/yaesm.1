@@ -558,3 +558,30 @@ offsite-home-backup:
   daily_times: [\[dq]02:00\[dq]]
 \f[R]
 .fi
+.SH EXIT STATUS
+.PP
+\f[B]0\f[R]
+.PP
+The command completed successfully.
+This also applies when \f[B]find\f[R] has no matches and when help or
+version information is requested.
+.PP
+\f[B]1\f[R]
+.PP
+The requested operation failed, a check failed, the scheduler could not
+run, or yaesm encountered an unexpected error.
+.PP
+\f[B]2\f[R]
+.PP
+The command line was invalid, or \f[B]check\f[R] or \f[B]find\f[R]
+received an invalid backup selection or query.
+.PP
+\f[B]78\f[R]
+.PP
+Yaesm detected a configuration error before running the subcommand.
+.SH LICENSE
+.PP
+Yaesm is free software released under the GNU General Public License,
+version 3 or later.
+See the \f[V]LICENSE\f[R] file distributed with the source code for the
+full license text.
