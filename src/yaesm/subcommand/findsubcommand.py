@@ -4,8 +4,10 @@ import logging
 import re
 from collections.abc import Sequence
 from datetime import datetime, time, timedelta
+from pathlib import Path
 
 from yaesm.backup import Backup, BackupArtifact
+from yaesm.sshtarget import SSHTarget
 from yaesm.subcommand.subcommandbase import SubcommandBase
 from yaesm.timeframe import ImmediateTimeframe, tframe_types
 
@@ -56,7 +58,10 @@ class FindSubcommand(SubcommandBase):
             matches = {artifact for query in queries for artifact in query.select(artifacts)}
             for artifact in artifacts:
                 if artifact in matches:
-                    print(artifact.locator)
+                    locator = artifact.locator
+                    if isinstance(backup.dst_dir, SSHTarget):
+                        locator = str(backup.dst_dir.with_path(Path(locator)))
+                    print(locator)
 
         return 0
 

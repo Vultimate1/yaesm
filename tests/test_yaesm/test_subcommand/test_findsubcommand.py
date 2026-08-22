@@ -288,7 +288,7 @@ def test_find_main_supports_multiple_backup_names(tmp_path, capsys):
 
 
 def test_find_main_supports_remote_backups(capsys):
-    target = SSHTarget("ssh://backup.example:/backups", Path("/key"))
+    target = SSHTarget("ssh://p2222:backup@backup.example:/backups", Path("/key"))
     backup = Backup(
         "foo",
         MagicMock(),
@@ -302,7 +302,9 @@ def test_find_main_supports_remote_backups(capsys):
 
     args = _parse_args(["foo", "after", "2026-08-20T11:00"])
     assert FindSubcommand().main([backup], args) == 0
-    assert capsys.readouterr().out.splitlines() == [snapshot.locator]
+    assert capsys.readouterr().out.splitlines() == [
+        f"ssh://p2222:backup@backup.example:{snapshot.locator}"
+    ]
     collect.assert_called_once_with(backup, timeframes=None)
 
 

@@ -65,6 +65,11 @@ class SSHTarget:
         sshtarget.path = Path(path)
         return sshtarget
 
+    def __str__(self) -> str:
+        port = "" if self.port is None else f"p{self.port}:"
+        user = "" if self.user is None else f"{self.user}@"
+        return f"ssh://{port}{user}{self.host}:{self.path}"
+
     @ty.overload
     def openssh_opts(self, string: ty.Literal[True]) -> str: ...
 
