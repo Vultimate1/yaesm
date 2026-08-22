@@ -13,11 +13,19 @@ class CheckSubcommand(SubcommandBase):
     """Validate that all preconditions for a backup are met."""
 
     def main(self, backups: list[Backup], parsed_args: argparse.Namespace) -> int:
-        if parsed_args.backup_name:
-            backups = [b for b in backups if b.name == parsed_args.backup_name]
-            if not backups:
-                logger.error(f"no backup named '{parsed_args.backup_name}' in config")
+        if parsed_args.backup_names is not None:
+            backups_by_name = {backup.name: backup for backup in backups}
+            unknown_names = [
+                name for name in parsed_args.backup_names if name not in backups_by_name
+            ]
+            if not parsed_args.backup_names:
+                logger.error("no backup names specified")
                 return 2
+            if unknown_names:
+                for name in unknown_names:
+                    logger.error(f"no backup named '{name}' in config")
+                return 2
+            backups = [backups_by_name[name] for name in parsed_args.backup_names]
         checks_passed = True
         for backup in backups:
             results = backup.backend.check(backup)
@@ -38,10 +46,12 @@ class CheckSubcommand(SubcommandBase):
     @classmethod
     def add_argparser_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
-            "backup_name",
+            "backup_names",
             nargs="?",
             default=None,
-            help="name of a specific backup to check (default: check all)",
+            metavar="BACKUP[,BACKUP...]",
+            type=lambda value: list(dict.fromkeys(filter(None, map(str.strip, value.split(","))))),
+            help="names of specific backups to check (default: check all)",
         )
         parser.add_argument(
             "-q",

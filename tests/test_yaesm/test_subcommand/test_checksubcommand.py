@@ -29,10 +29,12 @@ def test_add_argparser_arguments():
     parser = argparse.ArgumentParser()
     CheckSubcommand.add_argparser_arguments(parser)
     args = parser.parse_args([])
-    assert args.backup_name is None
+    assert args.backup_names is None
     assert not args.quiet
     args = parser.parse_args(["mybackup"])
-    assert args.backup_name == "mybackup"
+    assert args.backup_names == ["mybackup"]
+    args = parser.parse_args(["alpha,,bravo, alpha, ,bravo"])
+    assert args.backup_names == ["alpha", "bravo"]
     args = parser.parse_args(["--quiet"])
     assert args.quiet
 
@@ -104,25 +106,37 @@ def test_check_multiple_errors_one_backup(checksubcommand, capsys):
         assert err in out
 
 
-def test_check_specific_backup(checksubcommand):
+def test_check_specific_backups(checksubcommand):
     backup_a = _make_backup("a", [])
     backup_b = _make_backup("b", [])
-    backups = [backup_a, backup_b]
+    backup_c = _make_backup("c", [])
+    backups = [backup_a, backup_b, backup_c]
     parser = argparse.ArgumentParser()
     CheckSubcommand.add_argparser_arguments(parser)
-    args = parser.parse_args(["a", "--quiet"])
+    args = parser.parse_args(["b,a", "--quiet"])
     rc = checksubcommand.main(backups, args)
     assert rc == 0
     backup_a.backend.check.assert_called_once_with(backup_a)
-    backup_b.backend.check.assert_not_called()
+    backup_b.backend.check.assert_called_once_with(backup_b)
+    backup_c.backend.check.assert_not_called()
 
 
 def test_check_unknown_backup_name(checksubcommand, caplog):
-    backups = [_make_backup("a", [])]
+    backup = _make_backup("a", [])
     parser = argparse.ArgumentParser()
     CheckSubcommand.add_argparser_arguments(parser)
-    args = parser.parse_args(["nonexistent"])
+    args = parser.parse_args(["a,nonexistent"])
     caplog.set_level(logging.ERROR)
-    rc = checksubcommand.main(backups, args)
+    rc = checksubcommand.main([backup], args)
     assert rc == 2
     assert "nonexistent" in caplog.text
+    backup.backend.check.assert_not_called()
+
+
+def test_check_empty_backup_names(checksubcommand, caplog):
+    parser = argparse.ArgumentParser()
+    CheckSubcommand.add_argparser_arguments(parser)
+    caplog.set_level(logging.ERROR)
+
+    assert checksubcommand.main([], parser.parse_args([","])) == 2
+    assert "no backup names specified" in caplog.text

@@ -36,14 +36,19 @@ def test_name():
 
 def test_add_argparser_arguments():
     args = _parse_args(["mybackup"])
-    assert args.backup_name == "mybackup"
+    assert args.backup_names == ["mybackup"]
     assert args.keep is None
 
 
 def test_add_argparser_arguments_with_keep():
     args = _parse_args(["mybackup", "--keep", "5"])
-    assert args.backup_name == "mybackup"
+    assert args.backup_names == ["mybackup"]
     assert args.keep == 5
+
+
+def test_add_argparser_arguments_normalizes_backup_names():
+    args = _parse_args(["alpha,,bravo, alpha, ,bravo"])
+    assert args.backup_names == ["alpha", "bravo"]
 
 
 def test_backup_name_not_found(backupsubcommand, caplog):
@@ -51,6 +56,12 @@ def test_backup_name_not_found(backupsubcommand, caplog):
     args = _parse_args(["nonexistent"])
     assert backupsubcommand.main([], args) == 1
     assert "backup not found: nonexistent" in caplog.text
+
+
+def test_empty_backup_names(backupsubcommand, caplog):
+    caplog.set_level(logging.ERROR)
+    assert backupsubcommand.main([], _parse_args([","])) == 1
+    assert "no backup names specified" in caplog.text
 
 
 def test_keep_not_positive(backupsubcommand, caplog):
@@ -78,6 +89,41 @@ def test_selects_correct_backup_from_multiple(backupsubcommand, caplog):
     backup_b.backend.do_backup.assert_called_once()
     backup_c.backend.do_backup.assert_not_called()
     assert backup_b.backend.do_backup.call_args[0][0] is backup_b
+
+
+def test_multiple_backups_run_in_requested_order(backupsubcommand):
+    called = []
+    alpha = MagicMock()
+    alpha.name = "alpha"
+    alpha.backend.do_backup.side_effect = lambda *_args: called.append("alpha")
+    bravo = MagicMock()
+    bravo.name = "bravo"
+    bravo.backend.do_backup.side_effect = lambda *_args: called.append("bravo")
+
+    assert backupsubcommand.main([alpha, bravo], _parse_args(["bravo,alpha,bravo"])) == 0
+    assert called == ["bravo", "alpha"]
+
+
+def test_multiple_backup_names_are_validated_before_starting(backupsubcommand, caplog):
+    caplog.set_level(logging.ERROR)
+    backup = MagicMock()
+    backup.name = "alpha"
+
+    assert backupsubcommand.main([backup], _parse_args(["alpha,missing"])) == 1
+    backup.backend.do_backup.assert_not_called()
+    assert "backup not found: missing" in caplog.text
+
+
+def test_multiple_backups_continue_after_failure(backupsubcommand):
+    failed = MagicMock()
+    failed.name = "failed"
+    failed.backend.do_backup.side_effect = RuntimeError("boom")
+    successful = MagicMock()
+    successful.name = "successful"
+
+    assert backupsubcommand.main([failed, successful], _parse_args(["failed,successful"])) == 1
+    failed.backend.do_backup.assert_called_once()
+    successful.backend.do_backup.assert_called_once()
 
 
 def test_successful_backup(backupsubcommand, caplog):
