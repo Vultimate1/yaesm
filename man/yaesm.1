@@ -48,8 +48,7 @@ sequentially in the requested order.
 If one fails, the remaining backups still run and the command returns a
 failure status.
 .PP
-Immediate backups use each configured backup\[aq]s source, destination,
-and backend.
+Immediate backups use each selected backup\[aq]s configured backend.
 Their retention is managed separately from scheduled timeframes.
 .TP
 \f[B]--keep\f[R] \f[I]COUNT\f[R]
@@ -168,14 +167,21 @@ $ yaesm find home-backup --timeframe hourly --timeframe daily
 .fi
 .SH CONFIGURATION
 .PP
+The configuration file is the heart of yaesm.
+It defines the backups and drives how they are created, scheduled,
+checked, found, and retained.
 Yaesm reads its YAML configuration from \f[V]/etc/yaesm/config.yaml\f[R]
 by default.
 Use \f[B]--config\f[R] to select another file.
 Configuration files use YAML 1.1.
 .PP
-The top level of the file must be a nonempty mapping.
-Each key is a backup name and its value is a mapping of settings for
-that backup.
+The top level of the file must be a nonempty mapping defining one or
+more backups.
+Each entry consists of a backup name, a configured backend, and a list
+of timeframes.
+Backend-specific settings determine how and where its backups are
+stored.
+.PP
 Yaesm provides no global backup settings or inheritance; each backup is
 configured and validated independently.
 Unknown settings are rejected.
@@ -185,10 +191,8 @@ subcommand.
 Backup names must begin with an ASCII letter.
 The remaining characters may be ASCII letters, digits, hyphens,
 underscores, colons, or \f[V]\[at]\f[R] signs.
-Whitespace, slashes, and commas are not allowed.
-Commas are reserved for selecting multiple backups on the command line.
 .PP
-Each backup accepts the following common settings:
+Apart from its name, every backup accepts two common settings:
 .TP
 \f[B]backend\f[R]
 Required.
@@ -303,16 +307,31 @@ Required list of one or more quoted \f[V]HH:MM\f[R] times.
 Required list of one or more integer days from 1 through 365.
 .SH BACKENDS
 .PP
-A backend determines how a backup is created, stored, checked, and
+A backend determines how backups are created, located, checked, and
 removed.
-Each backend may add its own configuration settings and system
+Each backend accepts its own settings and has its own system
 requirements.
-See CONFIGURATION for the configuration file and settings shared by all
-backends.
+See CONFIGURATION for backup names and timeframes.
+.SS SSH settings
+.PP
+Backends that connect to remote systems over SSH may share the following
+settings.
+.TP
+\f[B]ssh_key\f[R]
+Required when a backend uses an SSH target.
+This must be an absolute path to an existing local private-key file used
+for SSH authentication.
+.TP
+\f[B]ssh_config\f[R]
+Optional.
+An absolute path to an existing local OpenSSH configuration file.
+When set, the file is passed to OpenSSH with \f[B]-F\f[R].
 .SS Path-based backends
 .PP
-The \f[B]btrfs\f[R] and \f[B]rsync\f[R] backends share settings for
-local and remote directory paths:
+The \f[B]btrfs\f[R] and \f[B]rsync\f[R] backends operate on local or
+remote directory paths.
+They share the following path settings and use the SSH settings above
+when a path is remote:
 .TP
 \f[B]src_dir\f[R]
 Required.
@@ -325,24 +344,14 @@ Required.
 The directory in which backups are stored.
 This may be an absolute path to an existing local directory or an SSH
 target specification.
-Yaesm creates backup artifacts inside this directory.
-.TP
-\f[B]ssh_key\f[R]
-Required when \f[B]src_dir\f[R] or \f[B]dst_dir\f[R] is remote.
-This must be an absolute path to an existing local private-key file used
-for SSH authentication.
-.TP
-\f[B]ssh_config\f[R]
-Optional.
-An absolute path to an existing local OpenSSH configuration file.
-When set, the file is passed to OpenSSH with \f[B]-F\f[R].
+Yaesm creates backups inside this directory.
 .PP
 Local paths must begin with \f[V]/\f[R] and must already exist when the
 configuration is read.
 \f[V]\[ti]\f[R] and environment variables are not expanded.
 .SS Remote sources and destinations
 .PP
-An SSH target has this form:
+For path-based backends, an SSH target has this form:
 .IP
 .nf
 \f[C]
@@ -371,10 +380,31 @@ in the OpenSSH configuration.
 Authentication must work without interactive input, and the remote host
 key must already be trusted.
 .PP
-Configuration parsing validates the SSH target syntax and the local key
-and configuration files.
+Yaesm rejects invalid SSH target syntax and invalid local key or
+configuration files.
 Run \f[B]yaesm check\f[R] to test the connection, remote directory, and
 backend requirements.
+.SS btrfs
+.PP
+The \f[B]btrfs\f[R] backend accepts the shared path settings above.
+The source and destination must be on btrfs filesystems, and the
+\f[V]btrfs\f[R] command must be available wherever yaesm operates on
+them.
+.TP
+\f[B]btrfs_bootstrap_refresh\f[R]
+Optional positive integer specifying the maximum age, in days, of the
+bootstrap snapshot used for incremental transfers.
+A stale bootstrap is recreated without removing existing backups.
+.SS rsync
+.PP
+The \f[B]rsync\f[R] backend accepts the shared path settings above.
+The \f[V]rsync\f[R] command must be available wherever yaesm operates on
+the source or destination.
+.TP
+\f[B]rsync_extra_opts\f[R]
+Optional rsync options, given as a string or a list of strings.
+Each value is split on whitespace and passed to rsync in addition to
+yaesm\[aq]s default options.
 .SS Examples
 .PP
 A local rsync backup using every configurable timeframe:
@@ -409,12 +439,12 @@ home-backup:
 \f[R]
 .fi
 .PP
-An rsync backup sent to a remote destination:
+A btrfs backup sent to a remote destination:
 .IP
 .nf
 \f[C]
 offsite-home-backup:
-  backend: rsync
+  backend: btrfs
   src_dir: /home
   dst_dir: ssh://p2222:backup\[at]backup.example:/srv/backups
   ssh_key: /root/.ssh/yaesm
