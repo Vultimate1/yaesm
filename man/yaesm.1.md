@@ -476,3 +476,30 @@ offsite-home-backup:
   daily_keep: 7
   daily_times: ["02:00"]
 ```
+
+# EXIT STATUS
+
+**0**
+
+The command completed successfully. This also applies when **find** has no
+matches and when help or version information is requested.
+
+**1**
+
+The requested operation failed, a check failed, the scheduler could not run,
+or yaesm encountered an unexpected error.
+
+**2**
+
+The command line was invalid, or **check** or **find** received an invalid
+backup selection or query.
+
+**78**
+
+Yaesm detected a configuration error before running the subcommand.
+
+# LICENSE
+
+Yaesm is free software released under the GNU General Public License, version 3
+or later. See the `LICENSE` file distributed with the source code for the full
+license text.
