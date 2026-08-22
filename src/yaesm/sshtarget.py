@@ -199,19 +199,17 @@ class SSHTarget:
             == 0
         )
 
-    def mtime(self, f: Path | None = None) -> float:
-        """Return the mtime of `f` on the remote SSH server as epoch seconds.
-        If `f` is None then default to `self.path`.
-        """
-        if f is None:
-            f = self.path
+    def is_older_than(self, days: int, path: Path | None = None) -> bool:
+        """Return whether a remote path is older than `days` days."""
+        if path is None:
+            path = self.path
         p = subprocess.run(
-            self.openssh_cmd(["stat", "-c", "%Y", "--", f]),
+            self.openssh_cmd(["find", path, "-prune", "-mtime", f"+{days - 1}", "-print"]),
             check=True,
             capture_output=True,
             encoding="utf-8",
         )
-        return float(p.stdout.strip())
+        return bool(p.stdout)
 
     def touch(self, f: Path | None = None, check: bool = True) -> bool:
         """Touch the file `f` on the remote SSH server. If `f` is None then default

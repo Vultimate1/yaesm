@@ -141,25 +141,19 @@ def path_artifacts_collect(
         p = subprocess.run(
             sshtarget.openssh_cmd(
                 [
-                    "find",
+                    "sh",
+                    "-c",
+                    'cd "$1" && find . ! -name . -prune -type d -print',
+                    "sh",
                     sshtarget.path,
-                    "-mindepth",
-                    "1",
-                    "-maxdepth",
-                    "1",
-                    "-type",
-                    "d",
-                    "-print0",
                 ]
             ),
             check=True,
             capture_output=True,
             encoding="utf-8",
         )
-        for bkp in p.stdout.split("\0"):
-            if not bkp:
-                continue
-            bkp = Path(bkp)
+        for basename in p.stdout.splitlines():
+            bkp = sshtarget.path.joinpath(Path(basename).name)
             if any(pattern.match(bkp.name) for pattern in backup_basename_res):
                 artifacts.append(_backup_artifact_from_path(backup, bkp))
     else:

@@ -531,13 +531,17 @@ def test_check_local_to_remote_remote_tool_missing(
     original_run = subprocess.run
 
     def fake_run(cmd, **kwargs):
-        if isinstance(cmd, list) and "type btrfs" in " ".join(str(c) for c in cmd):
+        command = " ".join(str(c) for c in cmd) if isinstance(cmd, list) else ""
+        if "command -v btrfs" in command:
             return subprocess.CompletedProcess(cmd, returncode=1)
+        if "btrfs filesystem show" in command:
+            return subprocess.CompletedProcess(cmd, returncode=127)
         return original_run(cmd, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     errors = _errors(btrfs_backend.check(backup))
     assert any("not found on remote" in e and "btrfs" in e for e in errors)
+    assert not any("not on a btrfs filesystem" in e for e in errors)
 
 
 def test_check_local_to_remote_remote_not_btrfs(
@@ -614,7 +618,7 @@ def test_check_remote_to_local_remote_tool_missing(
     original_run = subprocess.run
 
     def fake_run(cmd, **kwargs):
-        if isinstance(cmd, list) and "type btrfs" in " ".join(str(c) for c in cmd):
+        if isinstance(cmd, list) and "command -v btrfs" in " ".join(str(c) for c in cmd):
             return subprocess.CompletedProcess(cmd, returncode=1)
         return original_run(cmd, **kwargs)
 

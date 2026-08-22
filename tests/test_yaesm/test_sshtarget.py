@@ -1,6 +1,8 @@
 """tests/test_yaesm/test_sshtarget.py."""
 
+import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -200,30 +202,19 @@ def test_touch(sshtarget, path_generator):
     assert path.is_file()
 
 
-def test_mtime(sshtarget, path_generator):
-    # file
+def test_is_older_than(sshtarget, path_generator):
     path = path_generator("foo", cleanup=True)
     path.touch()
     target = sshtarget.with_path(path)
-    remote_mtime = target.mtime()
-    local_mtime = path.stat().st_mtime
-    assert abs(remote_mtime - local_mtime) < 1.0
+    old_time = time.time() - 2 * 86400
+    os.utime(path, (old_time, old_time))
+    assert target.is_older_than(1)
+    assert not target.is_older_than(3)
 
-    # directory
-    d = path_generator("dir", cleanup=True, mkdir=True)
-    target_d = sshtarget.with_path(d)
-    remote_mtime_d = target_d.mtime()
-    local_mtime_d = d.stat().st_mtime
-    assert abs(remote_mtime_d - local_mtime_d) < 1.0
-
-    # explicit path argument
     path2 = path_generator("bar", cleanup=True)
     path2.touch()
-    remote_mtime2 = sshtarget.mtime(f=path2)
-    local_mtime2 = path2.stat().st_mtime
-    assert abs(remote_mtime2 - local_mtime2) < 1.0
+    assert not sshtarget.is_older_than(1, path=path2)
 
-    # nonexistent path raises
     bad_path = path_generator("nonexistent")
     with pytest.raises(subprocess.CalledProcessError):
-        sshtarget.mtime(f=bad_path)
+        sshtarget.is_older_than(1, path=bad_path)

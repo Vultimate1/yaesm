@@ -242,7 +242,7 @@ def check_tool_local(tool: str) -> list[str]:
 
 def check_tool_remote(sshtarget: SSHTarget, tool: str) -> list[str]:
     p = subprocess.run(
-        sshtarget.openssh_cmd(["type", tool]),
+        sshtarget.openssh_cmd(["command", "-v", tool]),
         check=False,
         capture_output=True,
     )

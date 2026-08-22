@@ -267,7 +267,7 @@ def test_check_local_to_remote_remote_tool_missing(
     original_run = subprocess.run
 
     def fake_run(cmd, **kwargs):
-        if isinstance(cmd, list) and "type rsync" in " ".join(str(c) for c in cmd):
+        if isinstance(cmd, list) and "command -v rsync" in " ".join(str(c) for c in cmd):
             return subprocess.CompletedProcess(cmd, returncode=1)
         return original_run(cmd, **kwargs)
 
@@ -327,7 +327,7 @@ def test_check_remote_to_local_remote_tool_missing(
     original_run = subprocess.run
 
     def fake_run(cmd, **kwargs):
-        if isinstance(cmd, list) and "type rsync" in " ".join(str(c) for c in cmd):
+        if isinstance(cmd, list) and "command -v rsync" in " ".join(str(c) for c in cmd):
             return subprocess.CompletedProcess(cmd, returncode=1)
         return original_run(cmd, **kwargs)
 

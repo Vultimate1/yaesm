@@ -349,13 +349,13 @@ def _btrfs_maybe_refresh_bootstrap(backup: bckp.Backup, refresh_days: int) -> No
         src_bootstrap_target = src_dir.with_path(src_bootstrap_path)
         if not src_bootstrap_target.is_dir():
             return
-        mtime = src_bootstrap_target.mtime()
+        stale = src_bootstrap_target.is_older_than(refresh_days)
     else:
         src_bootstrap_path = src_dir.joinpath(basename)
         if not src_bootstrap_path.is_dir():
             return
-        mtime = src_bootstrap_path.stat().st_mtime
-    if time.time() - mtime <= refresh_days * 86400:
+        stale = time.time() - src_bootstrap_path.stat().st_mtime > refresh_days * 86400
+    if not stale:
         return
     logger.info(f"refreshing btrfs bootstrap snapshot for backup '{backup.name}'")
     if isinstance(src_dir, SSHTarget):
@@ -461,24 +461,24 @@ def check_btrfs_filesystem_local(path: Path, label: str) -> list[str]:
     if not path.is_dir():
         return []
     p = subprocess.run(
-        ["stat", "-f", "-c", "%T", str(path)],
+        ["btrfs", "filesystem", "show", path],
         check=False,
         capture_output=True,
-        encoding="utf-8",
     )
-    if p.returncode != 0 or p.stdout.strip() != "btrfs":
+    if p.returncode != 0:
         return [f"{label} is not on a btrfs filesystem: {path}"]
     return []
 
 
 def check_btrfs_filesystem_remote(sshtarget: SSHTarget, label: str) -> list[str]:
     p = subprocess.run(
-        sshtarget.openssh_cmd(["stat", "-f", "-c", "%T", "--", sshtarget.path]),
+        sshtarget.openssh_cmd(["btrfs", "filesystem", "show", sshtarget.path]),
         check=False,
         capture_output=True,
-        encoding="utf-8",
     )
-    if p.returncode != 0 or p.stdout.strip() != "btrfs":
+    if p.returncode == 127:
+        return []
+    if p.returncode != 0:
         return [
             f"{label} is not on a btrfs filesystem on remote {sshtarget.host}: {sshtarget.path}"
         ]
