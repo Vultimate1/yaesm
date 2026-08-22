@@ -534,7 +534,7 @@ def test_check_local_to_remote_remote_tool_missing(
         command = " ".join(str(c) for c in cmd) if isinstance(cmd, list) else ""
         if "command -v btrfs" in command:
             return subprocess.CompletedProcess(cmd, returncode=1)
-        if "btrfs filesystem show" in command:
+        if cmd[0] == "ssh" and "btrfs filesystem show" in command:
             return subprocess.CompletedProcess(cmd, returncode=127)
         return original_run(cmd, **kwargs)
 
