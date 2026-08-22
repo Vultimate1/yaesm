@@ -21,6 +21,10 @@ def rsync_backend():
     return rsync.RsyncBackend()
 
 
+def _errors(results):
+    return [error for result in results for error in result.errors]
+
+
 def test_config_schema():
     schema = rsync.RsyncBackend.config_schema()
     d = {"rsync_extra_opts": "--exclude /mnt/* --size-only"}
@@ -149,7 +153,7 @@ def test_check_local_to_local_pass(rsync_backend, path_generator, random_timefra
     src_dir = path_generator("rsync-src", mkdir=True)
     dst_dir = path_generator("rsync-dst", mkdir=True)
     backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
-    errors = rsync_backend.check(backup)
+    errors = _errors(rsync_backend.check(backup))
     assert errors == []
 
 
@@ -159,7 +163,7 @@ def test_check_local_to_local_src_dir_missing(
     src_dir = path_generator("nonexistent-src")
     dst_dir = path_generator("rsync-dst", mkdir=True)
     backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
-    errors = rsync_backend.check(backup)
+    errors = _errors(rsync_backend.check(backup))
     assert any("src_dir" in e and "does not exist" in e for e in errors)
 
 
@@ -169,7 +173,7 @@ def test_check_local_to_local_dst_dir_missing(
     src_dir = path_generator("rsync-src", mkdir=True)
     dst_dir = path_generator("nonexistent-dst")
     backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
-    errors = rsync_backend.check(backup)
+    errors = _errors(rsync_backend.check(backup))
     assert any("dst_dir" in e and "does not exist" in e for e in errors)
 
 
@@ -180,7 +184,7 @@ def test_check_local_to_local_tool_missing(
     dst_dir = path_generator("rsync-dst", mkdir=True)
     backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
     monkeypatch.setattr(shutil, "which", lambda _tool: None)
-    errors = rsync_backend.check(backup)
+    errors = _errors(rsync_backend.check(backup))
     assert any("not found locally" in e and "rsync" in e for e in errors)
 
 
@@ -195,7 +199,7 @@ def test_check_local_to_remote_pass(
     sshtarget = sshtarget_generator()
     dst_dir = sshtarget.with_path(dst_dir_path)
     backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
-    errors = rsync_backend.check(backup)
+    errors = _errors(rsync_backend.check(backup))
     assert errors == []
 
 
@@ -209,7 +213,7 @@ def test_check_local_to_remote_ssh_fail(
     dst_dir.key = path_generator("bad-key", touch=True)
     dst_dir.user = "nonexistent-user"
     backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
-    errors = rsync_backend.check(backup)
+    errors = _errors(rsync_backend.check(backup))
     assert any("SSH" in e or "ssh" in e or "cannot" in e.lower() for e in errors)
 
 
@@ -220,7 +224,7 @@ def test_check_local_to_remote_remote_dir_missing(
     sshtarget = sshtarget_generator()
     dst_dir = sshtarget.with_path(path_generator("nonexistent-remote-dst"))
     backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
-    errors = rsync_backend.check(backup)
+    errors = _errors(rsync_backend.check(backup))
     assert any("dst_dir" in e and "does not exist" in e for e in errors)
 
 
@@ -240,7 +244,7 @@ def test_check_local_to_remote_remote_tool_missing(
         return original_run(cmd, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    errors = rsync_backend.check(backup)
+    errors = _errors(rsync_backend.check(backup))
     assert any("not found on remote" in e and "rsync" in e for e in errors)
 
 
@@ -255,7 +259,7 @@ def test_check_remote_to_local_pass(
     sshtarget = sshtarget_generator()
     src_dir = sshtarget.with_path(src_dir_path)
     backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
-    errors = rsync_backend.check(backup)
+    errors = _errors(rsync_backend.check(backup))
     assert errors == []
 
 
@@ -269,7 +273,7 @@ def test_check_remote_to_local_ssh_fail(
     src_dir.key = path_generator("bad-key", touch=True)
     src_dir.user = "nonexistent-user"
     backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
-    errors = rsync_backend.check(backup)
+    errors = _errors(rsync_backend.check(backup))
     assert any("SSH" in e or "ssh" in e or "cannot" in e.lower() for e in errors)
 
 
@@ -280,7 +284,7 @@ def test_check_remote_to_local_remote_dir_missing(
     src_dir = sshtarget.with_path(path_generator("nonexistent-remote-src"))
     dst_dir = path_generator("rsync-dst", mkdir=True)
     backup = Backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
-    errors = rsync_backend.check(backup)
+    errors = _errors(rsync_backend.check(backup))
     assert any("src_dir" in e and "does not exist" in e for e in errors)
 
 
@@ -300,7 +304,7 @@ def test_check_remote_to_local_remote_tool_missing(
         return original_run(cmd, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    errors = rsync_backend.check(backup)
+    errors = _errors(rsync_backend.check(backup))
     assert any("not found on remote" in e and "rsync" in e for e in errors)
 
 
@@ -320,7 +324,7 @@ def test_check_local_to_remote_remote_dst_not_writable(
         return original_run(cmd, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    errors = rsync_backend.check(backup)
+    errors = _errors(rsync_backend.check(backup))
     assert any("dst_dir" in e and "not writable" in e for e in errors)
 
 
@@ -340,5 +344,5 @@ def test_check_remote_to_local_remote_src_not_readable(
         return original_run(cmd, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    errors = rsync_backend.check(backup)
+    errors = _errors(rsync_backend.check(backup))
     assert any("src_dir" in e and "not readable" in e for e in errors)

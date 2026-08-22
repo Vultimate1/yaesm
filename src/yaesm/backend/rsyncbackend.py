@@ -7,7 +7,7 @@ from shutil import rmtree
 import voluptuous as vlp
 
 import yaesm.backup as bckp
-from yaesm.backend.backendbase import BackendBase
+from yaesm.backend.backendbase import BackendBase, CheckResult
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
 
@@ -17,7 +17,7 @@ class RsyncBackend(BackendBase):
     backup execution backends in general.
     """
 
-    def check_extra(self, backup: bckp.Backup) -> list[str]:
+    def check_extra(self, backup: bckp.Backup) -> list[CheckResult]:
         return []
 
     @staticmethod

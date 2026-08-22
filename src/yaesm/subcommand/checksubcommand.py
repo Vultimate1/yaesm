@@ -20,12 +20,19 @@ class CheckSubcommand(SubcommandBase):
                 return 2
         checks_passed = True
         for backup in backups:
-            errors = backup.backend.check(backup)
-            if errors:
-                checks_passed = False
+            results = backup.backend.check(backup)
+            failed = [result for result in results if not result.passed]
+            if not parsed_args.quiet:
                 print(f"backup: {backup.name}")
-                for err in errors:
-                    print(f"    {err}")
+                for result in results:
+                    print(f"    {'PASS' if result.passed else 'FAIL'}  {result.description}")
+            if failed:
+                checks_passed = False
+                if parsed_args.quiet:
+                    print(f"backup: {backup.name}")
+                for result in failed:
+                    for error in result.errors:
+                        print(f"    {error}")
         return 0 if checks_passed else 1
 
     @classmethod
@@ -35,4 +42,10 @@ class CheckSubcommand(SubcommandBase):
             nargs="?",
             default=None,
             help="name of a specific backup to check (default: check all)",
+        )
+        parser.add_argument(
+            "-q",
+            "--quiet",
+            action="store_true",
+            help="only show failed checks",
         )

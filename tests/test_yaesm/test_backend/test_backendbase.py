@@ -4,3 +4,10 @@ Unless we can come up with a clean and simple way to generically test the backen
 every backend test script should have their own tests for the abstract methods in the
 BackendBase class.
 """
+
+from yaesm.backend.backendbase import CheckResult
+
+
+def test_check_result_passed():
+    assert CheckResult("check").passed
+    assert not CheckResult("check", ("error",)).passed

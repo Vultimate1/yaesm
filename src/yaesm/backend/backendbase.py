@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import abc
+import dataclasses
 import importlib
 import logging
 import shutil
@@ -19,6 +20,18 @@ from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
 
 logger = logging.getLogger(__name__)
+
+
+@dataclasses.dataclass(frozen=True)
+class CheckResult:
+    """The result of one backup precondition check."""
+
+    description: str
+    errors: tuple[str, ...] = ()
+
+    @property
+    def passed(self) -> bool:
+        return not self.errors
 
 
 class BackendBase(abc.ABC):
@@ -101,42 +114,90 @@ class BackendBase(abc.ABC):
         return config.Schema.schema_empty()
 
     @ty.final
-    def check(self, backup: bckp.Backup) -> list[str]:
+    def check(self, backup: bckp.Backup) -> list[CheckResult]:
         """Check that preconditions for `backup` are met.
 
-        Returns a list of error strings. Empty list means all checks passed.
+        Returns the result of each check that was performed.
         """
-        errors: list[str] = []
+        results: list[CheckResult] = []
         src_dir = backup.src_dir
         dst_dir = backup.dst_dir
         sshtarget = src_dir if isinstance(src_dir, SSHTarget) else None
         if sshtarget is None and isinstance(dst_dir, SSHTarget):
             sshtarget = dst_dir
         if isinstance(src_dir, SSHTarget):
-            errors += check_ssh_connectivity(src_dir)
-            if not errors:
-                errors += check_dir_exists_remote(src_dir, "src_dir")
-                errors += check_dir_readable_remote(src_dir, "src_dir")
+            results.append(
+                CheckResult(
+                    f"SSH connection to {src_dir.host}", tuple(check_ssh_connectivity(src_dir))
+                )
+            )
+            if results[-1].passed:
+                results.append(
+                    CheckResult(
+                        f"src_dir exists on remote {src_dir.host}: {src_dir.path}",
+                        tuple(check_dir_exists_remote(src_dir, "src_dir")),
+                    )
+                )
+                results.append(
+                    CheckResult(
+                        f"src_dir is readable on remote {src_dir.host}: {src_dir.path}",
+                        tuple(check_dir_readable_remote(src_dir, "src_dir")),
+                    )
+                )
         else:
-            errors += check_dir_exists_local(src_dir, "src_dir")
+            results.append(
+                CheckResult(
+                    f"src_dir exists locally: {src_dir}",
+                    tuple(check_dir_exists_local(src_dir, "src_dir")),
+                )
+            )
         if isinstance(dst_dir, SSHTarget):
-            errors += check_ssh_connectivity(dst_dir)
-            if not errors:
-                errors += check_dir_exists_remote(dst_dir, "dst_dir")
-                errors += check_dir_writable_remote(dst_dir, "dst_dir")
+            results.append(
+                CheckResult(
+                    f"SSH connection to {dst_dir.host}", tuple(check_ssh_connectivity(dst_dir))
+                )
+            )
+            if all(result.passed for result in results):
+                results.append(
+                    CheckResult(
+                        f"dst_dir exists on remote {dst_dir.host}: {dst_dir.path}",
+                        tuple(check_dir_exists_remote(dst_dir, "dst_dir")),
+                    )
+                )
+                results.append(
+                    CheckResult(
+                        f"dst_dir is writable on remote {dst_dir.host}: {dst_dir.path}",
+                        tuple(check_dir_writable_remote(dst_dir, "dst_dir")),
+                    )
+                )
         else:
-            errors += check_dir_exists_local(dst_dir, "dst_dir")
-        errors += check_tool_local(self.name())
-        if sshtarget is not None and not any("SSH" in e or "cannot" in e for e in errors):
-            errors += check_tool_remote(sshtarget, self.name())
-        errors += self.check_extra(backup)
-        return errors
+            results.append(
+                CheckResult(
+                    f"dst_dir exists locally: {dst_dir}",
+                    tuple(check_dir_exists_local(dst_dir, "dst_dir")),
+                )
+            )
+        results.append(
+            CheckResult(f"{self.name()} is installed locally", tuple(check_tool_local(self.name())))
+        )
+        errors = [error for result in results for error in result.errors]
+        if sshtarget is not None and not any(
+            "SSH" in error or "cannot" in error for error in errors
+        ):
+            results.append(
+                CheckResult(
+                    f"{self.name()} is installed on remote {sshtarget.host}",
+                    tuple(check_tool_remote(sshtarget, self.name())),
+                )
+            )
+        results += self.check_extra(backup)
+        return results
 
     @abc.abstractmethod
-    def check_extra(self, backup: bckp.Backup) -> list[str]:
+    def check_extra(self, backup: bckp.Backup) -> list[CheckResult]:
         """Backend-specific checks beyond the common ones.
 
-        Returns a list of error strings. Empty list means all checks passed.
+        Returns the result of each check that was performed.
         """
 
     @abc.abstractmethod

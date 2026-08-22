@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from yaesm.backend.backendbase import CheckResult
 from yaesm.backup import Backup
 from yaesm.subcommand.checksubcommand import CheckSubcommand
 
@@ -29,29 +30,40 @@ def test_add_argparser_arguments():
     CheckSubcommand.add_argparser_arguments(parser)
     args = parser.parse_args([])
     assert args.backup_name is None
+    assert not args.quiet
     args = parser.parse_args(["mybackup"])
     assert args.backup_name == "mybackup"
+    args = parser.parse_args(["--quiet"])
+    assert args.quiet
 
 
 def test_check_all_backups_pass(checksubcommand, capsys):
-    backups = [_make_backup("a", []), _make_backup("b", [])]
+    backups = [
+        _make_backup("a", [CheckResult("preconditions")]),
+        _make_backup("b", [CheckResult("preconditions")]),
+    ]
     parser = argparse.ArgumentParser()
     CheckSubcommand.add_argparser_arguments(parser)
     args = parser.parse_args([])
     rc = checksubcommand.main(backups, args)
     assert rc == 0
     captured = capsys.readouterr()
-    assert captured.out == ""
+    assert captured.out == (
+        "backup: a\n    PASS  preconditions\nbackup: b\n    PASS  preconditions\n"
+    )
     assert captured.err == ""
     for b in backups:
         b.backend.check.assert_called_once_with(b)
 
 
 def test_check_some_fail(checksubcommand, capsys):
-    backups = [_make_backup("good-backup", []), _make_backup("bad-backup", ["err1", "err2"])]
+    backups = [
+        _make_backup("good-backup", [CheckResult("preconditions")]),
+        _make_backup("bad-backup", [CheckResult("preconditions", ("err1", "err2"))]),
+    ]
     parser = argparse.ArgumentParser()
     CheckSubcommand.add_argparser_arguments(parser)
-    args = parser.parse_args([])
+    args = parser.parse_args(["--quiet"])
     rc = checksubcommand.main(backups, args)
     assert rc == 1
     out = capsys.readouterr().out
@@ -61,9 +73,26 @@ def test_check_some_fail(checksubcommand, capsys):
     assert "good-backup" not in out
 
 
+def test_check_results_by_default(checksubcommand, capsys):
+    backup = _make_backup(
+        "mybackup",
+        [CheckResult("source exists"), CheckResult("destination exists", ("destination failed",))],
+    )
+    parser = argparse.ArgumentParser()
+    CheckSubcommand.add_argparser_arguments(parser)
+    rc = checksubcommand.main([backup], parser.parse_args([]))
+    assert rc == 1
+    assert capsys.readouterr().out == (
+        "backup: mybackup\n"
+        "    PASS  source exists\n"
+        "    FAIL  destination exists\n"
+        "    destination failed\n"
+    )
+
+
 def test_check_multiple_errors_one_backup(checksubcommand, capsys):
     errors = ["src_dir does not exist", "dst_dir does not exist", "required tool not found"]
-    backups = [_make_backup("mybackup", errors)]
+    backups = [_make_backup("mybackup", [CheckResult("preconditions", tuple(errors))])]
     parser = argparse.ArgumentParser()
     CheckSubcommand.add_argparser_arguments(parser)
     args = parser.parse_args([])
@@ -81,7 +110,7 @@ def test_check_specific_backup(checksubcommand):
     backups = [backup_a, backup_b]
     parser = argparse.ArgumentParser()
     CheckSubcommand.add_argparser_arguments(parser)
-    args = parser.parse_args(["a"])
+    args = parser.parse_args(["a", "--quiet"])
     rc = checksubcommand.main(backups, args)
     assert rc == 0
     backup_a.backend.check.assert_called_once_with(backup_a)

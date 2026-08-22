@@ -10,7 +10,7 @@ from pathlib import Path
 import voluptuous as vlp
 
 import yaesm.backup as bckp
-from yaesm.backend.backendbase import BackendBase
+from yaesm.backend.backendbase import BackendBase, CheckResult
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
 
@@ -55,19 +55,39 @@ class BtrfsBackend(BackendBase):
             extra=vlp.ALLOW_EXTRA,
         )
 
-    def check_extra(self, backup: bckp.Backup) -> list[str]:
-        errors: list[str] = []
+    def check_extra(self, backup: bckp.Backup) -> list[CheckResult]:
+        results: list[CheckResult] = []
         src_dir = backup.src_dir
         dst_dir = backup.dst_dir
         if isinstance(src_dir, SSHTarget):
-            errors += check_btrfs_filesystem_remote(src_dir, "src_dir")
-        else:
-            errors += check_btrfs_filesystem_local(src_dir, "src_dir")
+            results.append(
+                CheckResult(
+                    f"src_dir is on a btrfs filesystem on remote {src_dir.host}: {src_dir.path}",
+                    tuple(check_btrfs_filesystem_remote(src_dir, "src_dir")),
+                )
+            )
+        elif src_dir.is_dir():
+            results.append(
+                CheckResult(
+                    f"src_dir is on a btrfs filesystem: {src_dir}",
+                    tuple(check_btrfs_filesystem_local(src_dir, "src_dir")),
+                )
+            )
         if isinstance(dst_dir, SSHTarget):
-            errors += check_btrfs_filesystem_remote(dst_dir, "dst_dir")
-        else:
-            errors += check_btrfs_filesystem_local(dst_dir, "dst_dir")
-        return errors
+            results.append(
+                CheckResult(
+                    f"dst_dir is on a btrfs filesystem on remote {dst_dir.host}: {dst_dir.path}",
+                    tuple(check_btrfs_filesystem_remote(dst_dir, "dst_dir")),
+                )
+            )
+        elif dst_dir.is_dir():
+            results.append(
+                CheckResult(
+                    f"dst_dir is on a btrfs filesystem: {dst_dir}",
+                    tuple(check_btrfs_filesystem_local(dst_dir, "dst_dir")),
+                )
+            )
+        return results
 
     def _exec_backup_local_to_local(
         self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
