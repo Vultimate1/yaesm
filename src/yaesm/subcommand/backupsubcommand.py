@@ -3,6 +3,7 @@ import logging
 import sys
 
 from yaesm.backup import Backup
+from yaesm.cli import parse_comma_separated
 from yaesm.subcommand.subcommandbase import SubcommandBase
 from yaesm.timeframe import ImmediateTimeframe
 
@@ -47,7 +48,7 @@ class BackupSubcommand(SubcommandBase):
         parser.add_argument(
             "backup_names",
             metavar="BACKUP[,BACKUP...]",
-            type=lambda value: list(dict.fromkeys(filter(None, map(str.strip, value.split(","))))),
+            type=parse_comma_separated,
             help="names of backups from the config",
         )
         parser.add_argument(

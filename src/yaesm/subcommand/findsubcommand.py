@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from datetime import datetime, time, timedelta
 
 from yaesm.backup import Backup, BackupArtifact
+from yaesm.cli import parse_comma_separated
 from yaesm.subcommand.subcommandbase import SubcommandBase
 from yaesm.timeframe import ImmediateTimeframe, tframe_types
 
@@ -67,7 +68,7 @@ class FindSubcommand(SubcommandBase):
         parser.add_argument(
             "backup_names",
             metavar="BACKUP[,BACKUP...]",
-            type=lambda value: list(dict.fromkeys(filter(None, map(str.strip, value.split(","))))),
+            type=parse_comma_separated,
         )
         parser.add_argument("query", nargs="*", metavar="QUERY")
         parser.add_argument(
@@ -88,7 +89,7 @@ class FindSubcommand(SubcommandBase):
             action="extend",
             type=lambda value: [
                 valid_timeframes[valid_timeframes.index(timeframe)]
-                for timeframe in dict.fromkeys(filter(None, map(str.strip, value.split(","))))
+                for timeframe in parse_comma_separated(value)
             ],
             default=[],
             metavar="TIMEFRAME[,TIMEFRAME...]",

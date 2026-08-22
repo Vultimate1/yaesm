@@ -13,6 +13,9 @@ class SubcommandBase(abc.ABC):
     `add_argparser_arguments()` and `main()` abstract methods.
     """
 
+    hidden: ty.ClassVar[bool] = False
+    config_required: ty.ClassVar[bool] = True
+
     @abc.abstractmethod
     def main(self, backups: list[Backup], parsed_args: argparse.Namespace) -> int:
         """The function that actually executes the subcommand.

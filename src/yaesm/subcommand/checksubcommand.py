@@ -4,6 +4,7 @@ import argparse
 import logging
 
 from yaesm.backup import Backup
+from yaesm.cli import parse_comma_separated
 from yaesm.subcommand.subcommandbase import SubcommandBase
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,7 @@ class CheckSubcommand(SubcommandBase):
             nargs="?",
             default=None,
             metavar="BACKUP[,BACKUP...]",
-            type=lambda value: list(dict.fromkeys(filter(None, map(str.strip, value.split(","))))),
+            type=parse_comma_separated,
             help="names of specific backups to check (default: check all)",
         )
         parser.add_argument(

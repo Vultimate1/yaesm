@@ -1,0 +1,16 @@
+#compdef yaesm
+
+local current_word=${words[CURRENT]}
+local candidate
+local -a completed_words candidates
+local index
+
+for ((index = 2; index < CURRENT; index++)); do
+    completed_words+=("${words[index]}")
+done
+
+candidates=("${(@f)$(command yaesm __complete "--current=$current_word" -- "${completed_words[@]}")}")
+candidates=("${(@)candidates:#}")
+if (( ${#candidates} )); then
+    compadd -- "${candidates[@]}"
+fi

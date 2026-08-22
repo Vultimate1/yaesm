@@ -42,6 +42,12 @@ install -Dpm 0644 packaging/systemd/yaesm.service \
     %{buildroot}%{_unitdir}/yaesm.service
 install -Dpm 0644 man/yaesm.1 \
     %{buildroot}%{_mandir}/man1/yaesm.1
+install -Dpm 0644 completions/bash/yaesm \
+    %{buildroot}%{_datadir}/bash-completion/completions/yaesm
+install -Dpm 0644 completions/fish/yaesm.fish \
+    %{buildroot}%{_datadir}/fish/vendor_completions.d/yaesm.fish
+install -Dpm 0644 completions/zsh/_yaesm \
+    %{buildroot}%{_datadir}/zsh/site-functions/_yaesm
 install -dm 0755 %{buildroot}%{_sysconfdir}/yaesm
 
 
@@ -66,6 +72,9 @@ install -dm 0755 %{buildroot}%{_sysconfdir}/yaesm
 %{_bindir}/yaesm
 %{_unitdir}/yaesm.service
 %{_mandir}/man1/yaesm.1*
+%{_datadir}/bash-completion/completions/yaesm
+%{_datadir}/fish/vendor_completions.d/yaesm.fish
+%{_datadir}/zsh/site-functions/_yaesm
 %dir %{_sysconfdir}/yaesm
 
 

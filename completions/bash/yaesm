@@ -1,0 +1,20 @@
+_yaesm_completion()
+{
+    local current=${COMP_WORDS[COMP_CWORD]}
+    local candidate
+    local -a words
+    local index
+
+    for ((index = 1; index < COMP_CWORD; index++)); do
+        words+=("${COMP_WORDS[index]}")
+    done
+
+    COMPREPLY=()
+    while IFS= read -r candidate; do
+        if [[ -n $candidate ]]; then
+            COMPREPLY+=("$candidate")
+        fi
+    done < <(command yaesm __complete "--current=$current" -- "${words[@]}")
+}
+
+complete -F _yaesm_completion yaesm

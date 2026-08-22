@@ -1,1 +1,4 @@
 packaging/systemd/yaesm.service usr/lib/systemd/system
+completions/bash/yaesm usr/share/bash-completion/completions
+completions/fish/yaesm.fish usr/share/fish/vendor_completions.d
+completions/zsh/_yaesm usr/share/zsh/site-functions

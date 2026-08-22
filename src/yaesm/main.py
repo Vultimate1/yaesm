@@ -26,16 +26,26 @@ def main(argv: list[str] | None = None) -> int:
         cls.name(): cls for cls in SubcommandBase.__subclasses__()
     }
 
+    visible_subcommands = [
+        name for name, cls in subcommand_name_class_map.items() if not cls.hidden
+    ]
+
     parser = argparse.ArgumentParser(
         prog="yaesm",
         description="yaesm is a backup tool with support for multiple file systems",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    subparsers = parser.add_subparsers(title="subcommands", dest="subcommand", required=True)
+    subparsers = parser.add_subparsers(
+        title="subcommands",
+        dest="subcommand",
+        required=True,
+        metavar="{" + ",".join(visible_subcommands) + "}",
+    )
     for name, cls in subcommand_name_class_map.items():
-        subparser = subparsers.add_parser(
-            name, help=cls.description(), description=cls.description()
-        )
+        kwargs = {"description": cls.description()}
+        if not cls.hidden:
+            kwargs["help"] = cls.description()
+        subparser = subparsers.add_parser(name, **kwargs)
         cls.add_argparser_arguments(subparser)
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {importlib.metadata.version('yaesm')}"
@@ -75,18 +85,21 @@ def main(argv: list[str] | None = None) -> int:
         else "/dev/log",
     )
 
-    try:
-        backups = yaesm.config.parse_config(parsed_args.config)
-    except yaesm.config.ConfigErrors as exc:
-        for err in exc.errors:
-            backup, err_msg = err
-            logger.error("config error: %s: %s", backup, err_msg)
-        return os.EX_CONFIG
+    subcommand_class = subcommand_name_class_map[parsed_args.subcommand]
+    backups = []
+    if subcommand_class.config_required:
+        try:
+            backups = yaesm.config.parse_config(parsed_args.config)
+        except yaesm.config.ConfigErrors as exc:
+            for err in exc.errors:
+                backup, err_msg = err
+                logger.error("config error: %s: %s", backup, err_msg)
+            return os.EX_CONFIG
 
     Cleanup.initialize()
 
     try:
-        exit_status = subcommand_name_class_map[parsed_args.subcommand]().main(backups, parsed_args)
+        exit_status = subcommand_class().main(backups, parsed_args)
         return exit_status
     except Exception as exc:
         logger.exception("unexpected error: %s", exc)
