@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-08-22
+
 - Add Bash, Fish, and Zsh completion.
 - Add the `yaesm(1)` user manual.
 - Allow `backup` and `check` to accept comma-separated backup names.

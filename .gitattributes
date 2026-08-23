@@ -7,6 +7,8 @@ README.md      -export-ignore
 CHANGELOG.md   -export-ignore
 man            -export-ignore
 man/yaesm.1    -export-ignore
+completions    -export-ignore
+completions/** -export-ignore
 packaging                  -export-ignore
 packaging/systemd          -export-ignore
 packaging/systemd/**       -export-ignore
