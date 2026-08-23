@@ -85,11 +85,21 @@ def test_check_results_by_default(checksubcommand, capsys):
     rc = checksubcommand.main([backup], parser.parse_args([]))
     assert rc == 1
     assert capsys.readouterr().out == (
-        "backup: mybackup\n"
-        "    PASS  source exists\n"
-        "    FAIL  destination exists\n"
-        "    destination failed\n"
+        "backup: mybackup\n    PASS  source exists\n    FAIL  destination failed\n"
     )
+
+
+def test_failed_check_printed_once(checksubcommand, capsys):
+    error = "dst_dir is not on a btrfs filesystem: /backups"
+    backup = _make_backup(
+        "mybackup",
+        [CheckResult("dst_dir is on a btrfs filesystem: /backups", (error,))],
+    )
+    parser = argparse.ArgumentParser()
+    CheckSubcommand.add_argparser_arguments(parser)
+
+    assert checksubcommand.main([backup], parser.parse_args([])) == 1
+    assert capsys.readouterr().out == f"backup: mybackup\n    FAIL  {error}\n"
 
 
 def test_check_multiple_errors_one_backup(checksubcommand, capsys):

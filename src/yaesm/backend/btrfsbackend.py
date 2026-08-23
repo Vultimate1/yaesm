@@ -464,7 +464,7 @@ def check_btrfs_filesystem_local(path: Path, label: str) -> list[str]:
     if not path.is_dir():
         return []
     p = subprocess.run(
-        ["btrfs", "filesystem", "show", path],
+        ["btrfs", "filesystem", "usage", path],
         check=False,
         capture_output=True,
     )
@@ -475,7 +475,7 @@ def check_btrfs_filesystem_local(path: Path, label: str) -> list[str]:
 
 def check_btrfs_filesystem_remote(sshtarget: SSHTarget, label: str) -> list[str]:
     p = subprocess.run(
-        sshtarget.openssh_cmd(["btrfs", "filesystem", "show", sshtarget.path]),
+        sshtarget.openssh_cmd(["btrfs", "filesystem", "usage", sshtarget.path]),
         check=False,
         capture_output=True,
     )

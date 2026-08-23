@@ -433,6 +433,14 @@ def test_btrfs_bootstrap_remote_to_local(
 # --- check: local_to_local ---
 
 
+def test_check_btrfs_filesystem_nested_path(btrfs_fs_generator, sshtarget_generator):
+    path = btrfs_fs_generator() / "nested"
+    path.mkdir()
+
+    assert btrfs.check_btrfs_filesystem_local(path, "path") == []
+    assert btrfs.check_btrfs_filesystem_remote(sshtarget_generator().with_path(path), "path") == []
+
+
 def test_check_local_to_local_pass(btrfs_backend, btrfs_fs_generator, random_timeframes_generator):
     src_dir = btrfs_fs_generator()
     dst_dir = btrfs_fs_generator()
@@ -554,7 +562,7 @@ def test_check_local_to_remote_remote_tool_missing(
         command = " ".join(str(c) for c in cmd) if isinstance(cmd, list) else ""
         if "command -v btrfs" in command:
             return subprocess.CompletedProcess(cmd, returncode=1)
-        if cmd[0] == "ssh" and "btrfs filesystem show" in command:
+        if cmd[0] == "ssh" and "btrfs filesystem usage" in command:
             return subprocess.CompletedProcess(cmd, returncode=127)
         return original_run(cmd, **kwargs)
 

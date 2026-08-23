@@ -34,14 +34,18 @@ class CheckSubcommand(SubcommandBase):
             if not parsed_args.quiet:
                 print(f"backup: {backup.name}")
                 for result in results:
-                    print(f"    {'PASS' if result.passed else 'FAIL'}  {result.description}")
+                    if result.passed:
+                        print(f"    PASS  {result.description}")
+                    else:
+                        for error in result.errors:
+                            print(f"    FAIL  {error}")
             if failed:
                 checks_passed = False
                 if parsed_args.quiet:
                     print(f"backup: {backup.name}")
-                for result in failed:
-                    for error in result.errors:
-                        print(f"    {error}")
+                    for result in failed:
+                        for error in result.errors:
+                            print(f"    {error}")
         return 0 if checks_passed else 1
 
     @classmethod
