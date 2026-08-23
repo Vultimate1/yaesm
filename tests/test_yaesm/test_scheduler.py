@@ -18,6 +18,19 @@ def test_concurrency_limits():
     assert scheduler._job_defaults["max_instances"] == 1
 
 
+def test_job_name_does_not_query_apscheduler(monkeypatch):
+    scheduler = yaesm.scheduler.Scheduler()
+    timeframe = yaesm.timeframe.FiveMinuteTimeframe(keep=10)
+    scheduler._add_job("foo-name", lambda: None, timeframe)
+    job_id = scheduler._apscheduler.get_jobs()[0].id
+
+    def fail(_job_id):
+        raise AssertionError("get_job() called")
+
+    monkeypatch.setattr(scheduler._apscheduler, "get_job", fail)
+    assert scheduler._job_name(job_id) == "foo-name"
+
+
 def test_add_job_5minute_timeframe():
     scheduler = yaesm.scheduler.Scheduler()
     timeframe = yaesm.timeframe.FiveMinuteTimeframe(keep=10)
@@ -404,7 +417,8 @@ def test_add_backups_empty_list():
 def test_start_logs(caplog):
     caplog.set_level(logging.INFO)
     scheduler = yaesm.scheduler.Scheduler()
-    scheduler._apscheduler.add_job(
+    scheduler._add_apscheduler_job(
+        "test job",
         lambda: scheduler.stop(force=True),
         "interval",
         seconds=1,
@@ -426,7 +440,9 @@ def test_job_fail_logs_instead_of_crashes(caplog):
 
     # Schedule a job to run immediately and repeatedly
     start_date = datetime.now() + timedelta(seconds=0.5)
-    scheduler._apscheduler.add_job(fail_func, "interval", seconds=0.3, start_date=start_date)
+    scheduler._add_apscheduler_job(
+        "test job", fail_func, "interval", seconds=0.3, start_date=start_date
+    )
     # Start the scheduler (it will block until fail_func stops it)
     scheduler.start()
     assert call_count[0] == 4
@@ -447,8 +463,8 @@ def test_overlapping_backup_logs_warning(caplog):
             scheduler.stop(force=True)
 
     start_date = datetime.now() + timedelta(seconds=0.2)
-    scheduler._apscheduler.add_job(
-        slow_func, "interval", seconds=0.3, start_date=start_date, name="mybackup"
+    scheduler._add_apscheduler_job(
+        "mybackup", slow_func, "interval", seconds=0.3, start_date=start_date
     )
     scheduler.start()
     assert "mybackup" in caplog.text

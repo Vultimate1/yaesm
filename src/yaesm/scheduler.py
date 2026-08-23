@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 class Scheduler:
     def __init__(self) -> None:
+        self._job_names: dict[str, str] = {}
         self._apscheduler = apscheduler.schedulers.blocking.BlockingScheduler(
             executors={
                 "default": apscheduler.executors.pool.ThreadPoolExecutor(max_workers=10),
@@ -79,32 +80,42 @@ class Scheduler:
 
     def _job_name(self, job_id: str) -> str:
         """Return name of the APScheduler job with id `job_id`."""
-        return self._apscheduler.get_job(job_id).name
+        return self._job_names[job_id]
+
+    def _add_apscheduler_job(
+        self,
+        name: str,
+        func: ty.Callable[[], None],
+        trigger: str,
+        **trigger_args: ty.Any,
+    ) -> None:
+        job = self._apscheduler.add_job(func, trigger, name=name, **trigger_args)
+        self._job_names[job.id] = name
 
     def _add_job(self, name: str, func: ty.Callable[[], None], timeframe: ty.Any) -> None:
         """Schedule an arbitrary function (`func`) to be run at times according to `timeframe`."""
         if isinstance(timeframe, FiveMinuteTimeframe):
-            self._apscheduler.add_job(func, "cron", minute="*/5", name=name)
+            self._add_apscheduler_job(name, func, "cron", minute="*/5")
         elif isinstance(timeframe, HourlyTimeframe):
             minute_str = ",".join(str(m) for m in timeframe.minutes)
-            self._apscheduler.add_job(func, "cron", minute=minute_str, name=name)
+            self._add_apscheduler_job(name, func, "cron", minute=minute_str)
         elif isinstance(timeframe, DailyTimeframe):
             for time in timeframe.times:
                 hour, minute = time
-                self._apscheduler.add_job(func, "cron", minute=minute, hour=hour, name=name)
+                self._add_apscheduler_job(name, func, "cron", minute=minute, hour=hour)
         elif isinstance(timeframe, WeeklyTimeframe):
             weekday_str = ",".join(str(weekday_num(d)) for d in timeframe.weekdays)
             for time in timeframe.times:
                 hour, minute = time
-                self._apscheduler.add_job(
-                    func, "cron", minute=minute, hour=hour, day_of_week=weekday_str, name=name
+                self._add_apscheduler_job(
+                    name, func, "cron", minute=minute, hour=hour, day_of_week=weekday_str
                 )
         elif isinstance(timeframe, MonthlyTimeframe):
             for monthday in timeframe.monthdays:
                 for time in timeframe.times:
                     hour, minute = time
-                    self._apscheduler.add_job(
-                        func, "cron", minute=minute, hour=hour, day=monthday, name=name
+                    self._add_apscheduler_job(
+                        name, func, "cron", minute=minute, hour=hour, day=monthday
                     )
         else:  # YearlyTimeframe
             for yearday in timeframe.yeardays:
@@ -114,6 +125,6 @@ class Scheduler:
                 day = dt.day
                 for time in timeframe.times:
                     hour, minute = time
-                    self._apscheduler.add_job(
-                        func, "cron", minute=minute, hour=hour, day=day, month=month, name=name
+                    self._add_apscheduler_job(
+                        name, func, "cron", minute=minute, hour=hour, day=day, month=month
                     )
