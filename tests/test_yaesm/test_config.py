@@ -350,25 +350,25 @@ def test_SrcDirDstDirSchema_is_dir_or_sshtarget_spec(path_generator):
     )
 
 
-def test_SrcDirDstDirSchema_dict_max_one_sshtarget_spec(path_generator):
-    src_dir_str = str(path_generator("src_dir", mkdir=True))
-    dst_dir_str = str(path_generator("dst_dir", mkdir=True))
-    data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str}
-    assert config.SrcDirDstDirSchema._dict_max_one_sshtarget_spec(data) == data
+def test_SrcDirDstDirSchema_dict_sshtargets_same_endpoint(path_generator):
+    src_dir = path_generator("src_dir", mkdir=True)
+    dst_dir = path_generator("dst_dir", mkdir=True)
+    target = SSHTarget("ssh://p22:root@localhost:/source", Path("/key"))
 
-    sshtarget_spec = "ssh://p22:root@localhost:/"
+    for data in [
+        {"src_dir": src_dir, "dst_dir": dst_dir},
+        {"src_dir": target, "dst_dir": dst_dir},
+        {"src_dir": src_dir, "dst_dir": target},
+        {"src_dir": target, "dst_dir": target.with_path(Path("/destination"))},
+    ]:
+        assert config.SrcDirDstDirSchema._dict_sshtargets_same_endpoint(data) == data
 
-    data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str}
-    assert config.SrcDirDstDirSchema._dict_max_one_sshtarget_spec(data) == data
-
-    data = {"src_dir": src_dir_str, "dst_dir": sshtarget_spec}
-    assert config.SrcDirDstDirSchema._dict_max_one_sshtarget_spec(data) == data
-
+    different_target = SSHTarget("ssh://p22:root@other:/destination", Path("/key"))
     with pytest.raises(vlp.Invalid) as exc:
-        sshtarget_spec2 = "ssh://p22:root@localhost:/foo"
-        data = {"src_dir": sshtarget_spec, "dst_dir": sshtarget_spec2}
-        config.SrcDirDstDirSchema._dict_max_one_sshtarget_spec(data)
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.MULTIPLE_SSH_TARGET_SPECS
+        config.SrcDirDstDirSchema._dict_sshtargets_same_endpoint(
+            {"src_dir": target, "dst_dir": different_target}
+        )
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_TARGETS_DIFFER
 
 
 def test_SrcDirDstDirSchema_dict_ssh_key_required_if_ssh_target(path_generator):
@@ -412,6 +412,15 @@ def test_SrcDirDstDirSchema_dict_promote_ssh_target_spec_to_ssh_target(path_gene
 
     data = {"src_dir": src_dir, "dst_dir": sshtarget_spec, "ssh_key": fake_key}
     data = config.SrcDirDstDirSchema._dict_promote_ssh_target_spec_to_ssh_target(data)
+    assert isinstance(data["dst_dir"], SSHTarget)
+
+    data = {
+        "src_dir": "ssh://p22:root@localhost:/source",
+        "dst_dir": "ssh://p22:root@localhost:/destination",
+        "ssh_key": fake_key,
+    }
+    data = config.SrcDirDstDirSchema._dict_promote_ssh_target_spec_to_ssh_target(data)
+    assert isinstance(data["src_dir"], SSHTarget)
     assert isinstance(data["dst_dir"], SSHTarget)
 
 
@@ -523,10 +532,24 @@ def test_SrcDirDstDirSchema_schema(path_generator):
     assert re.match(config.Schema.ErrMsg.LOCAL_FILE_INVALID, str(exc.value))
     Path(ssh_config).touch()
 
+    data = {
+        "src_dir": "ssh://p22:root@localhost:/source",
+        "dst_dir": "ssh://p22:root@localhost:/destination",
+        "ssh_key": key,
+    }
+    data = schema(data)
+    assert isinstance(data["src_dir"], SSHTarget)
+    assert isinstance(data["dst_dir"], SSHTarget)
+
     with pytest.raises(vlp.Invalid) as exc:
-        data = {"src_dir": sshtarget_spec, "dst_dir": sshtarget_spec, "ssh_key": key}
-        schema(data)
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.MULTIPLE_SSH_TARGET_SPECS
+        schema(
+            {
+                "src_dir": "ssh://p22:root@source:/source",
+                "dst_dir": "ssh://p22:root@destination:/destination",
+                "ssh_key": key,
+            }
+        )
+    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_TARGETS_DIFFER
 
     with pytest.raises(vlp.Invalid) as exc:
         data = {"src_dir": src_dir_str, "dst_dir": sshtarget_spec}
@@ -547,6 +570,12 @@ def test_SrcDirDstDirSchema_schema_extra(sshtarget_generator, path_generator):
     assert schema_extra(data) == data
 
     data = {"src_dir": src_dir, "dst_dir": sshtarget}
+    assert schema_extra(data) == data
+
+    data = {
+        "src_dir": sshtarget.with_path(src_dir),
+        "dst_dir": sshtarget.with_path(dst_dir),
+    }
     assert schema_extra(data) == data
 
     with pytest.raises(vlp.Invalid) as exc:
@@ -698,6 +727,25 @@ def test_BackupSchema_promote_to_backup_object(valid_raw_config):
     assert isinstance(backup, bckp.Backup)
 
 
+def test_BackupSchema_remote_to_remote(path_generator, sshtarget_generator):
+    target = sshtarget_generator()
+    src_dir = target.with_path(path_generator("src", mkdir=True))
+    dst_dir = target.with_path(path_generator("dst", mkdir=True))
+    backup = config.BackupSchema.schema()(
+        {
+            "remote-backup": {
+                "backend": "rsync",
+                "src_dir": str(src_dir),
+                "dst_dir": str(dst_dir),
+                "ssh_key": str(target.key),
+                "timeframes": [],
+            }
+        }
+    )
+
+    assert backup.backend.backup_type == "remote_to_remote"
+
+
 def test_BackupSchema_schema(valid_raw_config, path_generator):
     schema = config.BackupSchema.schema()
     # success tests
@@ -715,9 +763,12 @@ def test_BackupSchema_schema(valid_raw_config, path_generator):
         elif backup.backend.backup_type == "local_to_remote":
             assert isinstance(backup.backend.src_dir, Path)
             assert isinstance(backup.backend.dst_dir, SSHTarget)
-        else:  # backup.backend.backup_type == "remote_to_local"
+        elif backup.backend.backup_type == "remote_to_local":
             assert isinstance(backup.backend.src_dir, SSHTarget)
             assert isinstance(backup.backend.dst_dir, Path)
+        else:
+            assert isinstance(backup.backend.src_dir, SSHTarget)
+            assert isinstance(backup.backend.dst_dir, SSHTarget)
         raw_config_copy = copy.deepcopy(valid_raw_config)
         raw_config_copy[backup_name]["INVALIDSETTING"] = "foo"
         with pytest.raises(vlp.MultipleInvalid) as exc:

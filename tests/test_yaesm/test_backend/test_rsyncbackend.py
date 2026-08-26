@@ -66,7 +66,12 @@ def test_config_schema(path_generator):
 
 def test_create(rsync_backend, path_generator, random_backup_generator, random_filesystem_modifier):
     src_dir = path_generator("rsync_src_dir", mkdir=True)
-    for backup_type in ["local_to_local", "local_to_remote", "remote_to_local"]:
+    for backup_type in [
+        "local_to_local",
+        "local_to_remote",
+        "remote_to_local",
+        "remote_to_remote",
+    ]:
         backup = random_backup_generator(
             backend_type="rsync", backend=rsync_backend, backup_type=backup_type
         )
@@ -121,7 +126,7 @@ def test_create(rsync_backend, path_generator, random_backup_generator, random_f
                     assert prev_f.is_file()
                     assert not filecmp.cmp(new_f, prev_f, shallow=False)
         assert len(backups) == 5
-        if backup_type == "local_to_remote":
+        if backup_type in ["local_to_remote", "remote_to_remote"]:
             assert all(isinstance(x, SSHTarget) for x in backups)
         else:
             assert all(isinstance(x, Path) for x in backups)
@@ -361,6 +366,22 @@ def test_check_remote_to_local_remote_tool_missing(
     monkeypatch.setattr(subprocess, "run", fake_run)
     errors = _errors(rsync_backend.check(backup))
     assert any("not found on remote" in e and "rsync" in e for e in errors)
+
+
+def test_check_remote_to_remote_does_not_require_local_tool(
+    monkeypatch,
+    rsync_backend,
+    path_generator,
+    sshtarget_generator,
+    random_timeframes_generator,
+):
+    target = sshtarget_generator()
+    src_dir = target.with_path(path_generator("rsync-src", mkdir=True))
+    dst_dir = target.with_path(path_generator("rsync-dst", mkdir=True))
+    backup = _backup("test", rsync_backend, src_dir, dst_dir, random_timeframes_generator())
+    monkeypatch.setattr(shutil, "which", lambda _tool: None)
+
+    assert _errors(rsync_backend.check(backup)) == []
 
 
 def test_check_local_to_remote_remote_dst_not_writable(

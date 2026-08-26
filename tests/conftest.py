@@ -386,10 +386,16 @@ def random_backup_generator(
             target = sshtarget_generator()
             configured_src_dir = src_dir
             configured_dst_dir = target.with_path(dst_dir)
-        else:  # remote_to_local
+        elif backup_type == "remote_to_local":
             target = sshtarget_generator()
             configured_src_dir = target.with_path(src_dir)
             configured_dst_dir = dst_dir
+        elif backup_type == "remote_to_remote":
+            target = sshtarget_generator()
+            configured_src_dir = target.with_path(src_dir)
+            configured_dst_dir = target.with_path(dst_dir)
+        else:
+            raise ValueError(f"Unknown backup type '{backup_type}'")
         backend.configure_paths(configured_src_dir, configured_dst_dir)
         return bckp.Backup(name, backend, timeframes)
 
@@ -659,8 +665,14 @@ def valid_raw_config_generator(random_backup_generator):
                 backup_settings["ssh_key"] = str(backend.dst_dir.key)
                 if backend.dst_dir.sshconfig:
                     backup_settings["ssh_config"] = str(backend.dst_dir.sshconfig)
-            else:  # backup.backend.backup_type == "remote_to_local":
+            elif backend.backup_type == "remote_to_local":
                 backup_settings["src_dir"] = backend.src_dir.spec
+                backup_settings["dst_dir"] = str(backend.dst_dir)
+                backup_settings["ssh_key"] = str(backend.src_dir.key)
+                if backend.src_dir.sshconfig:
+                    backup_settings["ssh_config"] = str(backend.src_dir.sshconfig)
+            else:  # remote_to_remote
+                backup_settings["src_dir"] = str(backend.src_dir)
                 backup_settings["dst_dir"] = str(backend.dst_dir)
                 backup_settings["ssh_key"] = str(backend.src_dir.key)
                 if backend.src_dir.sshconfig:

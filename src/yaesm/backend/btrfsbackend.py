@@ -10,14 +10,15 @@ from pathlib import Path
 import voluptuous as vlp
 
 import yaesm.backup as bckp
-from yaesm.backend.backendbase import CheckResult, PathBackendBase
+from yaesm.backend import pathsupport
+from yaesm.backend.backendbase import BackendBase, CheckResult
 from yaesm.sshtarget import SSHTarget
 from yaesm.timeframe import Timeframe
 
 logger = logging.getLogger(__name__)
 
 
-class BtrfsBackend(PathBackendBase):
+class BtrfsBackend(BackendBase):
     """The btrfs backup execution backend. See `BackendBase` for more details on
     backup execution backends in general.
 
@@ -26,11 +27,13 @@ class BtrfsBackend(PathBackendBase):
     'btrfs send -p ... | btrfs receive ...'. This makes btrfs backups fast and
     efficient.
 
-    Note that if local-to-remote or remote-to-local btrfs backups are to be
-    performed, then the remote SSH user must have sufficient privileges to run
+    For remote backups, the SSH user must have sufficient privileges to run
     'btrfs subvolume snapshot', 'btrfs subvolume delete', 'btrfs send', and
-    'btrfs receive'.
+    'btrfs receive' where needed.
     """
+
+    src_dir: Path | SSHTarget
+    dst_dir: Path | SSHTarget
 
     def __init__(self, extra_opts=None, bootstrap_refresh_days=None):
         super().__init__(extra_opts)
@@ -38,7 +41,7 @@ class BtrfsBackend(PathBackendBase):
 
     @staticmethod
     def config_settings() -> set[str]:
-        return PathBackendBase.config_settings() | {"btrfs_bootstrap_refresh"}
+        return pathsupport.config_settings() | {"btrfs_bootstrap_refresh"}
 
     @staticmethod
     def config_schema() -> vlp.Schema:
@@ -49,12 +52,34 @@ class BtrfsBackend(PathBackendBase):
 
         return vlp.Schema(
             vlp.All(
-                PathBackendBase.config_schema(),
+                pathsupport.config_schema(),
                 {vlp.Optional("btrfs_bootstrap_refresh"): vlp.All(int, vlp.Range(min=1))},
                 _apply_to_backend,
             ),
             extra=vlp.ALLOW_EXTRA,
         )
+
+    @staticmethod
+    def config_schema_extra() -> vlp.Schema:
+        return pathsupport.config_schema_extra()
+
+    def configure_paths(self, src_dir: Path | SSHTarget, dst_dir: Path | SSHTarget) -> None:
+        pathsupport.configure_paths(self, src_dir, dst_dir)
+
+    @property
+    def backup_type(self) -> str:
+        return pathsupport.backup_type(self)
+
+    def format_locator(self, artifact: bckp.BackupArtifact) -> str:
+        return pathsupport.format_locator(self, artifact)
+
+    def check(self, backup: bckp.Backup) -> list[CheckResult]:
+        return pathsupport.check(self) + self.check_extra(backup)
+
+    def collect(
+        self, backup: bckp.Backup, timeframes: list[Timeframe] | None = None
+    ) -> list[bckp.BackupArtifact]:
+        return pathsupport.collect(self, backup, timeframes)
 
     def check_extra(self, backup: bckp.Backup) -> list[CheckResult]:
         results: list[CheckResult] = []
@@ -95,8 +120,10 @@ class BtrfsBackend(PathBackendBase):
             locator = self._exec_backup_local_to_local(backup, name, timeframe)
         elif self.backup_type == "local_to_remote":
             locator = self._exec_backup_local_to_remote(backup, name, timeframe)
-        else:
+        elif self.backup_type == "remote_to_local":
             locator = self._exec_backup_remote_to_local(backup, name, timeframe)
+        else:
+            locator = self._exec_backup_remote_to_remote(backup, name, timeframe)
         path = locator.path if isinstance(locator, SSHTarget) else locator
         return bckp.BackupArtifact(name, timeframe.name, bckp.backup_to_datetime(name), str(path))
 
@@ -192,6 +219,42 @@ class BtrfsBackend(PathBackendBase):
         finally:
             if tmp_snapshot.is_dir():
                 _btrfs_delete_subvolumes_remote(tmp_snapshot)
+        return backup_path
+
+    def _exec_backup_remote_to_remote(
+        self, backup: bckp.Backup, backup_basename: str, timeframe: Timeframe
+    ) -> SSHTarget:
+        assert isinstance(self.src_dir, SSHTarget)
+        assert isinstance(self.dst_dir, SSHTarget)
+        if self.bootstrap_refresh_days is not None:
+            _btrfs_maybe_refresh_bootstrap(backup, self.bootstrap_refresh_days)
+        src_dir = self.src_dir
+        backup_path = self.dst_dir.with_path(self.dst_dir.path.joinpath(backup_basename))
+        returncode, _ = _btrfs_take_snapshot_remote(src_dir, backup_path, check=False)
+        if returncode != 0:
+            staging_basename = _btrfs_staging_snapshot_basename()
+            tmp_snapshot = src_dir.with_path(src_dir.path.joinpath(staging_basename))
+            received_snapshot = backup_path.with_path(
+                backup_path.path.parent.joinpath(staging_basename)
+            )
+            bootstrap_snapshot = _btrfs_bootstrap_remote_to_remote(
+                src_dir, backup_path.with_path(backup_path.path.parent), backup
+            )
+            try:
+                _btrfs_take_snapshot_remote(src_dir, tmp_snapshot)
+                _btrfs_send_receive_remote_to_remote(
+                    tmp_snapshot,
+                    backup_path.with_path(backup_path.path.parent),
+                    parent=bootstrap_snapshot,
+                )
+                _btrfs_rename_subvolume_remote(received_snapshot, backup_path)
+            except Exception:
+                if received_snapshot.is_dir():
+                    _btrfs_delete_subvolumes_remote(received_snapshot)
+                raise
+            finally:
+                if tmp_snapshot.is_dir():
+                    _btrfs_delete_subvolumes_remote(tmp_snapshot)
         return backup_path
 
     def delete(self, backup: bckp.Backup, artifacts: list[bckp.BackupArtifact]) -> None:
@@ -334,6 +397,33 @@ def _btrfs_send_receive_remote_to_local(
     return p.returncode, dst_dir.joinpath(snapshot.path.name)
 
 
+def _btrfs_send_receive_remote_to_remote(
+    snapshot: SSHTarget,
+    dst_dir: SSHTarget,
+    parent: SSHTarget | None = None,
+    check: bool = True,
+) -> tuple[int, SSHTarget]:
+    """Send and receive a snapshot on one remote system."""
+    send_args: list[str | Path] = []
+    if parent is not None:
+        send_args += ["-p", parent.path]
+    send_args.append(snapshot.path)
+    p = subprocess.run(
+        snapshot.openssh_cmd(
+            [
+                "sh",
+                "-c",
+                'dst=$1; shift; btrfs send "$@" | btrfs receive "$dst"',
+                "sh",
+                dst_dir.path,
+                *send_args,
+            ]
+        ),
+        check=check,
+    )
+    return p.returncode, dst_dir.with_path(dst_dir.path.joinpath(snapshot.path.name))
+
+
 def _btrfs_maybe_refresh_bootstrap(backup: bckp.Backup, refresh_days: int) -> None:
     """Delete stale bootstrap snapshots so they get recreated fresh.
 
@@ -457,6 +547,27 @@ def _btrfs_bootstrap_remote_to_local(
         _btrfs_send_receive_remote_to_local(src_bootstrap, dst_dir)
     else:
         pass  # already bootstrapped
+    return src_bootstrap
+
+
+def _btrfs_bootstrap_remote_to_remote(
+    src_dir: SSHTarget, dst_dir: SSHTarget, backup: bckp.Backup
+) -> SSHTarget:
+    """Perform the bootstrap phase on one remote system."""
+    basename = _btrfs_bootstrap_snapshot_basename(backup.name)
+    src_bootstrap = src_dir.with_path(src_dir.path.joinpath(basename))
+    dst_bootstrap = dst_dir.with_path(dst_dir.path.joinpath(basename))
+    src_bootstrap_exists = src_bootstrap.is_dir()
+    dst_bootstrap_exists = dst_bootstrap.is_dir()
+    if not src_bootstrap_exists and not dst_bootstrap_exists:
+        _btrfs_take_snapshot_remote(src_dir, src_bootstrap)
+        _btrfs_send_receive_remote_to_remote(src_bootstrap, dst_dir)
+    elif src_bootstrap_exists and not dst_bootstrap_exists:
+        _btrfs_send_receive_remote_to_remote(src_bootstrap, dst_dir)
+    elif not src_bootstrap_exists and dst_bootstrap_exists:
+        _btrfs_delete_subvolumes_remote(dst_bootstrap)
+        _btrfs_take_snapshot_remote(src_dir, src_bootstrap)
+        _btrfs_send_receive_remote_to_remote(src_bootstrap, dst_dir)
     return src_bootstrap
 
 

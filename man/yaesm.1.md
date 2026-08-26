@@ -400,10 +400,11 @@ ssh://backup@backup.example:/srv/backups
 ssh://p2222:backup@backup.example:/srv/backups
 ```
 
-At most one of **src_dir** and **dst_dir** may be remote; remote-to-remote
-backups are not supported. An explicit **ssh_key** is required even if the key
-is also named in the OpenSSH configuration. Authentication must work without
-interactive input, and the remote host key must already be trusted.
+If both **src_dir** and **dst_dir** are remote, they must use the same SSH user,
+host, and port. The backup then runs on that system without transferring its
+data through the system running Yaesm. An explicit **ssh_key** is required even
+if the key is also named in the OpenSSH configuration. Authentication must work
+without interactive input, and the remote host key must already be trusted.
 
 Yaesm rejects invalid SSH target syntax and invalid local key or configuration
 files. Run **yaesm check** to test the connection, remote directory, and backend
