@@ -2,8 +2,10 @@ import argparse
 import fcntl
 import logging
 import os
+import signal
 from pathlib import Path
 
+import yaesm.config
 import yaesm.scheduler
 from yaesm.backup import Backup
 from yaesm.cleanup import Cleanup
@@ -14,6 +16,24 @@ logger = logging.getLogger(__name__)
 
 class RunSubcommand(SubcommandBase):
     """Start the backup scheduler (blocks indefinitely; intended for use by init systems)."""
+
+    @staticmethod
+    def _reload_config(scheduler: yaesm.scheduler.Scheduler, config_file: Path) -> None:
+        try:
+            backups = yaesm.config.parse_config(config_file)
+        except yaesm.config.ConfigErrors as exc:
+            error_count = len(exc.errors)
+            logger.error(
+                "configuration reload failed with %d error%s; keeping existing schedule",
+                error_count,
+                "" if error_count == 1 else "s",
+            )
+            for backup, error in exc.errors:
+                logger.error("    %s: %s", backup, error)
+            return
+
+        scheduler.replace_backups(backups)
+        logger.info("configuration reloaded")
 
     def main(self, backups: list[Backup], parsed_args: argparse.Namespace) -> int:
         try:
@@ -27,6 +47,10 @@ class RunSubcommand(SubcommandBase):
         scheduler = yaesm.scheduler.Scheduler()
         scheduler.add_backups(backups)
         Cleanup.add_function(lambda s=scheduler: s.stop())
+        signal.signal(
+            signal.SIGHUP,
+            lambda _signum, _frame: self._reload_config(scheduler, parsed_args.config),
+        )
 
         try:
             scheduler.start()  # blocks

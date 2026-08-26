@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Allow the running scheduler to reload its configuration with `SIGHUP`.
+
 ## [0.0.3] - 2026-08-22
 
 - Add Bash, Fish, and Zsh completion.
