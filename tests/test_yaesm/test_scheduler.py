@@ -414,6 +414,37 @@ def test_add_backups_empty_list():
     assert len(jobs) == 0
 
 
+def test_replace_backups(random_backup_generator):
+    scheduler = yaesm.scheduler.Scheduler()
+    unchanged = random_backup_generator()
+    changed = random_backup_generator()
+    removed = random_backup_generator()
+    added = random_backup_generator()
+    unchanged.timeframes = [yaesm.timeframe.FiveMinuteTimeframe(keep=10)]
+    changed.timeframes = [yaesm.timeframe.HourlyTimeframe(keep=24, minutes=[0])]
+    removed.timeframes = [yaesm.timeframe.DailyTimeframe(keep=7, times=[(1, 0)])]
+    added.timeframes = [yaesm.timeframe.DailyTimeframe(keep=7, times=[(2, 0)])]
+    scheduler.add_backups([unchanged, changed, removed])
+    unrelated = scheduler._apscheduler.add_job(lambda: None, "cron", hour=3)
+    old_jobs = {job.name: job for job in scheduler._apscheduler.get_jobs()}
+    removed_name = f"{removed.name} (daily)"
+
+    changed.timeframes = [yaesm.timeframe.HourlyTimeframe(keep=24, minutes=[30])]
+    scheduler.replace_backups([unchanged, changed, added])
+    jobs = {job.name: job for job in scheduler._apscheduler.get_jobs()}
+
+    unchanged_name = f"{unchanged.name} (5minute)"
+    changed_name = f"{changed.name} (hourly)"
+    assert set(jobs) == {unchanged_name, changed_name, f"{added.name} (daily)", unrelated.name}
+    assert jobs[unchanged_name].id == old_jobs[unchanged_name].id
+    assert jobs[changed_name].id == old_jobs[changed_name].id
+    start_time = datetime(1999, 1, 1, 12, 0, tzinfo=ZoneInfo("UTC"))
+    assert jobs[changed_name].trigger.get_next_fire_time(None, start_time) == datetime(
+        1999, 1, 1, 12, 30, tzinfo=ZoneInfo("UTC")
+    )
+    assert scheduler._job_name(old_jobs[removed_name].id) == removed_name
+
+
 def test_start_logs(caplog):
     caplog.set_level(logging.INFO)
     scheduler = yaesm.scheduler.Scheduler()

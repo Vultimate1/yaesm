@@ -196,6 +196,11 @@ the command reports an error and exits with a failure status. **SIGINT** and
 **SIGTERM** stop the scheduler gracefully and wait for running backups to
 finish.
 
+**SIGHUP** reloads the configuration file that yaesm was started with. Backups
+that are already running are allowed to complete using the old configuration.
+Future backups use the new configuration. If the configuration is invalid,
+yaesm reports the errors and keeps the current schedule.
+
 **--lockfile** *FILE*
 
 Use *FILE* as the scheduler lock file. The default is
