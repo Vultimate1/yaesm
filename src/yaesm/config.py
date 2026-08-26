@@ -479,7 +479,7 @@ class SrcDirDstDirSchema(Schema):
         NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR = (
             "Not an existing directory or a valid SSH target spec"
         )
-        MULTIPLE_SSH_TARGET_SPECS = "Both 'src_dir' and 'dst_dir' are SSH target specs"
+        SSH_TARGETS_DIFFER = "remote src_dir and dst_dir must use the same SSH user, host, and port"
         SSH_KEY_MISSING = "Failed to specify a 'ssh_key' which is required when using a SSH target"
         SSH_CONNECTION_FAILED_TO_ESTABLISH = (
             "Could not establish an SSH connection to the SSHtarget"
@@ -503,8 +503,7 @@ class SrcDirDstDirSchema(Schema):
             * both 'src_dir' and 'dst_dir' are existing local directorys or SSH
               target spec strings
 
-            * at most one of 'src_dir' or 'dst_dir' is an SSH target spec (yaesm
-              does not support remote-to-remote backups)
+            * if both directories are SSH targets, they use the same endpoint
 
             * if we are using an SSH target, ensure we were given an 'ssh_key'
               which is an existing local file.
@@ -520,9 +519,9 @@ class SrcDirDstDirSchema(Schema):
                     vlp.Optional("ssh_key"): Schema.is_file,
                     vlp.Optional("ssh_config"): Schema.is_file,
                 },
-                SrcDirDstDirSchema._dict_max_one_sshtarget_spec,
                 SrcDirDstDirSchema._dict_ssh_key_required_if_ssh_target,
                 SrcDirDstDirSchema._dict_promote_ssh_target_spec_to_ssh_target,
+                SrcDirDstDirSchema._dict_sshtargets_same_endpoint,
             ),
             extra=vlp.ALLOW_EXTRA,
         )
@@ -557,13 +556,16 @@ class SrcDirDstDirSchema(Schema):
         return validator(s)
 
     @staticmethod
-    def _dict_max_one_sshtarget_spec(d: dict) -> dict:
-        """Ensure that the dict `d` contains two keys, 'src_dir' and 'dst_dir'
-        that both associate to Path's or SSH target specs, but ensure at most
-        one of them is and SSH target spec.
-        """
-        if SSHTarget.is_sshtarget_spec(d["src_dir"]) and SSHTarget.is_sshtarget_spec(d["dst_dir"]):
-            raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.MULTIPLE_SSH_TARGET_SPECS)
+    def _dict_sshtargets_same_endpoint(d: dict) -> dict:
+        """Ensure two SSH targets use the same endpoint."""
+        src_dir = d["src_dir"]
+        dst_dir = d["dst_dir"]
+        if (
+            isinstance(src_dir, SSHTarget)
+            and isinstance(dst_dir, SSHTarget)
+            and not src_dir.same_endpoint(dst_dir)
+        ):
+            raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.SSH_TARGETS_DIFFER)
         return d
 
     @staticmethod
@@ -580,25 +582,14 @@ class SrcDirDstDirSchema(Schema):
 
     @staticmethod
     def _dict_promote_ssh_target_spec_to_ssh_target(d: dict) -> dict:
-        """Promotes an SSH target spec string to an actual SSHTarget object.
+        """Promote SSH target spec strings to SSHTarget objects.
+
         This validator should only be called in a schema, after first calling
         `_dict_ssh_key_required_if_ssh_target` in a schema.
         """
-        sshtarget_spec = None
-        dir_key = None
-
-        if SSHTarget.is_sshtarget_spec(d["src_dir"]):
-            sshtarget_spec = d["src_dir"]
-            dir_key = "src_dir"
-        elif SSHTarget.is_sshtarget_spec(d["dst_dir"]):
-            sshtarget_spec = d["dst_dir"]
-            dir_key = "dst_dir"
-
-        if sshtarget_spec and dir_key:
-            ssh_key = d["ssh_key"]
-            ssh_config = d.get("ssh_config")
-            sshtarget = SSHTarget(sshtarget_spec, ssh_key, sshconfig=ssh_config)
-            d[dir_key] = sshtarget
+        for dir_key in ["src_dir", "dst_dir"]:
+            if SSHTarget.is_sshtarget_spec(d[dir_key]):
+                d[dir_key] = SSHTarget(d[dir_key], d["ssh_key"], sshconfig=d.get("ssh_config"))
 
         return d
 
@@ -610,19 +601,11 @@ class SrcDirDstDirSchema(Schema):
         `schema_extra`, meaning it is only called on the output of the base
         schema.
         """
-        sshtarget = None
-        dir_key = None
-
-        if isinstance(d["src_dir"], SSHTarget):
-            sshtarget = d["src_dir"]
-            dir_key = "src_dir"
-        elif isinstance(d["dst_dir"], SSHTarget):
-            sshtarget = d["dst_dir"]
-            dir_key = "dst_dir"
-
-        if sshtarget and dir_key:
-            if not sshtarget.can_connect():
+        targets = [d[key] for key in ["src_dir", "dst_dir"] if isinstance(d[key], SSHTarget)]
+        if targets:
+            if not targets[0].can_connect():
                 raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.SSH_CONNECTION_FAILED_TO_ESTABLISH)
-            if not sshtarget.is_dir(d=sshtarget.path):
-                raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.REMOTE_DIR_INVALID)
+            for target in targets:
+                if not target.is_dir():
+                    raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.REMOTE_DIR_INVALID)
         return d

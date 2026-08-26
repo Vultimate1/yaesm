@@ -65,6 +65,10 @@ class SSHTarget:
         sshtarget.path = Path(path)
         return sshtarget
 
+    def same_endpoint(self, other: SSHTarget) -> bool:
+        """Return whether `other` uses the same SSH user, host, and port."""
+        return (self.user, self.host, self.port) == (other.user, other.host, other.port)
+
     def __str__(self) -> str:
         port = "" if self.port is None else f"p{self.port}:"
         user = "" if self.user is None else f"{self.user}@"
@@ -159,6 +163,17 @@ class SSHTarget:
         """
         return subprocess.run(self.openssh_cmd(["true"]), check=False).returncode == 0
 
+    def command_exists(self, command: str) -> bool:
+        """Return whether `command` is available on the remote system."""
+        return (
+            subprocess.run(
+                self.openssh_cmd(["command", "-v", command]),
+                check=False,
+                capture_output=True,
+            ).returncode
+            == 0
+        )
+
     def exists(self, p: Path | None = None) -> bool:
         """Return True if `p` exists on the remote SSH server.
         If `p` is None then default to checking `self.path`.
@@ -182,6 +197,18 @@ class SSHTarget:
         if f is None:
             f = self.path
         return subprocess.run(self.openssh_cmd(["test", "-f", f]), check=False).returncode == 0
+
+    def is_readable(self, path: Path | None = None) -> bool:
+        """Return whether a remote path is readable."""
+        if path is None:
+            path = self.path
+        return subprocess.run(self.openssh_cmd(["test", "-r", path]), check=False).returncode == 0
+
+    def is_writable(self, path: Path | None = None) -> bool:
+        """Return whether a remote path is writable."""
+        if path is None:
+            path = self.path
+        return subprocess.run(self.openssh_cmd(["test", "-w", path]), check=False).returncode == 0
 
     def mkdir(self, d: Path | None = None, parents: bool = False, check: bool = True) -> bool:
         """Mkdir the directory `d` on the remote SSH server. If `d` is None,

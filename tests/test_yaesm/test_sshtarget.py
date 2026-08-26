@@ -119,11 +119,25 @@ def test_with_path(sshtarget):
     assert new_sshtarget.key == sshtarget.key
 
 
+def test_same_endpoint():
+    key = Path("/key")
+    target = SSHTarget("ssh://p22:user@host:/source", key)
+    assert target.same_endpoint(SSHTarget("ssh://p22:user@host:/destination", key))
+    assert not target.same_endpoint(SSHTarget("ssh://p23:user@host:/destination", key))
+    assert not target.same_endpoint(SSHTarget("ssh://p22:other@host:/destination", key))
+    assert not target.same_endpoint(SSHTarget("ssh://p22:user@other:/destination", key))
+
+
 def test_can_connect(sshtarget, tmp_user):
     new_sshtarget = sshtarget.with_path(Path("/foo"))
     assert new_sshtarget.can_connect()
     new_sshtarget.user = tmp_user.pw_name
     assert not new_sshtarget.can_connect()
+
+
+def test_command_exists(sshtarget):
+    assert sshtarget.command_exists("sh")
+    assert not sshtarget.command_exists("yaesm-command-that-does-not-exist")
 
 
 def test_exists(sshtarget, path_generator):
@@ -172,6 +186,19 @@ def test_is_file(sshtarget, path_generator):
     assert not target1.is_file()
     assert target2.is_file()
     assert target1.is_file(path2)
+
+
+def test_is_readable_and_writable(sshtarget, path_generator):
+    path = path_generator("O'Brien", touch=True, cleanup=True)
+    target = sshtarget.with_path(path)
+    missing = path_generator("missing")
+
+    assert target.is_readable()
+    assert target.is_writable()
+    assert target.is_readable(path)
+    assert target.is_writable(path)
+    assert not target.is_readable(missing)
+    assert not target.is_writable(missing)
 
 
 def test_mkdir(sshtarget, path_generator):
