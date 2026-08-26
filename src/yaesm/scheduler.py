@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 
 class Scheduler:
     def __init__(self) -> None:
-        self._job_names: dict[str, str] = {}
+        self._job_name_cache: dict[str, str] = {}
+        self._scheduled_backup_job_ids: set[str] = set()
         self._apscheduler = apscheduler.schedulers.blocking.BlockingScheduler(
             executors={
                 "default": apscheduler.executors.pool.ThreadPoolExecutor(max_workers=10),
@@ -74,13 +75,23 @@ class Scheduler:
         for backup in backups:
             for timeframe in backup.timeframes:
                 job_name = f"{backup.name} ({timeframe.name})"
-                self._add_job(
-                    job_name, lambda b=backup, t=timeframe: b.backend.do_backup(b, t), timeframe
+                job_ids = self._add_job(
+                    job_name,
+                    lambda b=backup, t=timeframe: b.backend.do_backup(b, t),
+                    timeframe,
                 )
+                self._scheduled_backup_job_ids.update(job_ids)
+
+    def replace_backups(self, backups: list[Backup]) -> None:
+        """Replace all scheduled backup jobs."""
+        for job_id in self._scheduled_backup_job_ids:
+            self._apscheduler.remove_job(job_id)
+        self._scheduled_backup_job_ids.clear()
+        self.add_backups(backups)
 
     def _job_name(self, job_id: str) -> str:
-        """Return name of the APScheduler job with id `job_id`."""
-        return self._job_names[job_id]
+        """Return the cached name, including for a job that was removed while running."""
+        return self._job_name_cache[job_id]
 
     def _add_apscheduler_job(
         self,
@@ -90,33 +101,36 @@ class Scheduler:
         **trigger_args: ty.Any,
     ) -> None:
         job = self._apscheduler.add_job(func, trigger, name=name, **trigger_args)
-        self._job_names[job.id] = name
+        self._job_name_cache[job.id] = name
 
-    def _add_job(self, name: str, func: ty.Callable[[], None], timeframe: ty.Any) -> None:
+    def _add_job(self, name: str, func: ty.Callable[[], None], timeframe: ty.Any) -> set[str]:
         """Schedule an arbitrary function (`func`) to be run at times according to `timeframe`."""
+        job_ids: set[str] = set()
+
+        def add(**trigger_args: ty.Any) -> None:
+            job_id = f"{name}:{len(job_ids)}"
+            self._add_apscheduler_job(name, func, "cron", id=job_id, **trigger_args)
+            job_ids.add(job_id)
+
         if isinstance(timeframe, FiveMinuteTimeframe):
-            self._add_apscheduler_job(name, func, "cron", minute="*/5")
+            add(minute="*/5")
         elif isinstance(timeframe, HourlyTimeframe):
             minute_str = ",".join(str(m) for m in timeframe.minutes)
-            self._add_apscheduler_job(name, func, "cron", minute=minute_str)
+            add(minute=minute_str)
         elif isinstance(timeframe, DailyTimeframe):
             for time in timeframe.times:
                 hour, minute = time
-                self._add_apscheduler_job(name, func, "cron", minute=minute, hour=hour)
+                add(minute=minute, hour=hour)
         elif isinstance(timeframe, WeeklyTimeframe):
             weekday_str = ",".join(str(weekday_num(d)) for d in timeframe.weekdays)
             for time in timeframe.times:
                 hour, minute = time
-                self._add_apscheduler_job(
-                    name, func, "cron", minute=minute, hour=hour, day_of_week=weekday_str
-                )
+                add(minute=minute, hour=hour, day_of_week=weekday_str)
         elif isinstance(timeframe, MonthlyTimeframe):
             for monthday in timeframe.monthdays:
                 for time in timeframe.times:
                     hour, minute = time
-                    self._add_apscheduler_job(
-                        name, func, "cron", minute=minute, hour=hour, day=monthday
-                    )
+                    add(minute=minute, hour=hour, day=monthday)
         else:  # YearlyTimeframe
             for yearday in timeframe.yeardays:
                 # Use non-leap year for conversion
@@ -125,6 +139,6 @@ class Scheduler:
                 day = dt.day
                 for time in timeframe.times:
                     hour, minute = time
-                    self._add_apscheduler_job(
-                        name, func, "cron", minute=minute, hour=hour, day=day, month=month
-                    )
+                    add(minute=minute, hour=hour, day=day, month=month)
+
+        return job_ids
