@@ -6,7 +6,7 @@ import inspect
 import typing
 
 import yaesm.ty as ty
-from yaesm.backup import BackupArtifact, BackupError, BackupOperation
+from yaesm.backup import BackupArtifact, BackupError, BackupOperation, DriverSource
 from yaesm.driver.driverbase import DriverBase
 from yaesm.errors import YaesmError
 from yaesm.representation import DataProperty, Representation
@@ -37,14 +37,14 @@ class IncrementalBase:
 class Pipeline:
     """An ordered sequence of driver capability invocations."""
 
-    source: DriverBase
+    source: DriverSource | BackupArtifact
     destination: DriverBase
     steps: tuple[PipelineStep, ...]
     requirements: frozenset[DataProperty]
 
     def __init__(
         self,
-        source: DriverBase,
+        source: DriverSource | BackupArtifact,
         destination: DriverBase,
         drivers: ty.Sequence[DriverBase] = (),
         requirements: ty.Iterable[DataProperty] = (),
@@ -71,7 +71,9 @@ class Pipeline:
         base: IncrementalBase | None = None,
     ) -> BackupArtifact:
         """Execute the resolved capabilities for one backup operation."""
-        value: object | None = None
+        value: object | None = (
+            None if isinstance(self.source, DriverSource) else self.source.representation
+        )
         artifact: BackupArtifact | None = None
         temporaries: list[tuple[PipelineStep, Representation]] = []
         try:
@@ -124,14 +126,11 @@ class Pipeline:
 
 
 def _resolve(
-    source: DriverBase,
+    source: DriverSource | BackupArtifact,
     destination: DriverBase,
     drivers: ty.Sequence[DriverBase],
     requirements: frozenset[DataProperty],
 ) -> tuple[PipelineStep, ...]:
-    if "source" not in source.pipeline_capabilities():
-        raise PipelineError(f"{source.name()} driver cannot provide a backup source")
-
     storage_steps = _storage_steps(destination)
     if not storage_steps:
         raise PipelineError(
@@ -139,12 +138,25 @@ def _resolve(
             f"  destination driver {destination.name()} provides no storage capability"
         )
 
-    available = (source, *drivers, destination)
-    first = PipelineStep(source, "source")
-    source_type = _output_type(first)
-    if not issubclass(source_type, Representation):
-        raise PipelineError("source capability does not produce a representation")
-    properties = source.capability_metadata("source").adds
+    if isinstance(source, DriverSource):
+        driver = source.driver
+        if "source" not in driver.pipeline_capabilities():
+            raise PipelineError(f"{driver.name()} driver cannot provide a backup source")
+        first = PipelineStep(driver, "source")
+        source_type = _output_type(first)
+        if not issubclass(source_type, Representation):
+            raise PipelineError("source capability does not produce a representation")
+        properties = driver.capability_metadata("source").adds
+        steps = (first,)
+        used = frozenset({(id(driver), "source")})
+        available = (driver, *drivers, destination)
+    else:
+        source_type = type(source.representation)
+        properties = frozenset()
+        steps = ()
+        used = frozenset()
+        available = (*drivers, destination)
+
     queue: collections.deque[
         tuple[
             type[Representation],
@@ -157,12 +169,12 @@ def _resolve(
             (
                 source_type,
                 properties,
-                (first,),
-                frozenset({(id(first.driver), first.capability)}),
+                steps,
+                used,
             )
         ]
     )
-    furthest = (source_type, properties, (first,))
+    furthest = (source_type, properties, steps)
     missing_route: tuple[frozenset[DataProperty], tuple[PipelineStep, ...]] | None = None
 
     while queue:
@@ -204,7 +216,7 @@ def _resolve(
     accepted = ", ".join(sorted({_input_type(step).__name__ for step in storage_steps}))
     raise PipelineError(
         "cannot build backup pipeline:\n"
-        f"  last usable route: {_format_steps(steps)}\n"
+        f"  last usable route: {_format_steps(steps) or 'existing artifact'}\n"
         f"  produced: {current_type.__name__}\n"
         f"  available properties: {_format_properties(properties)}\n"
         f"  destination accepts: {accepted}"

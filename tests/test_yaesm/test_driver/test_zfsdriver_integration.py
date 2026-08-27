@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import pytest
 
 import yaesm.ty as ty
-from yaesm.backup import Backup
+from yaesm.backup import Backup, DriverSource
 from yaesm.driver.zfsdriver import ZFSDriver
 from yaesm.pipeline import Pipeline
 from yaesm.representation import DataProperty
@@ -63,7 +63,7 @@ def test_zfs_full_incremental_and_lifecycle(
     destination_driver = ZFSDriver(destination_dataset)
     backup = Backup(
         "example",
-        Pipeline(source_driver, destination_driver),
+        Pipeline(DriverSource(source_driver), destination_driver),
         (),
         (),
     )
@@ -113,7 +113,7 @@ def test_zfs_raw_encrypted_full_and_incremental(
     backup = Backup(
         "encrypted",
         Pipeline(
-            ZFSDriver(source_dataset, encryption=True),
+            DriverSource(ZFSDriver(source_dataset, encryption=True)),
             ZFSDriver(destination_dataset),
             requirements=(DataProperty.ENCRYPTED,),
         ),
@@ -158,7 +158,7 @@ def test_zfs_preserves_native_compression_by_default(
     backup = Backup(
         "compressed",
         Pipeline(
-            ZFSDriver(source_dataset),
+            DriverSource(ZFSDriver(source_dataset)),
             ZFSDriver(destination_dataset),
         ),
         (),

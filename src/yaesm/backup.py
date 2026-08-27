@@ -12,6 +12,7 @@ from yaesm.representation import Representation
 _RepresentationT = ty.TypeVar("_RepresentationT", bound=Representation, covariant=True)
 
 if ty.TYPE_CHECKING:
+    from yaesm.driver.driverbase import DriverBase
     from yaesm.pipeline import Pipeline
     from yaesm.retention import RetentionPolicyBase
     from yaesm.schedule import Schedule
@@ -19,6 +20,20 @@ if ty.TYPE_CHECKING:
 
 class BackupError(YaesmError):
     """Raised when a backup cannot be prepared or executed."""
+
+
+@dataclasses.dataclass(frozen=True)
+class DriverSource:
+    """Live data provided by a driver."""
+
+    driver: DriverBase
+
+
+@dataclasses.dataclass(frozen=True)
+class BackupSource:
+    """Artifacts produced by another configured backup."""
+
+    backup_name: str
 
 
 @dataclasses.dataclass(frozen=True)

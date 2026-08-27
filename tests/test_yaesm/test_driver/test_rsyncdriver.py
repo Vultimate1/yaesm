@@ -8,7 +8,7 @@ import pytest
 import voluptuous as vlp
 
 import yaesm.ty as ty
-from yaesm.backup import Backup, BackupArtifact, BackupOperation
+from yaesm.backup import Backup, BackupArtifact, BackupOperation, DriverSource
 from yaesm.command import Command, CommandResult, CommandRunner
 from yaesm.driver.btrfsdriver import BtrfsDriver, BtrfsSubvolume
 from yaesm.driver.rsyncdriver import RsyncDriver, RsyncDriverError, RsyncTree
@@ -411,7 +411,7 @@ def test_pipeline_uses_rsync_store(tmp_path):
     source = RsyncDriver(tmp_path / "source")
     destination = RsyncDriver(tmp_path / "destination")
 
-    assert Pipeline(source, destination).steps == (
+    assert Pipeline(DriverSource(source), destination).steps == (
         PipelineStep(source, "source"),
         PipelineStep(destination, "store"),
     )
@@ -421,7 +421,7 @@ def test_pipeline_can_store_btrfs_tree_with_rsync(tmp_path):
     source = BtrfsDriver(tmp_path / "source")
     destination = RsyncDriver(tmp_path / "destination")
 
-    assert Pipeline(source, destination).steps == (
+    assert Pipeline(DriverSource(source), destination).steps == (
         PipelineStep(source, "source"),
         PipelineStep(destination, "store"),
     )
@@ -445,7 +445,7 @@ def test_rsync_integration(tmp_path):
     (source / "changed").write_text("before")
     source_driver = RsyncDriver(source)
     driver = RsyncDriver(destination)
-    backup = Backup("example", Pipeline(source_driver, driver), (), ())
+    backup = Backup("example", Pipeline(DriverSource(source_driver), driver), (), ())
 
     first = backup.execute("manual", operation().created_at)
     (source / "changed").write_text("after")

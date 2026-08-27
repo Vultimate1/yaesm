@@ -7,7 +7,7 @@ import pytest
 import voluptuous as vlp
 
 import yaesm.ty as ty
-from yaesm.backup import Backup, BackupArtifact, BackupOperation
+from yaesm.backup import Backup, BackupArtifact, BackupOperation, DriverSource
 from yaesm.command import Command, CommandResult, CommandRunner
 from yaesm.driver.btrfsdriver import (
     BtrfsDriver,
@@ -21,7 +21,7 @@ from yaesm.pipeline import Pipeline
 from yaesm.representation import CommandStream, PathTree
 from yaesm.ssh import SSHTarget, command_for_target
 
-_BTRFS_SEND = ("btrfs", "send", "--proto", "2", "--compressed-data")
+_BTRFS_SEND = ("btrfs", "send", "--compressed-data")
 
 
 class RecordingRunner(CommandRunner):
@@ -266,7 +266,10 @@ def test_backup_execute_uses_readonly_snapshot_with_incremental_send_fallback(tm
     runner = RecordingRunner((0, 1, 1, 1))
     backup = Backup(
         "example",
-        Pipeline(BtrfsDriver(source), BtrfsDriver(destination, runner=runner)),
+        Pipeline(
+            DriverSource(BtrfsDriver(source)),
+            BtrfsDriver(destination, runner=runner),
+        ),
         (),
         (),
     )
@@ -448,7 +451,7 @@ def test_cap_store_refreshes_stale_bootstrap(tmp_path):
         (*_BTRFS_SEND, str(source_bootstrap)),
         ("btrfs", "receive", str(destination_dir)),
     )
-    assert runner.pipelines[1][0][0:7] == (
+    assert runner.pipelines[1][0][: len(_BTRFS_SEND) + 2] == (
         *_BTRFS_SEND,
         "-p",
         str(source_bootstrap),

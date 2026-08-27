@@ -87,7 +87,7 @@ def configured_backup(
 ) -> bckp.Backup:
     return bckp.Backup(
         "home",
-        Pipeline(SourceDriver(), destination),
+        Pipeline(bckp.DriverSource(SourceDriver()), destination),
         (),
         retention_policies,
     )
@@ -104,6 +104,16 @@ def test_backup_has_composable_settings(pipeline):
         "schedules": schedules,
         "retention_policies": retention_policies,
     }
+
+
+def test_driver_source_identifies_live_driver():
+    driver = SourceDriver()
+
+    assert bckp.DriverSource(driver).driver is driver
+
+
+def test_backup_source_identifies_configured_backup():
+    assert bckp.BackupSource("local-home").backup_name == "local-home"
 
 
 def test_backup_operation():

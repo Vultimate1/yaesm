@@ -14,8 +14,6 @@ from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, PathTree
 from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
 
-_SEND_COMMAND = ("btrfs", "send", "--proto", "2", "--compressed-data")
-
 
 class BtrfsDriverError(DriverError):
     """Raised when a Btrfs capability cannot be performed."""
@@ -150,7 +148,7 @@ class BtrfsDriver(DriverBase):
         if base is not None and not same_endpoint(source.target, base.target):
             raise BtrfsDriverError("Btrfs export and base use different SSH endpoints")
 
-        command: list[str | ty.Path] = list(_SEND_COMMAND)
+        command: list[str | ty.Path] = ["btrfs", "send", "--compressed-data"]
         if base is not None:
             command.extend(("-p", base.path))
         command.append(source.path)

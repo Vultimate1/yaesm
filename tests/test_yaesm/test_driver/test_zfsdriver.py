@@ -6,7 +6,7 @@ import pytest
 import voluptuous as vlp
 
 import yaesm.ty as ty
-from yaesm.backup import Backup, BackupArtifact, BackupOperation
+from yaesm.backup import Backup, BackupArtifact, BackupOperation, DriverSource
 from yaesm.command import Command, CommandResult, CommandRunner
 from yaesm.driver.zfsdriver import (
     ZFSDataset,
@@ -616,7 +616,10 @@ def test_backup_execute_uses_zfs_store_and_incremental_base():
     runner = RecordingRunner(stdouts=(f"backup/home@{old.artifact_name}\n",))
     backup = Backup(
         "example",
-        Pipeline(ZFSDriver("tank/home"), ZFSDriver("backup/home", runner=runner)),
+        Pipeline(
+            DriverSource(ZFSDriver("tank/home")),
+            ZFSDriver("backup/home", runner=runner),
+        ),
         (),
         (),
     )
@@ -644,7 +647,7 @@ def test_backup_execute_preserves_configured_native_encryption(requirements):
     backup = Backup(
         "example",
         Pipeline(
-            ZFSDriver("tank/home", runner=source_runner, encryption=True),
+            DriverSource(ZFSDriver("tank/home", runner=source_runner, encryption=True)),
             ZFSDriver("backup/home", runner=destination_runner),
             requirements=requirements,
         ),
