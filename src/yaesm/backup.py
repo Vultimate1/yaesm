@@ -6,7 +6,7 @@ import dataclasses
 import re
 
 import yaesm.ty as ty
-from yaesm.errors import YaesmError
+from yaesm.errors import YaesmError, YaesmValueError
 from yaesm.representation import Representation
 
 _RepresentationT = ty.TypeVar("_RepresentationT", bound=Representation, covariant=True)
@@ -34,15 +34,15 @@ class BackupOperation:
         """Reconstruct an operation from one of its artifact names."""
         prefix = f"yaesm-{backup_name}-"
         if not artifact_name.startswith(prefix):
-            raise ValueError(f"invalid artifact name: {artifact_name!r}")
+            raise YaesmValueError(f"invalid artifact name: {artifact_name!r}")
 
         try:
             schedule_name, timestamp = artifact_name.removeprefix(prefix).rsplit(".", 1)
             created_at = ty.datetime.strptime(timestamp, "%Y_%m_%d_%H:%M")
         except ValueError as error:
-            raise ValueError(f"invalid artifact name: {artifact_name!r}") from error
+            raise YaesmValueError(f"invalid artifact name: {artifact_name!r}") from error
         if not schedule_name:
-            raise ValueError(f"invalid artifact name: {artifact_name!r}")
+            raise YaesmValueError(f"invalid artifact name: {artifact_name!r}")
         return cls(backup_name, schedule_name, created_at)
 
     @property
@@ -77,7 +77,7 @@ class Backup:
 
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z][-_:@a-z0-9]*", self.name, re.IGNORECASE):
-            raise ValueError(f"invalid backup name: {self.name!r}")
+            raise YaesmValueError(f"invalid backup name: {self.name!r}")
 
     def execute(self, schedule_name: str, created_at: ty.datetime) -> BackupArtifact:
         """Execute one backup operation and apply retention."""

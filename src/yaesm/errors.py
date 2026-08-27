@@ -10,3 +10,7 @@ class YaesmError(Exception):
         if isinstance(self.__cause__, YaesmError):
             lines.extend(f"  {line}" for line in self.__cause__.format().splitlines())
         return "\n".join(lines)
+
+
+class YaesmValueError(YaesmError, ValueError):
+    """Base class for invalid yaesm domain values."""

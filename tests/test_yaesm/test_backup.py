@@ -8,6 +8,7 @@ import voluptuous as vlp
 import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.driver.driverbase import DriverBase, DriverError
+from yaesm.errors import YaesmValueError
 from yaesm.pipeline import Pipeline
 from yaesm.representation import Representation
 from yaesm.retention import KeepLast
@@ -142,7 +143,7 @@ def test_backup_operation_from_artifact_name():
     ],
 )
 def test_backup_operation_rejects_invalid_artifact_name(artifact_name):
-    with pytest.raises(ValueError, match="invalid artifact name"):
+    with pytest.raises(YaesmValueError, match="invalid artifact name"):
         bckp.BackupOperation.from_artifact_name("home", artifact_name)
 
 
@@ -208,7 +209,7 @@ def test_backup_accepts_valid_name(name, pipeline):
     ],
 )
 def test_backup_rejects_invalid_name(name, pipeline):
-    with pytest.raises(ValueError, match="invalid backup name"):
+    with pytest.raises(YaesmValueError, match="invalid backup name"):
         bckp.Backup(name, pipeline, (), ())
 
 

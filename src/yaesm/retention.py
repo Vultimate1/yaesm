@@ -7,6 +7,7 @@ import voluptuous as vlp
 
 import yaesm.ty as ty
 from yaesm.backup import BackupArtifact
+from yaesm.errors import YaesmValueError
 
 
 class RetentionPolicyBase(abc.ABC):
@@ -42,7 +43,7 @@ class KeepLast(RetentionPolicyBase):
 
     def __post_init__(self) -> None:
         if self.count < 1:
-            raise ValueError("count must be at least 1")
+            raise YaesmValueError("count must be at least 1")
 
     @staticmethod
     def config_schema() -> vlp.Schema:
@@ -87,7 +88,7 @@ class KeepFor(RetentionPolicyBase):
 
     def __post_init__(self) -> None:
         if self.duration <= ty.timedelta():
-            raise ValueError("duration must be greater than zero")
+            raise YaesmValueError("duration must be greater than zero")
 
     @staticmethod
     def config_schema() -> vlp.Schema:

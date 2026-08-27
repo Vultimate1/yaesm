@@ -16,7 +16,6 @@ from yaesm.representation import (
     EncryptedStream,
     ReadableTree,
     Representation,
-    UncompressedStream,
 )
 
 
@@ -59,7 +58,7 @@ class AllCapabilitiesDriver(DriverBase):
         assert base is not None
         return bckp.BackupArtifact(operation, source)
 
-    def cap_compress(self, source: UncompressedStream) -> CompressedStream:
+    def cap_compress(self, source: ByteStream) -> CompressedStream:
         return CompressedStream()
 
     def cap_encrypt(self, source: ByteStream) -> EncryptedStream:

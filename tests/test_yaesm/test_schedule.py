@@ -4,6 +4,7 @@ import pytest
 import voluptuous as vlp
 from apscheduler.triggers.cron import CronTrigger
 
+from yaesm.errors import YaesmValueError
 from yaesm.schedule import CronSchedule, Schedule, ScheduleBase
 
 
@@ -81,12 +82,12 @@ def test_cron_schedule_config_schema_rejects_invalid_structure(config):
 
 
 def test_cron_schedule_rejects_invalid_expression():
-    with pytest.raises(ValueError, match="invalid cron expression"):
+    with pytest.raises(YaesmValueError, match="invalid cron expression"):
         CronSchedule("invalid")
 
 
 def test_cron_schedule_rejects_nonstring_expression():
-    with pytest.raises(ValueError, match="invalid cron expression"):
+    with pytest.raises(YaesmValueError, match="invalid cron expression"):
         CronSchedule(None)  # ty: ignore[invalid-argument-type]
 
 

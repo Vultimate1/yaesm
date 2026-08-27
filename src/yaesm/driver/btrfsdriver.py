@@ -10,8 +10,11 @@ import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.command import CommandRunner
 from yaesm.driver.driverbase import DriverBase, DriverError, capability
-from yaesm.representation import PathTree, UncompressedStream
+from yaesm.errors import YaesmValueError
+from yaesm.representation import CommandStream, PathTree
 from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
+
+_SEND_COMMAND = ("btrfs", "send", "--proto", "2", "--compressed-data")
 
 
 class BtrfsDriverError(DriverError):
@@ -32,7 +35,7 @@ class BtrfsSnapshot(BtrfsSubvolume):
 
 
 @dataclasses.dataclass(frozen=True)
-class BtrfsStream(UncompressedStream):
+class BtrfsStream(CommandStream):
     """A Btrfs send stream."""
 
     subvolume_name: str = dataclasses.field(kw_only=True)
@@ -49,7 +52,7 @@ class BtrfsDriver(DriverBase):
         runner: CommandRunner | None = None,
     ) -> None:
         if bootstrap_refresh_days < 0:
-            raise ValueError(
+            raise YaesmValueError(
                 f"bootstrap_refresh_days must be at least 0, got {bootstrap_refresh_days}"
             )
         self.location = Path(location)
@@ -147,7 +150,7 @@ class BtrfsDriver(DriverBase):
         if base is not None and not same_endpoint(source.target, base.target):
             raise BtrfsDriverError("Btrfs export and base use different SSH endpoints")
 
-        command: list[str | ty.Path] = ["btrfs", "send"]
+        command: list[str | ty.Path] = list(_SEND_COMMAND)
         if base is not None:
             command.extend(("-p", base.path))
         command.append(source.path)
@@ -215,7 +218,7 @@ class BtrfsDriver(DriverBase):
             path = Path(value)
             try:
                 operation = bckp.BackupOperation.from_artifact_name(backup_name, path.name)
-            except ValueError:
+            except YaesmValueError:
                 continue
             artifacts.append(bckp.BackupArtifact(operation, BtrfsSnapshot(path, self.target)))
         return tuple(

@@ -15,7 +15,6 @@ from yaesm.representation import (
     EncryptedStream,
     ReadableTree,
     Representation,
-    UncompressedStream,
 )
 
 _CAPABILITY_ATTRIBUTE = "__yaesm_capability__"
@@ -80,7 +79,7 @@ class DriverBase(abc.ABC):
     - ``cap_expose``: expose a block device as a readable tree.
     - ``cap_export``: export a representation as a byte stream.
     - ``cap_import``: import a byte stream as a stored artifact.
-    - ``cap_compress``: compress an uncompressed byte stream.
+    - ``cap_compress``: compress a byte stream.
     - ``cap_encrypt``: encrypt a byte stream.
     - ``cap_list``: list stored backup artifacts.
     - ``cap_delete``: delete stored backup artifacts.
@@ -179,8 +178,8 @@ class DriverBase(abc.ABC):
         raise NotImplementedError(f"{self.name()} driver does not provide the import capability")
 
     @capability("compress", adds=(DataProperty.COMPRESSED,))
-    def cap_compress(self, source: UncompressedStream) -> CompressedStream:
-        """Compress an uncompressed byte stream."""
+    def cap_compress(self, source: ByteStream) -> CompressedStream:
+        """Compress a byte stream."""
         raise NotImplementedError(f"{self.name()} driver does not provide the compress capability")
 
     @capability("encrypt", adds=(DataProperty.ENCRYPTED,))

@@ -6,6 +6,7 @@ import pytest
 import voluptuous as vlp
 
 from yaesm.backup import BackupArtifact, BackupOperation
+from yaesm.errors import YaesmValueError
 from yaesm.representation import Representation
 from yaesm.retention import KeepFor, KeepLast, RetentionPolicyBase
 
@@ -53,7 +54,7 @@ def test_keep_last_filters_by_schedule():
 
 
 def test_keep_last_rejects_invalid_count():
-    with pytest.raises(ValueError, match="count must be at least 1"):
+    with pytest.raises(YaesmValueError, match="count must be at least 1"):
         KeepLast(0)
 
 
@@ -193,7 +194,7 @@ def test_keep_for_config_schema_rejects_invalid_structure(config):
 
 @pytest.mark.parametrize("duration", [timedelta(), timedelta(seconds=-1)])
 def test_keep_for_rejects_nonpositive_duration(duration):
-    with pytest.raises(ValueError, match="duration must be greater than zero"):
+    with pytest.raises(YaesmValueError, match="duration must be greater than zero"):
         KeepFor(duration)
 
 

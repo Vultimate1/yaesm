@@ -10,6 +10,7 @@ import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.command import Command, CommandRunner
 from yaesm.driver.driverbase import DriverBase, DriverError
+from yaesm.errors import YaesmValueError
 from yaesm.representation import PathTree
 from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
 
@@ -36,7 +37,7 @@ class RsyncDriver(DriverBase):
         if isinstance(extra_options, str) or any(
             not isinstance(option, str) or not option for option in extra_options
         ):
-            raise ValueError("extra_options must contain nonempty strings")
+            raise YaesmValueError("extra_options must contain nonempty strings")
         self.location = Path(location)
         self.target = target
         self.extra_options = tuple(extra_options)
@@ -142,7 +143,7 @@ class RsyncDriver(DriverBase):
             path = Path(value)
             try:
                 operation = bckp.BackupOperation.from_artifact_name(backup_name, path.name)
-            except ValueError:
+            except YaesmValueError:
                 continue
             artifacts.append(bckp.BackupArtifact(operation, RsyncTree(path, self.target)))
         return tuple(

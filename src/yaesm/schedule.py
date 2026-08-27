@@ -7,6 +7,8 @@ import voluptuous as vlp
 from apscheduler.triggers.base import BaseTrigger
 from apscheduler.triggers.cron import CronTrigger
 
+from yaesm.errors import YaesmValueError
+
 
 class ScheduleBase(abc.ABC):
     """Base class for ways a backup can be scheduled."""
@@ -34,11 +36,11 @@ class CronSchedule(ScheduleBase):
 
     def __post_init__(self) -> None:
         if not isinstance(self.expression, str):
-            raise ValueError(f"invalid cron expression: {self.expression!r}")
+            raise YaesmValueError(f"invalid cron expression: {self.expression!r}")
         try:
             CronTrigger.from_crontab(self.expression)
         except ValueError as error:
-            raise ValueError(f"invalid cron expression: {self.expression!r}") from error
+            raise YaesmValueError(f"invalid cron expression: {self.expression!r}") from error
 
     @classmethod
     def name(cls) -> str:

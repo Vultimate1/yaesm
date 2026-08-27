@@ -12,12 +12,12 @@ from yaesm.driver.driverbase import DriverBase, DriverError, capability
 from yaesm.pipeline import IncrementalBase, Pipeline, PipelineError, PipelineStep
 from yaesm.representation import (
     ByteStream,
+    CommandStream,
     CompressedStream,
     DataProperty,
     EncryptedStream,
     ReadableTree,
     Representation,
-    UncompressedStream,
 )
 
 
@@ -39,7 +39,7 @@ class SourceDriver(DriverBase):
 
 class ExportDriver(DriverBase):
     def __init__(self) -> None:
-        self.output = UncompressedStream()
+        self.output = CommandStream()
         self.call: tuple[Representation, Representation | None] | None = None
 
     @classmethod
@@ -52,7 +52,7 @@ class ExportDriver(DriverBase):
 
     def cap_export(
         self, source: Representation, base: Representation | None = None
-    ) -> UncompressedStream:
+    ) -> CommandStream:
         self.call = (source, base)
         return self.output
 
@@ -62,7 +62,7 @@ class FailingExportDriver(ExportDriver):
         self,
         source: Representation,
         base: Representation | None = None,
-    ) -> UncompressedStream:
+    ) -> CommandStream:
         raise CommandError(("export",), 1, "failed")
 
 
@@ -100,7 +100,7 @@ class TemporaryExportDriver(ExportDriver):
         self,
         source: Representation,
         base: Representation | None = None,
-    ) -> UncompressedStream:
+    ) -> CommandStream:
         return super().cap_export(source, base)
 
     def cap_cleanup(self, representation: Representation) -> None:
@@ -176,7 +176,7 @@ class CompressionDriver(DriverBase):
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
 
-    def cap_compress(self, source: UncompressedStream) -> CompressedStream:
+    def cap_compress(self, source: ByteStream) -> CompressedStream:
         return CompressedStream()
 
 

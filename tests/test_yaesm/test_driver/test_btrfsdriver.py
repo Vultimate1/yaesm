@@ -1,5 +1,6 @@
 """Tests for yaesm.driver.btrfsdriver."""
 
+import os
 import shutil
 import subprocess
 from datetime import datetime
@@ -17,9 +18,46 @@ from yaesm.driver.btrfsdriver import (
     BtrfsStream,
     BtrfsSubvolume,
 )
+from yaesm.errors import YaesmValueError
 from yaesm.pipeline import Pipeline
-from yaesm.representation import ByteStream, PathTree
+from yaesm.representation import CommandStream, PathTree
 from yaesm.ssh import SSHTarget, command_for_target
+
+_BTRFS_SEND = ("btrfs", "send", "--proto", "2", "--compressed-data")
+
+
+@pytest.fixture
+def btrfs_filesystem(tmp_path: ty.Path) -> ty.Iterator[ty.Path]:
+    if shutil.which("btrfs") is None or shutil.which("mkfs.btrfs") is None:
+        pytest.skip("Btrfs is not installed")
+    if (
+        subprocess.run(
+            ("btrfs", "filesystem", "usage", str(tmp_path)),
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 0
+    ):
+        yield tmp_path
+        return
+    if os.geteuid() != 0:
+        pytest.skip("Btrfs integration tests require root")
+
+    image = tmp_path / "btrfs.img"
+    with image.open("wb") as file:
+        file.truncate(256 * 1024 * 1024)
+    mountpoint = tmp_path / "btrfs"
+    mountpoint.mkdir()
+    subprocess.run(("mkfs.btrfs", "-f", str(image)), capture_output=True, check=True)
+    subprocess.run(
+        ("mount", "-o", "loop", str(image), str(mountpoint)),
+        capture_output=True,
+        check=True,
+    )
+    try:
+        yield mountpoint
+    finally:
+        subprocess.run(("umount", str(mountpoint)), capture_output=True, check=False)
 
 
 class RecordingRunner(CommandRunner):
@@ -171,7 +209,7 @@ def test_bootstrap_refresh_can_be_disabled(tmp_path):
 
 
 def test_negative_bootstrap_refresh_is_rejected(tmp_path):
-    with pytest.raises(ValueError, match="must be at least 0, got -1"):
+    with pytest.raises(YaesmValueError, match="must be at least 0, got -1"):
         BtrfsDriver(tmp_path, bootstrap_refresh_days=-1)
 
 
@@ -244,11 +282,11 @@ def test_cap_store_falls_back_to_send_receive(tmp_path):
     assert artifact == BackupArtifact(operation(), BtrfsSnapshot(destination))
     assert runner.pipelines == [
         (
-            ("btrfs", "send", str(bootstrap)),
+            (*_BTRFS_SEND, str(bootstrap)),
             ("btrfs", "receive", str(destination_dir)),
         ),
         (
-            ("btrfs", "send", "-p", str(bootstrap), str(staging)),
+            (*_BTRFS_SEND, "-p", str(bootstrap), str(staging)),
             ("btrfs", "receive", str(destination_dir)),
         ),
     ]
@@ -300,7 +338,7 @@ def test_backup_execute_uses_readonly_snapshot_with_incremental_send_fallback(tm
         str(staging),
     )
     assert runner.pipelines[-1] == (
-        ("btrfs", "send", "-p", str(bootstrap), str(staging)),
+        (*_BTRFS_SEND, "-p", str(bootstrap), str(staging)),
         ("btrfs", "receive", str(destination)),
     )
 
@@ -316,7 +354,7 @@ def test_cap_store_uses_explicit_base_without_bootstrap(tmp_path):
     staging = ty.Path(runner.commands[1][-1])
     assert runner.pipelines == [
         (
-            ("btrfs", "send", "-p", str(base.path), str(staging)),
+            (*_BTRFS_SEND, "-p", str(base.path), str(staging)),
             ("btrfs", "receive", str(destination_dir)),
         )
     ]
@@ -357,7 +395,7 @@ def test_cap_store_bootstraps_between_different_endpoints(
         ("btrfs", "receive", destination_dir),
     )
     assert runner.pipelines[0] == (
-        command_for_target(source_target, ("btrfs", "send", bootstrap)),
+        command_for_target(source_target, (*_BTRFS_SEND, bootstrap)),
         receive,
     )
     assert runner.pipelines[1][1] == receive
@@ -406,7 +444,7 @@ def test_cap_store_reuses_bootstrap(tmp_path):
     staging = ty.Path(runner.commands[4][-1])
     assert runner.pipelines == [
         (
-            ("btrfs", "send", "-p", str(bootstrap), str(staging)),
+            (*_BTRFS_SEND, "-p", str(bootstrap), str(staging)),
             ("btrfs", "receive", str(destination_dir)),
         )
     ]
@@ -443,12 +481,11 @@ def test_cap_store_refreshes_stale_bootstrap(tmp_path):
         ),
     ]
     assert runner.pipelines[0] == (
-        ("btrfs", "send", str(source_bootstrap)),
+        (*_BTRFS_SEND, str(source_bootstrap)),
         ("btrfs", "receive", str(destination_dir)),
     )
-    assert runner.pipelines[1][0][0:4] == (
-        "btrfs",
-        "send",
+    assert runner.pipelines[1][0][0:7] == (
+        *_BTRFS_SEND,
         "-p",
         str(source_bootstrap),
     )
@@ -489,8 +526,7 @@ def test_cap_store_repairs_orphaned_destination_bootstrap(tmp_path):
         str(destination_bootstrap),
     )
     assert runner.pipelines[0][0] == (
-        "btrfs",
-        "send",
+        *_BTRFS_SEND,
         str(source.path / destination_bootstrap.name),
     )
 
@@ -537,7 +573,7 @@ def test_cap_export_full(tmp_path):
 
     stream = BtrfsDriver(tmp_path).cap_export(snapshot)
 
-    assert stream.commands == (("btrfs", "send", str(snapshot.path)),)
+    assert stream.commands == ((*_BTRFS_SEND, str(snapshot.path)),)
     assert stream.subvolume_name == "snapshot"
 
 
@@ -547,7 +583,7 @@ def test_cap_export_incremental(tmp_path):
 
     stream = BtrfsDriver(tmp_path).cap_export(snapshot, base)
 
-    assert stream.commands == (("btrfs", "send", "-p", str(base.path), str(snapshot.path)),)
+    assert stream.commands == ((*_BTRFS_SEND, "-p", str(base.path), str(snapshot.path)),)
 
 
 def test_cap_export_remote(tmp_path):
@@ -556,7 +592,7 @@ def test_cap_export_remote(tmp_path):
 
     stream = BtrfsDriver(tmp_path).cap_export(snapshot)
 
-    assert stream.commands == (target.openssh_command(("btrfs", "send", snapshot.path)),)
+    assert stream.commands == (target.openssh_command((*_BTRFS_SEND, snapshot.path)),)
 
 
 def test_cap_export_rejects_base_on_different_endpoint(tmp_path):
@@ -731,19 +767,9 @@ def test_cap_cleanup_deletes_temporary_snapshot(tmp_path):
     ]
 
 
-def test_btrfs_send_receive_integration(tmp_path):
-    if shutil.which("btrfs") is None:
-        pytest.skip("btrfs is not installed")
-    filesystem = subprocess.run(
-        ("btrfs", "filesystem", "usage", str(tmp_path)),
-        capture_output=True,
-        check=False,
-    )
-    if filesystem.returncode != 0:
-        pytest.skip("test directory is not on a usable Btrfs filesystem")
-
-    source = tmp_path / "source"
-    destination = tmp_path / "destination"
+def test_btrfs_send_receive_integration(btrfs_filesystem):
+    source = btrfs_filesystem / "source"
+    destination = btrfs_filesystem / "destination"
     create = subprocess.run(
         ("btrfs", "subvolume", "create", str(source)),
         capture_output=True,
@@ -790,4 +816,4 @@ def test_btrfs_send_receive_integration(tmp_path):
 def test_btrfs_representation_types():
     assert issubclass(BtrfsSubvolume, PathTree)
     assert issubclass(BtrfsSnapshot, BtrfsSubvolume)
-    assert issubclass(BtrfsStream, ByteStream)
+    assert BtrfsStream.__bases__ == (CommandStream,)

@@ -8,7 +8,8 @@ from yaesm.config import ConfigError
 from yaesm.driver.btrfsdriver import BtrfsDriverError
 from yaesm.driver.driverbase import DriverError
 from yaesm.driver.rsyncdriver import RsyncDriverError
-from yaesm.errors import YaesmError
+from yaesm.driver.zfsdriver import ZFSDriverError
+from yaesm.errors import YaesmError, YaesmValueError
 from yaesm.pipeline import PipelineError
 from yaesm.ssh import SSHTargetError
 
@@ -21,9 +22,11 @@ from yaesm.ssh import SSHTargetError
         (PipelineError, (BackupError, YaesmError)),
         (CommandError, (YaesmError,)),
         (ConfigError, (YaesmError,)),
-        (SSHTargetError, (YaesmError, ValueError)),
+        (YaesmValueError, (YaesmError, ValueError)),
+        (SSHTargetError, (YaesmValueError, YaesmError, ValueError)),
         (BtrfsDriverError, (DriverError, BackupError, YaesmError)),
         (RsyncDriverError, (DriverError, BackupError, YaesmError)),
+        (ZFSDriverError, (DriverError, BackupError, YaesmError)),
     ],
 )
 def test_error_hierarchy(error_type, parents):
@@ -38,9 +41,11 @@ def test_error_hierarchy(error_type, parents):
         PipelineError("pipeline"),
         CommandError(("false",), 1, ""),
         ConfigError("config"),
+        YaesmValueError("value"),
         SSHTargetError("SSH target"),
         BtrfsDriverError("Btrfs"),
         RsyncDriverError("Rsync"),
+        ZFSDriverError("ZFS"),
     ],
 )
 def test_all_expected_errors_can_be_caught_together(error):
@@ -56,9 +61,11 @@ def test_all_expected_errors_can_be_caught_together(error):
         (BackupError, "yaesm.backup"),
         (CommandError, "yaesm.command"),
         (ConfigError, "yaesm.config"),
+        (YaesmValueError, "yaesm.errors"),
         (DriverError, "yaesm.driver.driverbase"),
         (BtrfsDriverError, "yaesm.driver.btrfsdriver"),
         (RsyncDriverError, "yaesm.driver.rsyncdriver"),
+        (ZFSDriverError, "yaesm.driver.zfsdriver"),
         (PipelineError, "yaesm.pipeline"),
         (SSHTargetError, "yaesm.ssh"),
     ],

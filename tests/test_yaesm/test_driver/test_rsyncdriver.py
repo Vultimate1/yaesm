@@ -12,6 +12,7 @@ from yaesm.backup import Backup, BackupArtifact, BackupOperation
 from yaesm.command import Command, CommandResult, CommandRunner
 from yaesm.driver.btrfsdriver import BtrfsDriver, BtrfsSubvolume
 from yaesm.driver.rsyncdriver import RsyncDriver, RsyncDriverError, RsyncTree
+from yaesm.errors import YaesmValueError
 from yaesm.pipeline import Pipeline, PipelineStep
 from yaesm.representation import PathTree, ReadableTree
 from yaesm.ssh import SSHTarget
@@ -149,7 +150,7 @@ def test_config_schema_output_constructs_driver(tmp_path):
 
 @pytest.mark.parametrize("extra_options", ["--checksum", ("",), (1,)])
 def test_constructor_rejects_invalid_extra_options(tmp_path, extra_options):
-    with pytest.raises(ValueError, match="must contain nonempty strings"):
+    with pytest.raises(YaesmValueError, match="must contain nonempty strings"):
         RsyncDriver(tmp_path, extra_options=ty.cast(ty.Any, extra_options))
 
 
