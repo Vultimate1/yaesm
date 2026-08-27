@@ -78,3 +78,41 @@ class Backup:
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z][-_:@a-z0-9]*", self.name, re.IGNORECASE):
             raise ValueError(f"invalid backup name: {self.name!r}")
+
+    def execute(self, schedule_name: str, created_at: ty.datetime) -> BackupArtifact:
+        """Execute one backup operation and apply retention."""
+        from yaesm.pipeline import IncrementalBase
+
+        operation = BackupOperation(self.name, schedule_name, created_at)
+        try:
+            artifacts = tuple(self.pipeline.destination.cap_list(self.name))
+        except YaesmError as error:
+            raise BackupError(f"backup {self.name!r} failed while listing artifacts") from error
+
+        base = None
+        if artifacts:
+            newest = artifacts[0]
+            base = IncrementalBase(
+                None,
+                newest.representation,
+                newest.operation.created_at,
+            )
+        artifact = self.pipeline.execute(operation, base)
+
+        if self.retention_policies:
+            artifacts = (artifact, *artifacts)
+            retained = [
+                retained
+                for policy in self.retention_policies
+                for retained in policy.retain(artifacts, created_at)
+            ]
+            expired = tuple(item for item in artifacts if item not in retained)
+            if expired:
+                try:
+                    self.pipeline.destination.cap_delete(expired)
+                except YaesmError as error:
+                    raise BackupError(
+                        f"backup {self.name!r} failed while deleting expired artifacts"
+                    ) from error
+
+        return artifact

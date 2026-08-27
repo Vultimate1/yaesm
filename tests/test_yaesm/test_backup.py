@@ -3,9 +3,11 @@
 from datetime import datetime
 
 import pytest
+import voluptuous as vlp
 
 import yaesm.backup as bckp
 import yaesm.ty as ty
+from yaesm.driver.driverbase import DriverBase, DriverError
 from yaesm.pipeline import Pipeline
 from yaesm.representation import Representation
 from yaesm.retention import KeepLast
@@ -15,6 +17,79 @@ from yaesm.schedule import Schedule
 @pytest.fixture
 def pipeline() -> Pipeline:
     return ty.cast(Pipeline, object())
+
+
+class SourceDriver(DriverBase):
+    @classmethod
+    def name(cls) -> str:
+        return "source"
+
+    @staticmethod
+    def config_schema() -> vlp.Schema:
+        return vlp.Schema({})
+
+    def cap_source(self) -> Representation:
+        return Representation()
+
+
+class DestinationDriver(DriverBase):
+    def __init__(
+        self,
+        artifacts: ty.Sequence[bckp.BackupArtifact] = (),
+        failure: str | None = None,
+    ) -> None:
+        self.artifacts = tuple(artifacts)
+        self.failure = failure
+        self.base: Representation | None = None
+        self.deleted: tuple[bckp.BackupArtifact, ...] | None = None
+
+    @classmethod
+    def name(cls) -> str:
+        return "destination"
+
+    @staticmethod
+    def config_schema() -> vlp.Schema:
+        return vlp.Schema({})
+
+    def cap_store(
+        self,
+        source: Representation,
+        operation: bckp.BackupOperation,
+        base: Representation | None = None,
+    ) -> bckp.BackupArtifact:
+        self.base = base
+        return bckp.BackupArtifact(operation, Representation())
+
+    def cap_list(self, backup_name: str) -> ty.Sequence[bckp.BackupArtifact]:
+        if self.failure == "list":
+            raise DriverError("list failed")
+        return self.artifacts
+
+    def cap_delete(self, artifacts: ty.Sequence[bckp.BackupArtifact]) -> None:
+        if self.failure == "delete":
+            raise DriverError("delete failed")
+        self.deleted = tuple(artifacts)
+
+
+def artifact(schedule_name: str, hour: int) -> bckp.BackupArtifact:
+    operation = bckp.BackupOperation(
+        "home",
+        schedule_name,
+        datetime(2026, 8, 27, hour),
+    )
+    return bckp.BackupArtifact(operation, Representation())
+
+
+def configured_backup(
+    destination: DestinationDriver,
+    retention_policies: tuple[KeepLast, ...] = (),
+) -> bckp.Backup:
+    return bckp.Backup(
+        "home",
+        Pipeline(SourceDriver(), destination),
+        (),
+        retention_policies,
+    )
 
 
 def test_backup_has_composable_settings(pipeline):
@@ -135,3 +210,71 @@ def test_backup_accepts_valid_name(name, pipeline):
 def test_backup_rejects_invalid_name(name, pipeline):
     with pytest.raises(ValueError, match="invalid backup name"):
         bckp.Backup(name, pipeline, (), ())
+
+
+def test_backup_execute_uses_newest_artifact_as_base_and_applies_retention():
+    newest = artifact("hourly", 11)
+    older = artifact("hourly", 10)
+    destination = DestinationDriver((newest, older))
+
+    result = configured_backup(destination, (KeepLast(2),)).execute(
+        "hourly",
+        datetime(2026, 8, 27, 12),
+    )
+
+    assert result.operation == bckp.BackupOperation(
+        "home",
+        "hourly",
+        datetime(2026, 8, 27, 12),
+    )
+    assert destination.base is newest.representation
+    assert destination.deleted == (older,)
+
+
+def test_backup_execute_combines_retention_policies():
+    hourly = artifact("hourly", 11)
+    daily = artifact("daily", 10)
+    older_hourly = artifact("hourly", 9)
+    older_daily = artifact("daily", 8)
+    destination = DestinationDriver((hourly, daily, older_hourly, older_daily))
+
+    configured_backup(
+        destination,
+        (KeepLast(1, "hourly"), KeepLast(1, "daily")),
+    ).execute("hourly", datetime(2026, 8, 27, 12))
+
+    assert destination.deleted == (hourly, older_hourly, older_daily)
+
+
+def test_backup_execute_without_retention_does_not_delete():
+    newest = artifact("hourly", 11)
+    destination = DestinationDriver((newest,))
+
+    configured_backup(destination).execute("hourly", datetime(2026, 8, 27, 12))
+
+    assert destination.base is newest.representation
+    assert destination.deleted is None
+
+
+def test_backup_execute_formats_listing_failure():
+    with pytest.raises(bckp.BackupError) as error:
+        configured_backup(DestinationDriver(failure="list")).execute(
+            "hourly",
+            datetime(2026, 8, 27, 12),
+        )
+
+    assert error.value.format() == "backup 'home' failed while listing artifacts\n  list failed"
+
+
+def test_backup_execute_formats_deletion_failure():
+    destination = DestinationDriver((artifact("hourly", 11),), failure="delete")
+
+    with pytest.raises(bckp.BackupError) as error:
+        configured_backup(destination, (KeepLast(1),)).execute(
+            "hourly",
+            datetime(2026, 8, 27, 12),
+        )
+
+    assert error.value.format() == (
+        "backup 'home' failed while deleting expired artifacts\n  delete failed"
+    )

@@ -37,6 +37,8 @@ class IncrementalBase:
 class Pipeline:
     """An ordered sequence of driver capability invocations."""
 
+    source: DriverBase
+    destination: DriverBase
     steps: tuple[PipelineStep, ...]
     requirements: frozenset[DataProperty]
 
@@ -48,7 +50,19 @@ class Pipeline:
         requirements: ty.Iterable[DataProperty] = (),
     ) -> None:
         required = frozenset(requirements)
-        object.__setattr__(self, "steps", _resolve(source, destination, drivers, required))
+        steps = _resolve(source, destination, drivers, required)
+        for step in steps:
+            if (
+                step.driver.capability_metadata(step.capability).temporary
+                and "cleanup" not in step.driver.capabilities()
+            ):
+                raise PipelineError(
+                    f"{step.driver.name()}.{step.capability} produces a temporary "
+                    "representation but the driver provides no cleanup capability"
+                )
+        object.__setattr__(self, "source", source)
+        object.__setattr__(self, "destination", destination)
+        object.__setattr__(self, "steps", steps)
         object.__setattr__(self, "requirements", required)
 
     def execute(
@@ -58,36 +72,55 @@ class Pipeline:
     ) -> BackupArtifact:
         """Execute the resolved capabilities for one backup operation."""
         value: object | None = None
-        for step in self.steps:
-            method = step.driver.capability_method(step.capability)
-            metadata = step.driver.capability_metadata(step.capability)
-            step_base = (
-                None if base is None or metadata.base is None else getattr(base, metadata.base)
-            )
+        artifact: BackupArtifact | None = None
+        temporaries: list[tuple[PipelineStep, Representation]] = []
+        try:
+            for step in self.steps:
+                method = step.driver.capability_method(step.capability)
+                metadata = step.driver.capability_metadata(step.capability)
+                step_base = (
+                    None if base is None or metadata.base is None else getattr(base, metadata.base)
+                )
 
-            try:
-                if step.capability == "source":
-                    value = method()
-                elif step.capability in {"store", "import"}:
-                    value = method(value, operation, step_base)
-                elif step.capability == "export":
-                    value = method(value, step_base)
-                else:
-                    value = method(value)
-            except YaesmError as error:
+                try:
+                    if step.capability == "source":
+                        value = method()
+                    elif step.capability in {"store", "import"}:
+                        value = method(value, operation, step_base)
+                    elif step.capability == "export":
+                        value = method(value, step_base)
+                    else:
+                        value = method(value)
+                except YaesmError as error:
+                    raise PipelineError(
+                        f"backup {operation.backup_name!r} failed in "
+                        f"{step.driver.name()}.{step.capability}"
+                    ) from error
+
+                if metadata.temporary and isinstance(value, Representation):
+                    temporaries.append((step, value))
+
+            if not isinstance(value, BackupArtifact):
+                final_step = self.steps[-1]
                 raise PipelineError(
-                    f"backup {operation.backup_name!r} failed in "
-                    f"{step.driver.name()}.{step.capability}"
-                ) from error
-
-        if not isinstance(value, BackupArtifact):
-            final_step = self.steps[-1]
-            raise PipelineError(
-                f"backup {operation.backup_name!r}: "
-                f"{final_step.driver.name()}.{final_step.capability} "
-                "did not produce a backup artifact"
-            )
-        return value
+                    f"backup {operation.backup_name!r}: "
+                    f"{final_step.driver.name()}.{final_step.capability} "
+                    "did not produce a backup artifact"
+                )
+            artifact = value
+            return artifact
+        finally:
+            final_representation = None if artifact is None else artifact.representation
+            for step, representation in reversed(temporaries):
+                if representation is final_representation:
+                    continue
+                try:
+                    step.driver.cap_cleanup(representation)
+                except YaesmError as error:
+                    raise PipelineError(
+                        f"backup {operation.backup_name!r} failed while cleaning up "
+                        f"{step.driver.name()}.{step.capability}"
+                    ) from error
 
 
 def _resolve(

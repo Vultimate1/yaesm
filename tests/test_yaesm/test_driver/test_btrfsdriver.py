@@ -8,7 +8,7 @@ import pytest
 import voluptuous as vlp
 
 import yaesm.ty as ty
-from yaesm.backup import BackupArtifact, BackupOperation
+from yaesm.backup import Backup, BackupArtifact, BackupOperation
 from yaesm.command import Command, CommandResult, CommandRunner
 from yaesm.driver.btrfsdriver import (
     BtrfsDriver,
@@ -17,6 +17,7 @@ from yaesm.driver.btrfsdriver import (
     BtrfsStream,
     BtrfsSubvolume,
 )
+from yaesm.pipeline import Pipeline
 from yaesm.representation import ByteStream, PathTree
 from yaesm.ssh import SSHTarget, command_for_target
 
@@ -159,6 +160,7 @@ def test_cap_source(tmp_path):
         "import",
         "list",
         "delete",
+        "cleanup",
     }
     assert driver.capability_metadata("store").base == "source"
     assert driver.cap_source() == BtrfsSubvolume(tmp_path)
@@ -254,6 +256,53 @@ def test_cap_store_falls_back_to_send_receive(tmp_path):
         ("mv", "--", str(destination_dir / staging.name), str(destination)),
         ("btrfs", "subvolume", "delete", str(staging)),
     ]
+
+
+def test_backup_execute_uses_readonly_snapshot_with_incremental_send_fallback(tmp_path):
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    runner = RecordingRunner((0, 1, 1, 1))
+    backup = Backup(
+        "example",
+        Pipeline(BtrfsDriver(source), BtrfsDriver(destination, runner=runner)),
+        (),
+        (),
+    )
+
+    artifact = backup.execute("manual", operation().created_at)
+
+    bootstrap = source / ".yaesm-btrfs-bootstrap-example"
+    staging = ty.Path(runner.commands[5][-1])
+    stored = destination / operation().artifact_name
+    assert artifact == BackupArtifact(operation(), BtrfsSnapshot(stored))
+    assert runner.commands[1] == (
+        "btrfs",
+        "subvolume",
+        "snapshot",
+        "-r",
+        str(source),
+        str(stored),
+    )
+    assert runner.commands[4] == (
+        "btrfs",
+        "subvolume",
+        "snapshot",
+        "-r",
+        str(source),
+        str(bootstrap),
+    )
+    assert runner.commands[5] == (
+        "btrfs",
+        "subvolume",
+        "snapshot",
+        "-r",
+        str(source),
+        str(staging),
+    )
+    assert runner.pipelines[-1] == (
+        ("btrfs", "send", "-p", str(bootstrap), str(staging)),
+        ("btrfs", "receive", str(destination)),
+    )
 
 
 def test_cap_store_uses_explicit_base_without_bootstrap(tmp_path):
@@ -669,6 +718,17 @@ def test_cap_delete_rejects_different_endpoint(tmp_path):
 
     with pytest.raises(BtrfsDriverError, match="different SSH endpoint"):
         BtrfsDriver(tmp_path, driver_target).cap_delete((artifact,))
+
+
+def test_cap_cleanup_deletes_temporary_snapshot(tmp_path):
+    runner = RecordingRunner()
+    snapshot = BtrfsSnapshot(tmp_path / "staging")
+
+    BtrfsDriver(tmp_path, runner=runner).cap_cleanup(snapshot)
+
+    assert runner.commands == [
+        ("btrfs", "subvolume", "delete", str(snapshot.path)),
+    ]
 
 
 def test_btrfs_send_receive_integration(tmp_path):

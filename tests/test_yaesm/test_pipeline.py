@@ -8,7 +8,7 @@ import voluptuous as vlp
 import yaesm.ty as ty
 from yaesm.backup import BackupArtifact, BackupOperation
 from yaesm.command import CommandError
-from yaesm.driver.driverbase import DriverBase, capability
+from yaesm.driver.driverbase import DriverBase, DriverError, capability
 from yaesm.pipeline import IncrementalBase, Pipeline, PipelineError, PipelineStep
 from yaesm.representation import (
     ByteStream,
@@ -66,6 +66,47 @@ class FailingExportDriver(ExportDriver):
         raise CommandError(("export",), 1, "failed")
 
 
+class SnapshotDriver(DriverBase):
+    def __init__(self, cleanups: list[str] | None = None) -> None:
+        self.output = ReadableTree()
+        self.cleanups = [] if cleanups is None else cleanups
+
+    @classmethod
+    def name(cls) -> str:
+        return "snapshot"
+
+    @staticmethod
+    def config_schema() -> vlp.Schema:
+        return vlp.Schema({})
+
+    def cap_snapshot(self, source: Representation) -> ReadableTree:
+        return self.output
+
+    def cap_cleanup(self, representation: Representation) -> None:
+        self.cleanups.append(self.name())
+
+
+class SnapshotWithoutCleanupDriver(SnapshotDriver):
+    cap_cleanup = DriverBase.cap_cleanup
+
+
+class TemporaryExportDriver(ExportDriver):
+    def __init__(self, cleanups: list[str]) -> None:
+        super().__init__()
+        self.cleanups = cleanups
+
+    @capability("export", base="source", temporary=True)
+    def cap_export(
+        self,
+        source: Representation,
+        base: Representation | None = None,
+    ) -> UncompressedStream:
+        return super().cap_export(source, base)
+
+    def cap_cleanup(self, representation: Representation) -> None:
+        self.cleanups.append(self.name())
+
+
 class DestinationDriver(DriverBase):
     def __init__(self) -> None:
         self.call: tuple[ByteStream, BackupOperation, Representation | None] | None = None
@@ -96,6 +137,21 @@ class BrokenDestinationDriver(DestinationDriver):
         base: Representation | None = None,
     ) -> BackupArtifact:
         return ty.cast(BackupArtifact, ReadableTree())
+
+
+class FailingDestinationDriver(DestinationDriver):
+    def cap_import(
+        self,
+        source: ByteStream,
+        operation: BackupOperation,
+        base: Representation | None = None,
+    ) -> BackupArtifact:
+        raise CommandError(("import",), 1, "failed")
+
+
+class FailingCleanupDriver(SnapshotDriver):
+    def cap_cleanup(self, representation: Representation) -> None:
+        raise DriverError("cleanup failed")
 
 
 class EncryptionDriver(DriverBase):
@@ -235,6 +291,61 @@ def test_pipeline_formats_capability_failure_with_context():
     )
 
 
+def test_pipeline_cleans_up_temporary_representations():
+    snapshotter = SnapshotDriver()
+    pipeline = Pipeline(
+        SourceDriver(),
+        DestinationDriver(),
+        (snapshotter, ExportDriver()),
+        requirements={DataProperty.SNAPSHOT},
+    )
+
+    pipeline.execute(BackupOperation("home", "hourly", datetime(2026, 8, 27, 13, 0)))
+
+    assert snapshotter.cleanups == ["snapshot"]
+
+
+def test_pipeline_cleans_up_in_reverse_order_after_failure():
+    cleanups: list[str] = []
+    pipeline = Pipeline(
+        SourceDriver(),
+        FailingDestinationDriver(),
+        (SnapshotDriver(cleanups), TemporaryExportDriver(cleanups)),
+        requirements={DataProperty.SNAPSHOT},
+    )
+
+    with pytest.raises(PipelineError, match="failed in destination.import"):
+        pipeline.execute(BackupOperation("home", "hourly", datetime(2026, 8, 27, 13, 0)))
+
+    assert cleanups == ["export", "snapshot"]
+
+
+def test_pipeline_formats_cleanup_failure_with_context():
+    pipeline = Pipeline(
+        SourceDriver(),
+        DestinationDriver(),
+        (FailingCleanupDriver(), ExportDriver()),
+        requirements={DataProperty.SNAPSHOT},
+    )
+
+    with pytest.raises(PipelineError) as error:
+        pipeline.execute(BackupOperation("home", "hourly", datetime(2026, 8, 27, 13, 0)))
+
+    assert error.value.format() == (
+        "backup 'home' failed while cleaning up snapshot.snapshot\n  cleanup failed"
+    )
+
+
+def test_pipeline_rejects_temporary_capability_without_cleanup():
+    with pytest.raises(PipelineError, match="driver provides no cleanup capability"):
+        Pipeline(
+            SourceDriver(),
+            DestinationDriver(),
+            (SnapshotWithoutCleanupDriver(), ExportDriver()),
+            requirements={DataProperty.SNAPSHOT},
+        )
+
+
 def test_pipeline_resolves_compatible_driver_capabilities():
     source = SourceDriver()
     exporter = ExportDriver()
@@ -246,6 +357,8 @@ def test_pipeline_resolves_compatible_driver_capabilities():
         PipelineStep(exporter, "export"),
         PipelineStep(destination, "import"),
     )
+    assert pipeline.source is source
+    assert pipeline.destination is destination
 
 
 def test_pipeline_rejects_incompatible_drivers():

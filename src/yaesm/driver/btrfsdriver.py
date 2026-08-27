@@ -141,7 +141,7 @@ class BtrfsDriver(DriverBase):
         try:
             return self.cap_import(self.cap_export(snapshot, base), operation)
         finally:
-            self._delete((snapshot,))
+            self.cap_cleanup(snapshot)
 
     def cap_export(self, source: BtrfsSnapshot, base: BtrfsSnapshot | None = None) -> BtrfsStream:
         if base is not None and not same_endpoint(source.target, base.target):
@@ -230,6 +230,9 @@ class BtrfsDriver(DriverBase):
         if any(not same_endpoint(snapshot.target, self.target) for snapshot in snapshots):
             raise BtrfsDriverError("Btrfs artifact uses a different SSH endpoint")
         self._delete(snapshots)
+
+    def cap_cleanup(self, representation: BtrfsSnapshot) -> None:
+        self._delete((representation,))
 
     def _bootstrap(self, source: BtrfsSubvolume, backup_name: str) -> BtrfsSnapshot:
         name = f".yaesm-btrfs-bootstrap-{backup_name}"

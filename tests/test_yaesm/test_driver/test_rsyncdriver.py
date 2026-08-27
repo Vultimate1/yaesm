@@ -8,11 +8,11 @@ import pytest
 import voluptuous as vlp
 
 import yaesm.ty as ty
-from yaesm.backup import BackupArtifact, BackupOperation
+from yaesm.backup import Backup, BackupArtifact, BackupOperation
 from yaesm.command import Command, CommandResult, CommandRunner
 from yaesm.driver.btrfsdriver import BtrfsDriver, BtrfsSubvolume
 from yaesm.driver.rsyncdriver import RsyncDriver, RsyncDriverError, RsyncTree
-from yaesm.pipeline import IncrementalBase, Pipeline, PipelineStep
+from yaesm.pipeline import Pipeline, PipelineStep
 from yaesm.representation import PathTree, ReadableTree
 from yaesm.ssh import SSHTarget
 
@@ -444,14 +444,11 @@ def test_rsync_integration(tmp_path):
     (source / "changed").write_text("before")
     source_driver = RsyncDriver(source)
     driver = RsyncDriver(destination)
-    pipeline = Pipeline(source_driver, driver)
+    backup = Backup("example", Pipeline(source_driver, driver), (), ())
 
-    first = pipeline.execute(operation())
+    first = backup.execute("manual", operation().created_at)
     (source / "changed").write_text("after")
-    second = pipeline.execute(
-        operation(1),
-        IncrementalBase(None, first.representation, first.operation.created_at),
-    )
+    second = backup.execute("manual", operation(1).created_at)
 
     assert (second.representation.path / "changed").read_text() == "after"
     assert (first.representation.path / "unchanged").stat().st_ino == (

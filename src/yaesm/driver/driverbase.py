@@ -35,6 +35,7 @@ class CapabilityMetadata:
     requires: frozenset[DataProperty] = frozenset()
     base: ty.Literal["source", "destination"] | None = None
     pipeline: bool = True
+    temporary: bool = False
 
 
 def capability(
@@ -44,6 +45,7 @@ def capability(
     requires: ty.Sequence[DataProperty] = (),
     base: ty.Literal["source", "destination"] | None = None,
     pipeline: bool = True,
+    temporary: bool = False,
 ) -> ty.Callable[[_Method], _Method]:
     """Mark a DriverBase method as a capability."""
 
@@ -51,7 +53,14 @@ def capability(
         setattr(
             method,
             _CAPABILITY_ATTRIBUTE,
-            CapabilityMetadata(name, frozenset(adds), frozenset(requires), base, pipeline),
+            CapabilityMetadata(
+                name,
+                frozenset(adds),
+                frozenset(requires),
+                base,
+                pipeline,
+                temporary,
+            ),
         )
         return method
 
@@ -75,6 +84,7 @@ class DriverBase(abc.ABC):
     - ``cap_encrypt``: encrypt a byte stream.
     - ``cap_list``: list stored backup artifacts.
     - ``cap_delete``: delete stored backup artifacts.
+    - ``cap_cleanup``: remove a temporary representation.
     """
 
     @classmethod
@@ -143,7 +153,7 @@ class DriverBase(abc.ABC):
         """Persist source as an artifact for an operation, optionally using a base."""
         raise NotImplementedError(f"{self.name()} driver does not provide the store capability")
 
-    @capability("snapshot", adds=(DataProperty.SNAPSHOT,))
+    @capability("snapshot", adds=(DataProperty.SNAPSHOT,), temporary=True)
     def cap_snapshot(self, source: Representation) -> Representation:
         """Create a point-in-time representation of source data."""
         raise NotImplementedError(f"{self.name()} driver does not provide the snapshot capability")
@@ -193,3 +203,8 @@ class DriverBase(abc.ABC):
     ) -> None:
         """Delete stored backup artifacts."""
         raise NotImplementedError(f"{self.name()} driver does not provide the delete capability")
+
+    @capability("cleanup", pipeline=False)
+    def cap_cleanup(self, representation: Representation) -> None:
+        """Remove a temporary representation produced by this driver."""
+        raise NotImplementedError(f"{self.name()} driver does not provide the cleanup capability")

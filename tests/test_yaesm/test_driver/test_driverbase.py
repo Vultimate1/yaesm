@@ -77,6 +77,9 @@ class AllCapabilitiesDriver(DriverBase):
     ) -> None:
         pass
 
+    def cap_cleanup(self, representation: Representation) -> None:
+        pass
+
     def cap_fake(self) -> None:
         pass
 
@@ -109,11 +112,12 @@ def test_capabilities_are_advertised_by_defining_methods():
         "encrypt",
         "list",
         "delete",
+        "cleanup",
     }
 
 
 def test_lifecycle_capabilities_are_excluded_from_pipelines():
-    assert {"list", "delete"}.isdisjoint(AllCapabilitiesDriver.pipeline_capabilities())
+    assert {"list", "delete", "cleanup"}.isdisjoint(AllCapabilitiesDriver.pipeline_capabilities())
 
 
 def test_driver_without_capabilities_advertises_none():
@@ -137,6 +141,7 @@ def test_capability_effects_are_described_by_metadata():
     assert driver.capability_metadata("export").base == "source"
     assert driver.capability_metadata("store").base == "destination"
     assert driver.capability_metadata("import").base == "destination"
+    assert driver.capability_metadata("snapshot").temporary is True
 
 
 @pytest.mark.parametrize(
@@ -152,6 +157,7 @@ def test_capability_effects_are_described_by_metadata():
         "encrypt",
         "list",
         "delete",
+        "cleanup",
     ],
 )
 def test_unsupported_capability_error_names_driver(capability):
