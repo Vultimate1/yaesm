@@ -3,12 +3,24 @@
 import abc
 import dataclasses
 
+import voluptuous as vlp
+
 import yaesm.ty as ty
 from yaesm.backup import BackupArtifact
 
 
 class RetentionPolicyBase(abc.ABC):
     """Base class for policies that select artifacts to retain."""
+
+    @classmethod
+    @abc.abstractmethod
+    def name(cls) -> str:
+        """Return the stable configuration name for this policy."""
+
+    @staticmethod
+    @abc.abstractmethod
+    def config_schema() -> vlp.Schema:
+        """Return the complete schema for this policy's configuration."""
 
     @abc.abstractmethod
     def retain(
@@ -24,9 +36,29 @@ class KeepLast(RetentionPolicyBase):
     count: int
     schedule_name: str | None = None
 
+    @classmethod
+    def name(cls) -> str:
+        return "keep-last"
+
     def __post_init__(self) -> None:
         if self.count < 1:
             raise ValueError("count must be at least 1")
+
+    @staticmethod
+    def config_schema() -> vlp.Schema:
+        def count(value: object) -> int:
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise vlp.Invalid("count must be a positive integer")
+            return value
+
+        mapping = vlp.Schema({vlp.Required("count"): count})
+        return vlp.Schema(
+            lambda value: mapping(
+                {"count": value}
+                if isinstance(value, int) and not isinstance(value, bool)
+                else value
+            )
+        )
 
     def retain(
         self, artifacts: ty.Sequence[BackupArtifact], now: ty.datetime
@@ -40,3 +72,64 @@ class KeepLast(RetentionPolicyBase):
         return sorted(matching, key=lambda artifact: artifact.operation.created_at, reverse=True)[
             : self.count
         ]
+
+
+@dataclasses.dataclass(frozen=True)
+class KeepFor(RetentionPolicyBase):
+    """Retain artifacts created within a duration, optionally from one schedule."""
+
+    duration: ty.timedelta
+    schedule_name: str | None = None
+
+    @classmethod
+    def name(cls) -> str:
+        return "keep-for"
+
+    def __post_init__(self) -> None:
+        if self.duration <= ty.timedelta():
+            raise ValueError("duration must be greater than zero")
+
+    @staticmethod
+    def config_schema() -> vlp.Schema:
+        def duration(value: object) -> ty.timedelta:
+            if isinstance(value, str) and len(value) > 1:
+                amount, unit = value[:-1], value[-1].lower()
+                units = {
+                    "s": "seconds",
+                    "m": "minutes",
+                    "h": "hours",
+                    "d": "days",
+                    "w": "weeks",
+                    "y": "days",
+                }
+                if amount.isdecimal() and unit in units:
+                    number = int(amount) * (365 if unit == "y" else 1)
+                    try:
+                        value = ty.timedelta(**{units[unit]: number})
+                    except OverflowError:
+                        value = None
+            if not isinstance(value, ty.timedelta) or value <= ty.timedelta():
+                raise vlp.Invalid("duration must be a positive duration")
+            return value
+
+        mapping = vlp.Schema({vlp.Required("duration"): duration})
+        return vlp.Schema(
+            lambda value: mapping(
+                {"duration": value} if isinstance(value, str | ty.timedelta) else value
+            )
+        )
+
+    def retain(
+        self, artifacts: ty.Sequence[BackupArtifact], now: ty.datetime
+    ) -> list[BackupArtifact]:
+        """Return matching artifacts created within the duration."""
+        cutoff = now - self.duration
+        matching = (
+            artifact
+            for artifact in artifacts
+            if artifact.operation.created_at >= cutoff
+            and (
+                self.schedule_name is None or artifact.operation.schedule_name == self.schedule_name
+            )
+        )
+        return sorted(matching, key=lambda artifact: artifact.operation.created_at, reverse=True)

@@ -11,7 +11,7 @@ from yaesm.driver.driverbase import DriverBase, DriverError
 from yaesm.pipeline import Pipeline
 from yaesm.representation import Representation
 from yaesm.retention import KeepLast
-from yaesm.schedule import Schedule
+from yaesm.schedule import CronSchedule, Schedule
 
 
 @pytest.fixture
@@ -93,7 +93,7 @@ def configured_backup(
 
 
 def test_backup_has_composable_settings(pipeline):
-    schedules = (Schedule("hourly", ()),)
+    schedules = (Schedule("hourly", CronSchedule("0 * * * *")),)
     retention_policies = (KeepLast(1),)
     backup = bckp.Backup("home", pipeline, schedules, retention_policies)
 
