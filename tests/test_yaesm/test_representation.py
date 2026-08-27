@@ -1,0 +1,47 @@
+"""Tests for yaesm.representation."""
+
+from yaesm.representation import (
+    BlockDevice,
+    ByteStream,
+    CommandStream,
+    CompressedStream,
+    DataProperty,
+    EncryptedStream,
+    PathTree,
+    ReadableTree,
+    Representation,
+    UncompressedStream,
+)
+from yaesm.ssh import SSHTarget
+
+
+def test_representation_types_share_one_root():
+    assert ReadableTree.__bases__ == (Representation,)
+    assert PathTree.__bases__ == (ReadableTree,)
+    assert BlockDevice.__bases__ == (Representation,)
+    assert ByteStream.__bases__ == (Representation,)
+    assert CommandStream.__bases__ == (ByteStream,)
+    assert UncompressedStream.__bases__ == (CommandStream,)
+    assert CompressedStream.__bases__ == (CommandStream,)
+    assert EncryptedStream.__bases__ == (CommandStream,)
+
+
+def test_path_tree_has_local_or_remote_location(tmp_path):
+    target = SSHTarget("ssh://host", tmp_path / "key")
+
+    assert PathTree(tmp_path).path == tmp_path
+    assert PathTree(tmp_path, target).target is target
+
+
+def test_command_stream_contains_commands():
+    stream = CommandStream((("first",), ("second", "argument")))
+
+    assert stream.commands == (("first",), ("second", "argument"))
+
+
+def test_data_properties():
+    assert {property_.value for property_ in DataProperty} == {
+        "snapshot",
+        "compressed",
+        "encrypted",
+    }

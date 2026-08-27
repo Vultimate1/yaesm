@@ -1,0 +1,192 @@
+"""Tests for yaesm.command."""
+
+import subprocess
+import sys
+
+import pytest
+
+import yaesm.command as command_module
+from yaesm.command import CommandError, CommandRunner
+
+
+def test_run_captures_output():
+    result = CommandRunner().run(
+        [sys.executable, "-c", "import sys; print('out'); print('err', file=sys.stderr)"],
+        capture_output=True,
+    )
+
+    assert result.stdout == "out\n"
+    assert result.stderr == "err"
+    assert result.returncode == 0
+    assert result.returncodes == (0,)
+
+
+def test_pipeline_streams_between_commands():
+    result = CommandRunner().pipeline(
+        [
+            [sys.executable, "-c", "print('hello')"],
+            [sys.executable, "-c", "import sys; sys.stdout.write(sys.stdin.read().upper())"],
+        ],
+        capture_output=True,
+    )
+
+    assert result.stdout == "HELLO\n"
+
+
+def test_pipeline_reports_failed_command():
+    failed = [
+        sys.executable,
+        "-c",
+        "import sys; print('failure', file=sys.stderr); sys.exit(7)",
+    ]
+
+    with pytest.raises(CommandError) as error:
+        CommandRunner().pipeline(
+            [
+                [sys.executable, "-c", "print('input')"],
+                failed,
+            ]
+        )
+
+    assert error.value.command == tuple(failed)
+    assert error.value.returncode == 7
+    assert error.value.stderr == "failure\n"
+    assert "command exited with status 7" in str(error.value)
+    assert "failure" in str(error.value)
+
+
+def test_pipeline_checks_nonfinal_command():
+    failed = [sys.executable, "-c", "import sys; sys.exit(6)"]
+
+    with pytest.raises(CommandError) as error:
+        CommandRunner().pipeline(
+            [
+                failed,
+                [sys.executable, "-c", "import sys; sys.stdin.read()"],
+            ]
+        )
+
+    assert error.value.command == tuple(failed)
+    assert error.value.returncode == 6
+
+
+def test_run_allows_failure():
+    result = CommandRunner().run([sys.executable, "-c", "import sys; sys.exit(5)"], check=False)
+
+    assert result.returncode == 5
+    assert result.returncodes == (5,)
+
+
+def test_pipeline_reports_all_statuses_without_checking():
+    result = CommandRunner().pipeline(
+        [
+            [sys.executable, "-c", "import sys; sys.exit(6)"],
+            [sys.executable, "-c", "import sys; sys.stdin.read(); sys.exit(7)"],
+        ],
+        check=False,
+    )
+
+    assert result.returncode == 7
+    assert result.returncodes == (6, 7)
+
+
+def test_run_reports_command_that_cannot_start(tmp_path):
+    missing = [tmp_path / "missing-command"]
+
+    with pytest.raises(CommandError) as error:
+        CommandRunner().run(missing)
+
+    assert error.value.command == (str(missing[0]),)
+    assert error.value.returncode is None
+    assert "could not start command" in str(error.value)
+
+
+def test_pipeline_terminates_process_when_next_command_cannot_start(tmp_path, monkeypatch):
+    started = []
+    popen = subprocess.Popen
+
+    def record_process(*args, **kwargs):
+        process = popen(*args, **kwargs)
+        started.append(process)
+        return process
+
+    monkeypatch.setattr(command_module.subprocess, "Popen", record_process)
+
+    with pytest.raises(CommandError):
+        CommandRunner().pipeline(
+            [
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                [tmp_path / "missing-command"],
+            ]
+        )
+
+    assert len(started) == 1
+    assert started[0].returncode is not None
+
+
+def test_pipeline_terminates_process_when_interrupted(monkeypatch):
+    started = []
+    popen = subprocess.Popen
+
+    def interrupt_second_process(*args, **kwargs):
+        if started:
+            raise KeyboardInterrupt
+        process = popen(*args, **kwargs)
+        started.append(process)
+        return process
+
+    monkeypatch.setattr(command_module.subprocess, "Popen", interrupt_second_process)
+
+    with pytest.raises(KeyboardInterrupt):
+        CommandRunner().pipeline(
+            [
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                [sys.executable, "-c", "pass"],
+            ]
+        )
+
+    assert started[0].returncode is not None
+
+
+def test_pipeline_reports_rightmost_failure():
+    rightmost = [sys.executable, "-c", "import sys; sys.stdin.read(); sys.exit(7)"]
+
+    with pytest.raises(CommandError) as error:
+        CommandRunner().pipeline(
+            [
+                [sys.executable, "-c", "import sys; sys.exit(6)"],
+                rightmost,
+            ]
+        )
+
+    assert error.value.command == tuple(rightmost)
+    assert error.value.returncode == 7
+
+
+def test_pipeline_combines_stderr():
+    result = CommandRunner().pipeline(
+        [
+            [
+                sys.executable,
+                "-c",
+                "import sys; print('first', file=sys.stderr); print('input')",
+            ],
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdin.read(); print('second', file=sys.stderr)",
+            ],
+        ]
+    )
+
+    assert result.stderr == "first\nsecond"
+
+
+def test_pipeline_rejects_no_commands():
+    with pytest.raises(ValueError, match="pipeline cannot be empty"):
+        CommandRunner().pipeline([])
+
+
+def test_pipeline_rejects_empty_command():
+    with pytest.raises(ValueError, match="command cannot be empty"):
+        CommandRunner().pipeline([[sys.executable, "-c", "pass"], []])
