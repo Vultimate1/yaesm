@@ -6,6 +6,7 @@ import dataclasses
 import re
 
 import yaesm.ty as ty
+from yaesm.errors import YaesmError
 from yaesm.representation import Representation
 
 _RepresentationT = ty.TypeVar("_RepresentationT", bound=Representation, covariant=True)
@@ -16,7 +17,8 @@ if ty.TYPE_CHECKING:
     from yaesm.schedule import Schedule
 
 
-class BackupError(Exception): ...
+class BackupError(YaesmError):
+    """Raised when a backup cannot be prepared or executed."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -26,6 +28,22 @@ class BackupOperation:
     backup_name: str
     schedule_name: str
     created_at: ty.datetime
+
+    @classmethod
+    def from_artifact_name(cls, backup_name: str, artifact_name: str) -> BackupOperation:
+        """Reconstruct an operation from one of its artifact names."""
+        prefix = f"yaesm-{backup_name}-"
+        if not artifact_name.startswith(prefix):
+            raise ValueError(f"invalid artifact name: {artifact_name!r}")
+
+        try:
+            schedule_name, timestamp = artifact_name.removeprefix(prefix).rsplit(".", 1)
+            created_at = ty.datetime.strptime(timestamp, "%Y_%m_%d_%H:%M")
+        except ValueError as error:
+            raise ValueError(f"invalid artifact name: {artifact_name!r}") from error
+        if not schedule_name:
+            raise ValueError(f"invalid artifact name: {artifact_name!r}")
+        return cls(backup_name, schedule_name, created_at)
 
     @property
     def artifact_name(self) -> str:

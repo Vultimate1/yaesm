@@ -22,6 +22,10 @@ _CAPABILITY_ATTRIBUTE = "__yaesm_capability__"
 _Method = ty.TypeVar("_Method", bound=ty.Callable[..., object])
 
 
+class DriverError(bckp.BackupError):
+    """Raised when a driver cannot perform a capability."""
+
+
 @dataclasses.dataclass(frozen=True)
 class CapabilityMetadata:
     """Metadata attached to a capability method."""
@@ -29,6 +33,7 @@ class CapabilityMetadata:
     name: str
     adds: frozenset[DataProperty] = frozenset()
     requires: frozenset[DataProperty] = frozenset()
+    base: ty.Literal["source", "destination"] | None = None
     pipeline: bool = True
 
 
@@ -37,6 +42,7 @@ def capability(
     *,
     adds: ty.Sequence[DataProperty] = (),
     requires: ty.Sequence[DataProperty] = (),
+    base: ty.Literal["source", "destination"] | None = None,
     pipeline: bool = True,
 ) -> ty.Callable[[_Method], _Method]:
     """Mark a DriverBase method as a capability."""
@@ -45,7 +51,7 @@ def capability(
         setattr(
             method,
             _CAPABILITY_ATTRIBUTE,
-            CapabilityMetadata(name, frozenset(adds), frozenset(requires), pipeline),
+            CapabilityMetadata(name, frozenset(adds), frozenset(requires), base, pipeline),
         )
         return method
 
@@ -67,6 +73,7 @@ class DriverBase(abc.ABC):
     - ``cap_import``: import a byte stream as a stored artifact.
     - ``cap_compress``: compress an uncompressed byte stream.
     - ``cap_encrypt``: encrypt a byte stream.
+    - ``cap_list``: list stored backup artifacts.
     - ``cap_delete``: delete stored backup artifacts.
     """
 
@@ -126,7 +133,7 @@ class DriverBase(abc.ABC):
         """Make source data available in a supported representation."""
         raise NotImplementedError(f"{self.name()} driver does not provide the source capability")
 
-    @capability("store")
+    @capability("store", base="destination")
     def cap_store(
         self,
         source: Representation,
@@ -146,12 +153,12 @@ class DriverBase(abc.ABC):
         """Expose a block device as a readable directory tree."""
         raise NotImplementedError(f"{self.name()} driver does not provide the expose capability")
 
-    @capability("export")
+    @capability("export", base="source")
     def cap_export(self, source: Representation, base: Representation | None = None) -> ByteStream:
         """Export source data, optionally relative to another representation."""
         raise NotImplementedError(f"{self.name()} driver does not provide the export capability")
 
-    @capability("import")
+    @capability("import", base="destination")
     def cap_import(
         self,
         source: ByteStream,
@@ -170,6 +177,14 @@ class DriverBase(abc.ABC):
     def cap_encrypt(self, source: ByteStream) -> EncryptedStream:
         """Encrypt a byte stream."""
         raise NotImplementedError(f"{self.name()} driver does not provide the encrypt capability")
+
+    @capability("list", pipeline=False)
+    def cap_list(
+        self,
+        backup_name: str,
+    ) -> ty.Sequence[bckp.BackupArtifact[Representation]]:
+        """Return stored artifacts for a backup, newest first."""
+        raise NotImplementedError(f"{self.name()} driver does not provide the list capability")
 
     @capability("delete", pipeline=False)
     def cap_delete(

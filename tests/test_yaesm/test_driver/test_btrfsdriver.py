@@ -157,8 +157,10 @@ def test_cap_source(tmp_path):
         "snapshot",
         "export",
         "import",
+        "list",
         "delete",
     }
+    assert driver.capability_metadata("store").base == "source"
     assert driver.cap_source() == BtrfsSubvolume(tmp_path)
 
 
@@ -544,6 +546,66 @@ def test_cap_import_cleans_up_failed_receive(tmp_path):
         BtrfsDriver(tmp_path, runner=runner).cap_import(stream, operation())
 
     assert runner.commands == [("btrfs", "subvolume", "delete", str(tmp_path / "snapshot"))]
+
+
+def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
+    destination = tmp_path / "destination"
+    older = BackupOperation("example", "hourly", datetime(2026, 8, 27, 12, 30))
+    newer = BackupOperation("example", "hourly", datetime(2026, 8, 27, 13, 30))
+    runner = RecordingRunner(
+        stdouts=(
+            "\n".join(
+                (
+                    str(destination / older.artifact_name),
+                    str(destination / "not-an-artifact"),
+                    str(destination / newer.artifact_name),
+                )
+            ),
+        )
+    )
+
+    artifacts = BtrfsDriver(destination, runner=runner).cap_list("example")
+
+    assert artifacts == (
+        BackupArtifact(newer, BtrfsSnapshot(destination / newer.artifact_name)),
+        BackupArtifact(older, BtrfsSnapshot(destination / older.artifact_name)),
+    )
+    assert runner.commands == [
+        (
+            "find",
+            str(destination),
+            "!",
+            "-path",
+            str(destination),
+            "-prune",
+            "-type",
+            "d",
+            "-print",
+        )
+    ]
+
+
+def test_cap_list_remote(tmp_path):
+    runner = RecordingRunner()
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    destination = tmp_path / "destination"
+
+    assert BtrfsDriver(destination, target, runner=runner).cap_list("example") == ()
+    assert runner.commands == [
+        target.openssh_command(
+            (
+                "find",
+                destination,
+                "!",
+                "-path",
+                destination,
+                "-prune",
+                "-type",
+                "d",
+                "-print",
+            )
+        )
+    ]
 
 
 def test_cap_delete_batches_artifacts(tmp_path):

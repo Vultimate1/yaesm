@@ -65,6 +65,12 @@ class AllCapabilitiesDriver(DriverBase):
     def cap_encrypt(self, source: ByteStream) -> EncryptedStream:
         return EncryptedStream()
 
+    def cap_list(
+        self,
+        backup_name: str,
+    ) -> ty.Sequence[bckp.BackupArtifact[Representation]]:
+        return ()
+
     def cap_delete(
         self,
         artifacts: ty.Sequence[bckp.BackupArtifact[Representation]],
@@ -101,12 +107,13 @@ def test_capabilities_are_advertised_by_defining_methods():
         "import",
         "compress",
         "encrypt",
+        "list",
         "delete",
     }
 
 
 def test_lifecycle_capabilities_are_excluded_from_pipelines():
-    assert "delete" not in AllCapabilitiesDriver.pipeline_capabilities()
+    assert {"list", "delete"}.isdisjoint(AllCapabilitiesDriver.pipeline_capabilities())
 
 
 def test_driver_without_capabilities_advertises_none():
@@ -127,6 +134,9 @@ def test_capability_effects_are_described_by_metadata():
     assert driver.capability_metadata("snapshot").adds == {DataProperty.SNAPSHOT}
     assert driver.capability_metadata("compress").adds == {DataProperty.COMPRESSED}
     assert driver.capability_metadata("encrypt").adds == {DataProperty.ENCRYPTED}
+    assert driver.capability_metadata("export").base == "source"
+    assert driver.capability_metadata("store").base == "destination"
+    assert driver.capability_metadata("import").base == "destination"
 
 
 @pytest.mark.parametrize(
@@ -140,6 +150,7 @@ def test_capability_effects_are_described_by_metadata():
         "import",
         "compress",
         "encrypt",
+        "list",
         "delete",
     ],
 )
@@ -149,6 +160,8 @@ def test_unsupported_capability_error_names_driver(capability):
     operation = bckp.BackupOperation("name", "manual", datetime(2000, 1, 1))
     if capability == "source":
         args = ()
+    elif capability == "list":
+        args = ("name",)
     elif capability == "delete":
         args = ((),)
     elif capability in {"store", "import"}:

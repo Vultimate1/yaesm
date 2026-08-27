@@ -9,13 +9,13 @@ import voluptuous as vlp
 import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.command import Command, CommandRunner
-from yaesm.driver.driverbase import DriverBase
+from yaesm.driver.driverbase import DriverBase, DriverError
 from yaesm.representation import PathTree
 from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
 
 
-class RsyncDriverError(Exception):
-    """Raised when an rsync capability cannot be performed."""
+class RsyncDriverError(DriverError):
+    """Raised when an Rsync capability cannot be performed."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -118,6 +118,36 @@ class RsyncDriver(DriverBase):
             self._delete((destination,), check=False)
             raise
         return bckp.BackupArtifact(operation, destination)
+
+    def cap_list(self, backup_name: str) -> tuple[bckp.BackupArtifact[RsyncTree], ...]:
+        result = self.runner.run(
+            command_for_target(
+                self.target,
+                (
+                    "find",
+                    self.location,
+                    "!",
+                    "-path",
+                    self.location,
+                    "-prune",
+                    "-type",
+                    "d",
+                    "-print",
+                ),
+            ),
+            capture_output=True,
+        )
+        artifacts = []
+        for value in (result.stdout or "").splitlines():
+            path = Path(value)
+            try:
+                operation = bckp.BackupOperation.from_artifact_name(backup_name, path.name)
+            except ValueError:
+                continue
+            artifacts.append(bckp.BackupArtifact(operation, RsyncTree(path, self.target)))
+        return tuple(
+            sorted(artifacts, key=lambda artifact: artifact.operation.created_at, reverse=True)
+        )
 
     def cap_delete(
         self,

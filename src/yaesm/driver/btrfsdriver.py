@@ -9,12 +9,12 @@ import voluptuous as vlp
 import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.command import CommandRunner
-from yaesm.driver.driverbase import DriverBase
+from yaesm.driver.driverbase import DriverBase, DriverError, capability
 from yaesm.representation import PathTree, UncompressedStream
 from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
 
 
-class BtrfsDriverError(Exception):
+class BtrfsDriverError(DriverError):
     """Raised when a Btrfs capability cannot be performed."""
 
 
@@ -107,6 +107,7 @@ class BtrfsDriver(DriverBase):
         )
         return snapshot
 
+    @capability("store", base="source")
     def cap_store(
         self,
         source: BtrfsSubvolume,
@@ -189,6 +190,36 @@ class BtrfsDriver(DriverBase):
         return bckp.BackupArtifact(
             operation,
             BtrfsSnapshot(destination, self.target),
+        )
+
+    def cap_list(self, backup_name: str) -> tuple[bckp.BackupArtifact[BtrfsSnapshot], ...]:
+        result = self.runner.run(
+            command_for_target(
+                self.target,
+                (
+                    "find",
+                    self.location,
+                    "!",
+                    "-path",
+                    self.location,
+                    "-prune",
+                    "-type",
+                    "d",
+                    "-print",
+                ),
+            ),
+            capture_output=True,
+        )
+        artifacts = []
+        for value in (result.stdout or "").splitlines():
+            path = Path(value)
+            try:
+                operation = bckp.BackupOperation.from_artifact_name(backup_name, path.name)
+            except ValueError:
+                continue
+            artifacts.append(bckp.BackupArtifact(operation, BtrfsSnapshot(path, self.target)))
+        return tuple(
+            sorted(artifacts, key=lambda artifact: artifact.operation.created_at, reverse=True)
         )
 
     def cap_delete(

@@ -9,9 +9,10 @@ from pathlib import Path
 
 import yaesm.ty as ty
 from yaesm.command import Command, CommandResult, CommandRunner
+from yaesm.errors import YaesmError
 
 
-class SSHTargetError(ValueError):
+class SSHTargetError(YaesmError, ValueError):
     """Raised when an SSH target specification is invalid."""
 
 

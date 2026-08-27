@@ -44,6 +44,33 @@ def test_backup_operation():
     assert operation.artifact_name == "yaesm-home-hourly.2026_08_27_12:30"
 
 
+def test_backup_operation_from_artifact_name():
+    assert bckp.BackupOperation.from_artifact_name(
+        "home-backup",
+        "yaesm-home-backup-every.six-hours.2026_08_27_12:30",
+    ) == bckp.BackupOperation(
+        "home-backup",
+        "every.six-hours",
+        datetime(2026, 8, 27, 12, 30),
+    )
+
+
+@pytest.mark.parametrize(
+    "artifact_name",
+    [
+        "other-home-hourly.2026_08_27_12:30",
+        "yaesm-other-hourly.2026_08_27_12:30",
+        "yaesm-home-.2026_08_27_12:30",
+        "yaesm-home-hourly",
+        "yaesm-home-hourly.invalid",
+        "yaesm-home-hourly.2026_08_27_12:30.extra",
+    ],
+)
+def test_backup_operation_rejects_invalid_artifact_name(artifact_name):
+    with pytest.raises(ValueError, match="invalid artifact name"):
+        bckp.BackupOperation.from_artifact_name("home", artifact_name)
+
+
 def test_backup_artifact():
     created_at = datetime(2026, 8, 22, 12, 30)
     operation = bckp.BackupOperation(

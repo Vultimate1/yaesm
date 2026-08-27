@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 
 import yaesm.ty as ty
+from yaesm.errors import YaesmError
 
 Command: ty.TypeAlias = ty.Sequence[str | ty.Path]
 
@@ -27,11 +28,11 @@ class CommandResult:
         return next((status for status in reversed(self.returncodes) if status), 0)
 
 
-class CommandError(Exception):
+class CommandError(YaesmError):
     """Raised when a command cannot start or exits unsuccessfully."""
 
     def __init__(self, command: Command, returncode: int | None, stderr: str) -> None:
-        self.command = tuple(str(arg) for arg in command)
+        self.command = tuple(str(argument) for argument in command)
         self.returncode = returncode
         self.stderr = stderr
         if returncode is None:

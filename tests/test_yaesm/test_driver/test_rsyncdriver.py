@@ -12,7 +12,7 @@ from yaesm.backup import BackupArtifact, BackupOperation
 from yaesm.command import Command, CommandResult, CommandRunner
 from yaesm.driver.btrfsdriver import BtrfsDriver, BtrfsSubvolume
 from yaesm.driver.rsyncdriver import RsyncDriver, RsyncDriverError, RsyncTree
-from yaesm.pipeline import Pipeline, PipelineStep
+from yaesm.pipeline import IncrementalBase, Pipeline, PipelineStep
 from yaesm.representation import PathTree, ReadableTree
 from yaesm.ssh import SSHTarget
 
@@ -26,9 +26,14 @@ _RSYNC_OPTIONS = (
 
 
 class RecordingRunner(CommandRunner):
-    def __init__(self, failures: ty.Iterable[BaseException | None] = ()) -> None:
+    def __init__(
+        self,
+        failures: ty.Iterable[BaseException | None] = (),
+        stdouts: ty.Iterable[str | None] = (),
+    ) -> None:
         self.commands: list[tuple[str, ...]] = []
         self.failures = list(failures)
+        self.stdouts = list(stdouts)
 
     def run(
         self,
@@ -42,7 +47,8 @@ class RecordingRunner(CommandRunner):
             failure = self.failures.pop(0)
             if failure is not None:
                 raise failure
-        return CommandResult(None, "", (0,))
+        stdout = self.stdouts.pop(0) if self.stdouts else None
+        return CommandResult(stdout, "", (0,))
 
 
 def operation(offset: int = 0) -> BackupOperation:
@@ -150,7 +156,8 @@ def test_constructor_rejects_invalid_extra_options(tmp_path, extra_options):
 def test_cap_source(tmp_path):
     driver = RsyncDriver(tmp_path)
 
-    assert driver.capabilities() == {"source", "store", "delete"}
+    assert driver.capabilities() == {"source", "store", "list", "delete"}
+    assert driver.capability_metadata("store").base == "destination"
     assert driver.cap_source() == PathTree(tmp_path)
 
 
@@ -294,6 +301,67 @@ def test_cap_store_cleans_up_failure(tmp_path):
     assert runner.commands[-1] == ("rm", "-rf", str(destination))
 
 
+def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
+    destination = tmp_path / "destination"
+    older = operation()
+    newer = operation(1)
+    runner = RecordingRunner(
+        stdouts=(
+            "\n".join(
+                (
+                    str(destination / older.artifact_name),
+                    str(destination / "unrelated"),
+                    str(destination / "yaesm-other-manual.2026_08_27_12:32"),
+                    str(destination / newer.artifact_name),
+                )
+            ),
+        )
+    )
+
+    artifacts = RsyncDriver(destination, runner=runner).cap_list("example")
+
+    assert artifacts == (
+        BackupArtifact(newer, RsyncTree(destination / newer.artifact_name)),
+        BackupArtifact(older, RsyncTree(destination / older.artifact_name)),
+    )
+    assert runner.commands == [
+        (
+            "find",
+            str(destination),
+            "!",
+            "-path",
+            str(destination),
+            "-prune",
+            "-type",
+            "d",
+            "-print",
+        )
+    ]
+
+
+def test_cap_list_remote(tmp_path):
+    runner = RecordingRunner()
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    destination = tmp_path / "destination"
+
+    assert RsyncDriver(destination, target, runner=runner).cap_list("example") == ()
+    assert runner.commands == [
+        target.openssh_command(
+            (
+                "find",
+                destination,
+                "!",
+                "-path",
+                destination,
+                "-prune",
+                "-type",
+                "d",
+                "-print",
+            )
+        )
+    ]
+
+
 def test_cap_delete_batches_artifacts(tmp_path):
     runner = RecordingRunner()
     artifacts = (
@@ -374,16 +442,22 @@ def test_rsync_integration(tmp_path):
     destination.mkdir()
     (source / "unchanged").write_text("same")
     (source / "changed").write_text("before")
+    source_driver = RsyncDriver(source)
     driver = RsyncDriver(destination)
+    pipeline = Pipeline(source_driver, driver)
 
-    first = driver.cap_store(PathTree(source), operation())
+    first = pipeline.execute(operation())
     (source / "changed").write_text("after")
-    second = driver.cap_store(PathTree(source), operation(1), first.representation)
+    second = pipeline.execute(
+        operation(1),
+        IncrementalBase(None, first.representation, first.operation.created_at),
+    )
 
     assert (second.representation.path / "changed").read_text() == "after"
     assert (first.representation.path / "unchanged").stat().st_ino == (
         second.representation.path / "unchanged"
     ).stat().st_ino
+    assert driver.cap_list("example") == (second, first)
 
     driver.cap_delete((first, second))
     assert not first.representation.path.exists()

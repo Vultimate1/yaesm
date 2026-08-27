@@ -5,7 +5,9 @@ from datetime import datetime
 import pytest
 import voluptuous as vlp
 
+import yaesm.ty as ty
 from yaesm.backup import BackupArtifact, BackupOperation
+from yaesm.command import CommandError
 from yaesm.driver.driverbase import DriverBase, capability
 from yaesm.pipeline import IncrementalBase, Pipeline, PipelineError, PipelineStep
 from yaesm.representation import (
@@ -20,6 +22,9 @@ from yaesm.representation import (
 
 
 class SourceDriver(DriverBase):
+    def __init__(self) -> None:
+        self.output = ReadableTree()
+
     @classmethod
     def name(cls) -> str:
         return "source"
@@ -29,10 +34,14 @@ class SourceDriver(DriverBase):
         return vlp.Schema({})
 
     def cap_source(self) -> ReadableTree:
-        return ReadableTree()
+        return self.output
 
 
 class ExportDriver(DriverBase):
+    def __init__(self) -> None:
+        self.output = UncompressedStream()
+        self.call: tuple[Representation, Representation | None] | None = None
+
     @classmethod
     def name(cls) -> str:
         return "export"
@@ -44,10 +53,23 @@ class ExportDriver(DriverBase):
     def cap_export(
         self, source: Representation, base: Representation | None = None
     ) -> UncompressedStream:
-        return UncompressedStream()
+        self.call = (source, base)
+        return self.output
+
+
+class FailingExportDriver(ExportDriver):
+    def cap_export(
+        self,
+        source: Representation,
+        base: Representation | None = None,
+    ) -> UncompressedStream:
+        raise CommandError(("export",), 1, "failed")
 
 
 class DestinationDriver(DriverBase):
+    def __init__(self) -> None:
+        self.call: tuple[ByteStream, BackupOperation, Representation | None] | None = None
+
     @classmethod
     def name(cls) -> str:
         return "destination"
@@ -62,7 +84,18 @@ class DestinationDriver(DriverBase):
         operation: BackupOperation,
         base: Representation | None = None,
     ) -> BackupArtifact:
-        raise NotImplementedError
+        self.call = (source, operation, base)
+        return BackupArtifact(operation, source)
+
+
+class BrokenDestinationDriver(DestinationDriver):
+    def cap_import(
+        self,
+        source: ByteStream,
+        operation: BackupOperation,
+        base: Representation | None = None,
+    ) -> BackupArtifact:
+        return ty.cast(BackupArtifact, ReadableTree())
 
 
 class EncryptionDriver(DriverBase):
@@ -121,6 +154,85 @@ def test_incremental_base_pairs_source_and_destination_states():
     assert base.source is source
     assert base.destination is destination
     assert base.created_at == created_at
+
+
+def test_incremental_base_can_contain_only_destination_state():
+    destination = ReadableTree()
+
+    base = IncrementalBase(None, destination, datetime(2026, 8, 27, 12, 30))
+
+    assert base.source is None
+    assert base.destination is destination
+
+
+def test_pipeline_executes_resolved_capabilities():
+    source = SourceDriver()
+    exporter = ExportDriver()
+    destination = DestinationDriver()
+    operation = BackupOperation("home", "hourly", datetime(2026, 8, 27, 12, 30))
+
+    artifact = Pipeline(source, destination, (exporter,)).execute(operation)
+
+    assert exporter.call == (source.output, None)
+    assert destination.call == (exporter.output, operation, None)
+    assert artifact == BackupArtifact(operation, exporter.output)
+
+
+def test_pipeline_passes_each_side_of_incremental_base():
+    source = SourceDriver()
+    exporter = ExportDriver()
+    destination = DestinationDriver()
+    source_base = ReadableTree()
+    destination_base = ByteStream()
+    base = IncrementalBase(
+        source_base,
+        destination_base,
+        datetime(2026, 8, 27, 12, 0),
+    )
+    operation = BackupOperation("home", "hourly", datetime(2026, 8, 27, 13, 0))
+
+    Pipeline(source, destination, (exporter,)).execute(operation, base)
+
+    assert exporter.call == (source.output, source_base)
+    assert destination.call == (exporter.output, operation, destination_base)
+
+
+def test_pipeline_executes_transform_capabilities():
+    operation = BackupOperation("home", "hourly", datetime(2026, 8, 27, 13, 0))
+    pipeline = Pipeline(
+        SourceDriver(),
+        DestinationDriver(),
+        (ExportDriver(), CompressionDriver(), CompressedEncryptionDriver()),
+        requirements={DataProperty.ENCRYPTED},
+    )
+
+    artifact = pipeline.execute(operation)
+
+    assert isinstance(artifact.representation, EncryptedStream)
+
+
+def test_pipeline_execution_error_names_backup_and_capability():
+    pipeline = Pipeline(SourceDriver(), BrokenDestinationDriver(), (ExportDriver(),))
+    operation = BackupOperation("home", "hourly", datetime(2026, 8, 27, 13, 0))
+
+    with pytest.raises(PipelineError) as error:
+        pipeline.execute(operation)
+
+    assert str(error.value) == (
+        "backup 'home': destination.import did not produce a backup artifact"
+    )
+
+
+def test_pipeline_formats_capability_failure_with_context():
+    pipeline = Pipeline(SourceDriver(), DestinationDriver(), (FailingExportDriver(),))
+    operation = BackupOperation("home", "hourly", datetime(2026, 8, 27, 13, 0))
+
+    with pytest.raises(PipelineError) as error:
+        pipeline.execute(operation)
+
+    assert error.value.format() == (
+        "backup 'home' failed in export.export\n  command exited with status 1: export\n    failed"
+    )
 
 
 def test_pipeline_resolves_compatible_driver_capabilities():
