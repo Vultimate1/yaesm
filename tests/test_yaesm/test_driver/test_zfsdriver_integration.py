@@ -10,6 +10,7 @@ import pytest
 
 import yaesm.ty as ty
 from yaesm.backup import Backup, DriverSource
+from yaesm.check import CheckRole
 from yaesm.driver.zfsdriver import ZFSDriver
 from yaesm.representation import DataProperty
 
@@ -81,6 +82,24 @@ def test_zfs_full_incremental_and_lifecycle(
 
     destination_driver.cap_delete((first, second))
     assert destination_driver.cap_list("example") == ()
+
+
+def test_zfs_checks_existing_source_and_new_destination(
+    zfs_pools: tuple[str, str],
+) -> None:
+    source_pool, destination_pool = zfs_pools
+    source_dataset = f"{source_pool}/source"
+    _run("zfs", "create", "-u", source_dataset)
+
+    source_results = tuple(
+        check.run() for check in ZFSDriver(source_dataset).check(CheckRole.SOURCE)
+    )
+    destination_results = tuple(
+        check.run()
+        for check in ZFSDriver(f"{destination_pool}/backup").check(CheckRole.DESTINATION)
+    )
+
+    assert all(result.passed for result in (*source_results, *destination_results))
 
 
 def test_zfs_raw_encrypted_full_and_incremental(

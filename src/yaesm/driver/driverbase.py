@@ -8,7 +8,7 @@ import voluptuous as vlp
 import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.check import Check, CheckRole
-from yaesm.command import Command, CommandRunner
+from yaesm.command import Command, CommandResult, CommandRunner
 from yaesm.representation import (
     BlockDevice,
     ByteStream,
@@ -168,9 +168,15 @@ class DriverBase(abc.ABC):
         """Return this driver's additional feasibility checks."""
         return ()
 
-    def _command_check(self, description: str, command: Command) -> Check:
+    def _command_check(
+        self,
+        description: str,
+        command: Command,
+        *,
+        validate: ty.Callable[[CommandResult], str | None] | None = None,
+    ) -> Check:
         """Return a deferred command check using this driver's runner."""
-        return Check.command(description, command, self.runner)
+        return Check.command(description, command, self.runner, validate=validate)
 
     @capability("source")
     def cap_source(self) -> Representation:

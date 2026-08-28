@@ -7,6 +7,8 @@ import voluptuous as vlp
 
 import yaesm.backup as bckp
 import yaesm.ty as ty
+from yaesm.check import Check, CheckRole
+from yaesm.command import CommandResult
 from yaesm.driver.driverbase import CapabilityMetadata, DriverBase, DriverError, capability
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, DataProperty, Representation
@@ -97,6 +99,58 @@ class ZFSDriver(DriverBase):
         return vlp.Schema(
             lambda value: mapping({"dataset": value} if isinstance(value, str) else value)
         )
+
+    def _checks(self, role: CheckRole) -> tuple[Check, ...]:
+        match role:
+            case CheckRole.SOURCE:
+                dataset_check = self._command_check(
+                    f"source dataset exists: {self.dataset}",
+                    command_for_target(
+                        self.target,
+                        ("zfs", "list", "-H", "-t", "filesystem", "-o", "name", self.dataset),
+                    ),
+                )
+                if not self.encryption:
+                    return (dataset_check,)
+                return (
+                    dataset_check,
+                    self._command_check(
+                        f"source dataset is encrypted: {self.dataset}",
+                        command_for_target(
+                            self.target,
+                            (
+                                "zfs",
+                                "get",
+                                "-H",
+                                "-o",
+                                "value",
+                                "encryption",
+                                self.dataset,
+                            ),
+                        ),
+                        validate=lambda result: _encryption_failure(self.dataset, result),
+                    ),
+                )
+            case CheckRole.DESTINATION:
+                parent = self.dataset.rpartition("/")[0] or self.dataset
+                return (
+                    self._command_check(
+                        f"destination parent dataset exists: {parent}",
+                        command_for_target(
+                            self.target,
+                            ("zfs", "list", "-H", "-t", "filesystem", "-o", "name", parent),
+                        ),
+                    ),
+                    self._command_check(
+                        f"destination dataset can be created: {self.dataset}",
+                        command_for_target(
+                            self.target,
+                            ("zfs", "create", "-n", "-p", "-u", self.dataset),
+                        ),
+                    ),
+                )
+            case CheckRole.TRANSFORM:
+                return ()
 
     def capability_metadata(self, name: str) -> CapabilityMetadata:
         metadata = super().capability_metadata(name)
@@ -328,8 +382,8 @@ class ZFSDriver(DriverBase):
             ),
             capture_output=True,
         )
-        if not result.stdout or result.stdout.strip() in {"-", "off"}:
-            raise ZFSDriverError(f"ZFS dataset is not encrypted: {dataset}")
+        if failure := _encryption_failure(dataset, result):
+            raise ZFSDriverError(failure)
 
 
 def _dataset_valid(value: object) -> bool:
@@ -342,3 +396,9 @@ def _dataset_valid(value: object) -> bool:
         and "@" not in value
         and "#" not in value
     )
+
+
+def _encryption_failure(dataset: str, result: CommandResult) -> str | None:
+    if (result.stdout or "").strip() in {"", "-", "off"}:
+        return f"ZFS dataset is not encrypted: {dataset}"
+    return None

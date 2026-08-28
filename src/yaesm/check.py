@@ -6,7 +6,7 @@ import dataclasses
 import enum
 
 import yaesm.ty as ty
-from yaesm.command import Command, CommandError, CommandRunner
+from yaesm.command import Command, CommandError, CommandResult, CommandRunner
 
 
 class CheckRole(enum.Enum):
@@ -49,6 +49,8 @@ class Check:
         description: str,
         command: Command,
         runner: CommandRunner,
+        *,
+        validate: ty.Callable[[CommandResult], str | None] | None = None,
     ) -> Check:
         """Return a deferred check for a harmless command."""
         command = tuple(str(argument) for argument in command)
@@ -62,11 +64,16 @@ class Check:
                     f"could not start {command[0]}",
                     stderr=error.stderr or None,
                 )
-            return CheckResult(
-                description,
+            failure = (
                 None
                 if result.returncode == 0
-                else f"{command[0]} exited with status {result.returncode}",
+                else f"{command[0]} exited with status {result.returncode}"
+            )
+            if failure is None and validate is not None:
+                failure = validate(result)
+            return CheckResult(
+                description,
+                failure,
                 result.stdout or None,
                 result.stderr or None,
             )

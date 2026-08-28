@@ -7,6 +7,7 @@ import voluptuous as vlp
 
 import yaesm.ty as ty
 from yaesm.backup import Backup, BackupArtifact, BackupOperation, DriverSource
+from yaesm.check import CheckRole
 from yaesm.command import Command, CommandResult, CommandRunner
 from yaesm.driver.zfsdriver import (
     ZFSDataset,
@@ -177,6 +178,74 @@ def test_cap_source_includes_ssh_target(tmp_path):
     target = SSHTarget("ssh://host", tmp_path / "key")
 
     assert ZFSDriver("tank/home", target).cap_source() == ZFSDataset("tank/home", target)
+
+
+def test_source_checks_dataset(tmp_path):
+    runner = RecordingRunner()
+    driver = with_runner(ZFSDriver("tank/home"), runner)
+
+    checks = driver.check(CheckRole.SOURCE)
+
+    assert tuple(check.description for check in checks) == (
+        "zfs is installed",
+        "source dataset exists: tank/home",
+    )
+    assert runner.commands == []
+    assert all(check.run().passed for check in checks)
+    assert runner.commands == [
+        ("zfs", "--version"),
+        ("zfs", "list", "-H", "-t", "filesystem", "-o", "name", "tank/home"),
+    ]
+
+
+def test_destination_checks_dataset_parent_and_creation_remotely(tmp_path):
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    runner = RecordingRunner()
+    driver = with_runner(ZFSDriver("tank/backups/home", target), runner)
+
+    checks = driver.check(CheckRole.DESTINATION)
+    for check in checks:
+        check.run()
+
+    assert tuple(check.description for check in checks) == (
+        "zfs is installed",
+        "destination parent dataset exists: tank/backups",
+        "destination dataset can be created: tank/backups/home",
+    )
+    assert runner.commands == [
+        ("zfs", "--version"),
+        target.openssh_command(
+            ("zfs", "list", "-H", "-t", "filesystem", "-o", "name", "tank/backups")
+        ),
+        target.openssh_command(("zfs", "create", "-n", "-p", "-u", "tank/backups/home")),
+    ]
+
+
+def test_encrypted_source_check_validates_encryption_property():
+    runner = RecordingRunner(stdouts=("aes-256-gcm\n",))
+    driver = with_runner(ZFSDriver("tank/home", encryption=True), runner)
+
+    result = driver.check(CheckRole.SOURCE)[2].run()
+
+    assert result.passed is True
+    assert result.stdout == "aes-256-gcm\n"
+
+
+@pytest.mark.parametrize("value", [None, "", "-\n", "off\n"])
+def test_encrypted_source_check_rejects_unencrypted_dataset(value):
+    runner = RecordingRunner(stdouts=(value,))
+    driver = with_runner(ZFSDriver("tank/home", encryption=True), runner)
+
+    result = driver.check(CheckRole.SOURCE)[2].run()
+
+    assert result.passed is False
+    assert result.failure == "ZFS dataset is not encrypted: tank/home"
+
+
+def test_transform_check_does_not_validate_unused_dataset():
+    checks = ZFSDriver("tank/home").check(CheckRole.TRANSFORM)
+
+    assert tuple(check.description for check in checks) == ("zfs is installed",)
 
 
 def test_cap_source_verifies_native_encryption():
