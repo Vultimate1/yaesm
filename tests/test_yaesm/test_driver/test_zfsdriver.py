@@ -62,6 +62,11 @@ class RecordingRunner(CommandRunner):
         return CommandResult(None, "", tuple(0 for _command in normalized))
 
 
+def with_runner(driver: ZFSDriver, runner: RecordingRunner) -> ZFSDriver:
+    driver.runner = runner
+    return driver
+
+
 def operation(hour: int = 12) -> BackupOperation:
     return BackupOperation("example", "hourly", datetime(2026, 8, 27, hour, 30))
 
@@ -177,7 +182,7 @@ def test_cap_source_includes_ssh_target(tmp_path):
 def test_cap_source_verifies_native_encryption():
     runner = RecordingRunner(stdouts=("aes-256-gcm\n",))
 
-    source = ZFSDriver("tank/home", runner=runner, encryption=True).cap_source()
+    source = with_runner(ZFSDriver("tank/home", encryption=True), runner).cap_source()
 
     assert source == ZFSDataset("tank/home", encrypted=True)
     assert runner.commands == [("zfs", "get", "-H", "-o", "value", "encryption", "tank/home")]
@@ -188,14 +193,14 @@ def test_cap_source_rejects_unencrypted_dataset(value):
     runner = RecordingRunner(stdouts=(value,))
 
     with pytest.raises(ZFSDriverError, match="ZFS dataset is not encrypted: tank/home"):
-        ZFSDriver("tank/home", runner=runner, encryption=True).cap_source()
+        with_runner(ZFSDriver("tank/home", encryption=True), runner).cap_source()
 
 
 def test_cap_source_checks_native_encryption_remotely(tmp_path):
     runner = RecordingRunner(stdouts=("aes-256-gcm\n",))
     target = SSHTarget("ssh://host", tmp_path / "key")
 
-    ZFSDriver("tank/home", target, runner, encryption=True).cap_source()
+    with_runner(ZFSDriver("tank/home", target, encryption=True), runner).cap_source()
 
     assert runner.commands == [
         target.openssh_command(("zfs", "get", "-H", "-o", "value", "encryption", "tank/home"))
@@ -205,7 +210,7 @@ def test_cap_source_checks_native_encryption_remotely(tmp_path):
 def test_cap_snapshot():
     runner = RecordingRunner()
 
-    snapshot = ZFSDriver("tank/home", runner=runner).cap_snapshot(ZFSDataset("tank/home"))
+    snapshot = with_runner(ZFSDriver("tank/home"), runner).cap_snapshot(ZFSDataset("tank/home"))
 
     assert snapshot.dataset == "tank/home"
     assert snapshot.snapshot.startswith(".yaesm-zfs-staging-")
@@ -216,13 +221,15 @@ def test_cap_snapshot_remote(tmp_path):
     runner = RecordingRunner()
     target = SSHTarget("ssh://host", tmp_path / "key")
 
-    snapshot = ZFSDriver("tank/home", runner=runner).cap_snapshot(ZFSDataset("tank/home", target))
+    snapshot = with_runner(ZFSDriver("tank/home"), runner).cap_snapshot(
+        ZFSDataset("tank/home", target)
+    )
 
     assert runner.commands == [target.openssh_command(("zfs", "snapshot", snapshot.name))]
 
 
 def test_cap_snapshot_preserves_encryption():
-    snapshot = ZFSDriver("tank/home", runner=RecordingRunner()).cap_snapshot(
+    snapshot = with_runner(ZFSDriver("tank/home"), RecordingRunner()).cap_snapshot(
         ZFSDataset("tank/home", encrypted=True)
     )
 
@@ -232,7 +239,7 @@ def test_cap_snapshot_preserves_encryption():
 def test_cap_store_snapshots_directly_in_same_dataset():
     runner = RecordingRunner()
 
-    artifact = ZFSDriver("tank/home", runner=runner).cap_store(
+    artifact = with_runner(ZFSDriver("tank/home"), runner).cap_store(
         ZFSDataset("tank/home"),
         operation(),
     )
@@ -248,7 +255,7 @@ def test_cap_store_snapshots_directly_on_same_remote(tmp_path):
     source_target = SSHTarget("ssh://host", tmp_path / "source-key")
     destination_target = SSHTarget("ssh://host", tmp_path / "destination-key")
 
-    ZFSDriver("tank/home", destination_target, runner).cap_store(
+    with_runner(ZFSDriver("tank/home", destination_target), runner).cap_store(
         ZFSDataset("tank/home", source_target),
         operation(),
     )
@@ -260,7 +267,7 @@ def test_cap_store_snapshots_directly_on_same_remote(tmp_path):
 def test_cap_store_sends_full_snapshot():
     runner = RecordingRunner()
 
-    artifact = ZFSDriver("backup/home", runner=runner).cap_store(
+    artifact = with_runner(ZFSDriver("backup/home"), runner).cap_store(
         ZFSDataset("tank/home"),
         operation(),
     )
@@ -289,7 +296,7 @@ def test_cap_store_sends_incremental_and_rotates_source_base():
     old = operation(11)
     base = ZFSSnapshot("backup/home", old.artifact_name)
 
-    ZFSDriver("backup/home", runner=runner).cap_store(
+    with_runner(ZFSDriver("backup/home"), runner).cap_store(
         ZFSDataset("tank/home"),
         operation(),
         base,
@@ -307,7 +314,7 @@ def test_cap_store_sends_incremental_and_rotates_source_base():
 def test_cap_store_preserves_native_encryption_with_raw_send():
     runner = RecordingRunner()
 
-    artifact = ZFSDriver("backup/home", runner=runner).cap_store(
+    artifact = with_runner(ZFSDriver("backup/home"), runner).cap_store(
         ZFSDataset("tank/home", encrypted=True),
         operation(),
     )
@@ -320,7 +327,7 @@ def test_cap_store_preserves_native_encryption_with_raw_send():
 def test_cap_store_can_enable_native_encryption():
     runner = RecordingRunner(stdouts=("aes-256-gcm\n",))
 
-    ZFSDriver("backup/home", runner=runner, encryption=True).cap_store(
+    with_runner(ZFSDriver("backup/home", encryption=True), runner).cap_store(
         ZFSDataset("tank/home"),
         operation(),
     )
@@ -353,7 +360,7 @@ def test_cap_store_cleans_up_new_source_snapshot_after_failure():
     runner = RecordingRunner(pipeline_failures=(RuntimeError("receive failed"),))
 
     with pytest.raises(RuntimeError, match="receive failed"):
-        ZFSDriver("backup/home", runner=runner).cap_store(
+        with_runner(ZFSDriver("backup/home"), runner).cap_store(
             ZFSDataset("tank/home"),
             operation(),
         )
@@ -389,7 +396,7 @@ def test_cap_export_uses_raw_send_for_native_encryption():
     runner = RecordingRunner(stdouts=("aes-256-gcm\n",))
     snapshot = ZFSSnapshot("tank/home", "snapshot")
 
-    stream = ZFSDriver("tank/home", runner=runner, encryption=True).cap_export(snapshot)
+    stream = with_runner(ZFSDriver("tank/home", encryption=True), runner).cap_export(snapshot)
 
     assert stream == ZFSStream((("zfs", "send", "-w", snapshot.name),), encrypted=True)
     assert runner.commands == [("zfs", "get", "-H", "-o", "value", "encryption", "tank/home")]
@@ -430,7 +437,7 @@ def test_cap_import_remote(tmp_path):
     target = SSHTarget("ssh://host", tmp_path / "key")
     stream = ZFSStream((("zfs", "send", "tank/home@snapshot"),))
 
-    artifact = ZFSDriver("backup/home", target, runner).cap_import(stream, operation())
+    artifact = with_runner(ZFSDriver("backup/home", target), runner).cap_import(stream, operation())
 
     assert artifact == BackupArtifact(
         operation(),
@@ -469,7 +476,7 @@ def test_cap_import_cleans_up_failed_snapshot():
     stream = ZFSStream((("zfs", "send", "tank/home@snapshot"),))
 
     with pytest.raises(RuntimeError, match="receive failed"):
-        ZFSDriver("backup/home", runner=runner).cap_import(stream, operation())
+        with_runner(ZFSDriver("backup/home"), runner).cap_import(stream, operation())
 
     assert runner.commands == [("zfs", "destroy", f"backup/home@{operation().artifact_name}")]
     assert runner.checks == [False]
@@ -482,7 +489,7 @@ def test_cap_import_preserves_encryption_state():
         encrypted=True,
     )
 
-    artifact = ZFSDriver("backup/home", runner=runner).cap_import(stream, operation())
+    artifact = with_runner(ZFSDriver("backup/home"), runner).cap_import(stream, operation())
 
     assert artifact.representation.encrypted is True
 
@@ -503,7 +510,7 @@ def test_cap_list_returns_matching_artifacts_newest_first():
         )
     )
 
-    artifacts = ZFSDriver("backup/home", runner=runner).cap_list("example")
+    artifacts = with_runner(ZFSDriver("backup/home"), runner).cap_list("example")
 
     assert artifacts == (
         BackupArtifact(newer, ZFSSnapshot("backup/home", newer.artifact_name)),
@@ -529,14 +536,14 @@ def test_cap_list_returns_matching_artifacts_newest_first():
 def test_cap_list_returns_empty_when_dataset_does_not_exist():
     runner = RecordingRunner((1,))
 
-    assert ZFSDriver("backup/home", runner=runner).cap_list("example") == ()
+    assert with_runner(ZFSDriver("backup/home"), runner).cap_list("example") == ()
 
 
 def test_cap_list_remote(tmp_path):
     runner = RecordingRunner()
     target = SSHTarget("ssh://host", tmp_path / "key")
 
-    assert ZFSDriver("backup/home", target, runner).cap_list("example") == ()
+    assert with_runner(ZFSDriver("backup/home", target), runner).cap_list("example") == ()
     assert runner.commands == [
         target.openssh_command(
             (
@@ -562,7 +569,7 @@ def test_cap_delete_batches_snapshots():
         BackupArtifact(operation(12), ZFSSnapshot("backup/home", "two")),
     )
 
-    ZFSDriver("backup/home", runner=runner).cap_delete(artifacts)
+    with_runner(ZFSDriver("backup/home"), runner).cap_delete(artifacts)
 
     assert runner.commands == [("zfs", "destroy", "backup/home@one,two")]
 
@@ -575,7 +582,7 @@ def test_cap_delete_batches_remote_snapshots(tmp_path):
         BackupArtifact(operation(12), ZFSSnapshot("backup/home", "two", target)),
     )
 
-    ZFSDriver("backup/home", target, runner).cap_delete(artifacts)
+    with_runner(ZFSDriver("backup/home", target), runner).cap_delete(artifacts)
 
     assert runner.commands == [target.openssh_command(("zfs", "destroy", "backup/home@one,two"))]
 
@@ -583,7 +590,7 @@ def test_cap_delete_batches_remote_snapshots(tmp_path):
 def test_cap_delete_accepts_empty_sequence():
     runner = RecordingRunner()
 
-    ZFSDriver("backup/home", runner=runner).cap_delete(())
+    with_runner(ZFSDriver("backup/home"), runner).cap_delete(())
 
     assert runner.commands == []
 
@@ -605,7 +612,7 @@ def test_cap_delete_rejects_snapshot_outside_destination(snapshot):
 def test_cap_cleanup_destroys_snapshot():
     runner = RecordingRunner()
 
-    ZFSDriver("tank/home", runner=runner).cap_cleanup(ZFSSnapshot("tank/home", "staging"))
+    with_runner(ZFSDriver("tank/home"), runner).cap_cleanup(ZFSSnapshot("tank/home", "staging"))
 
     assert runner.commands == [("zfs", "destroy", "tank/home@staging")]
 
@@ -616,7 +623,7 @@ def test_backup_execute_uses_zfs_store_and_incremental_base():
     backup = Backup(
         "example",
         DriverSource(ZFSDriver("tank/home")),
-        ZFSDriver("backup/home", runner=runner),
+        with_runner(ZFSDriver("backup/home"), runner),
     )
 
     artifact = backup.execute("hourly", operation().created_at)
@@ -641,8 +648,8 @@ def test_backup_execute_preserves_configured_native_encryption(requirements):
     destination_runner = RecordingRunner()
     backup = Backup(
         "example",
-        DriverSource(ZFSDriver("tank/home", runner=source_runner, encryption=True)),
-        ZFSDriver("backup/home", runner=destination_runner),
+        DriverSource(with_runner(ZFSDriver("tank/home", encryption=True), source_runner)),
+        with_runner(ZFSDriver("backup/home"), destination_runner),
         requirements=requirements,
     )
 

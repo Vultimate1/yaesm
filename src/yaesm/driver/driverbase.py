@@ -8,6 +8,7 @@ import voluptuous as vlp
 import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.check import Check, CheckRole
+from yaesm.command import Command, CommandRunner
 from yaesm.representation import (
     BlockDevice,
     ByteStream,
@@ -87,6 +88,9 @@ class DriverBase(abc.ABC):
     - ``cap_cleanup``: remove a temporary representation.
     """
 
+    def __init__(self) -> None:
+        self.runner = CommandRunner()
+
     @classmethod
     @abc.abstractmethod
     def name(cls) -> str:
@@ -148,9 +152,25 @@ class DriverBase(abc.ABC):
     def config_schema() -> vlp.Schema:
         """Return the complete schema for this driver's configuration."""
 
-    @abc.abstractmethod
+    @ty.final
     def check(self, role: CheckRole) -> tuple[Check, ...]:
         """Return deferred, read-only feasibility checks for this driver."""
+        executable = self.executable_name()
+        return (
+            self._command_check(
+                f"{executable} is installed",
+                self.executable_check_command(),
+            ),
+            *self._checks(role),
+        )
+
+    def _checks(self, role: CheckRole) -> tuple[Check, ...]:
+        """Return this driver's additional feasibility checks."""
+        return ()
+
+    def _command_check(self, description: str, command: Command) -> Check:
+        """Return a deferred command check using this driver's runner."""
+        return Check.command(description, command, self.runner)
 
     @capability("source")
     def cap_source(self) -> Representation:

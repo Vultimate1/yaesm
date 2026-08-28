@@ -52,6 +52,11 @@ class RecordingRunner(CommandRunner):
         return CommandResult(stdout, "", (0,))
 
 
+def with_runner(driver: RsyncDriver, runner: RecordingRunner) -> RsyncDriver:
+    driver.runner = runner
+    return driver
+
+
 def operation(offset: int = 0) -> BackupOperation:
     return BackupOperation(
         "example",
@@ -172,7 +177,7 @@ def test_cap_store_local(tmp_path):
     runner = RecordingRunner()
     source = PathTree(tmp_path / "source")
     destination_dir = tmp_path / "destination"
-    driver = RsyncDriver(destination_dir, extra_options=("--checksum",), runner=runner)
+    driver = with_runner(RsyncDriver(destination_dir, extra_options=("--checksum",)), runner)
 
     artifact = driver.cap_store(source, operation())
 
@@ -186,7 +191,7 @@ def test_cap_store_local(tmp_path):
 def test_cap_store_root_source_has_one_trailing_slash(tmp_path):
     runner = RecordingRunner()
 
-    RsyncDriver(tmp_path, runner=runner).cap_store(PathTree(ty.Path("/")), operation())
+    with_runner(RsyncDriver(tmp_path), runner).cap_store(PathTree(ty.Path("/")), operation())
 
     assert runner.commands[0][-2] == "/"
 
@@ -195,7 +200,7 @@ def test_cap_store_uses_link_dest(tmp_path):
     runner = RecordingRunner()
     source = PathTree(tmp_path / "source")
     base = RsyncTree(tmp_path / "destination" / "base")
-    driver = RsyncDriver(tmp_path / "destination", runner=runner)
+    driver = with_runner(RsyncDriver(tmp_path / "destination"), runner)
 
     driver.cap_store(source, operation(), base)
 
@@ -216,7 +221,7 @@ def test_cap_store_local_to_remote(tmp_path):
     source = PathTree(tmp_path / "source")
     destination_dir = tmp_path / "destination"
 
-    RsyncDriver(destination_dir, target, runner=runner).cap_store(source, operation())
+    with_runner(RsyncDriver(destination_dir, target), runner).cap_store(source, operation())
 
     destination = destination_dir / operation().artifact_name
     assert runner.commands == [
@@ -235,7 +240,7 @@ def test_cap_store_remote_to_local(tmp_path):
     source = PathTree(tmp_path / "source", target)
     destination_dir = tmp_path / "destination"
 
-    RsyncDriver(destination_dir, runner=runner).cap_store(source, operation())
+    with_runner(RsyncDriver(destination_dir), runner).cap_store(source, operation())
 
     destination = destination_dir / operation().artifact_name
     assert runner.commands == [
@@ -253,7 +258,7 @@ def test_cap_store_remote_ipv6(tmp_path):
     target = SSHTarget("ssh://user@[2001:db8::1]", tmp_path / "key")
     source = PathTree(tmp_path / "source", target)
 
-    RsyncDriver(tmp_path, runner=runner).cap_store(source, operation())
+    with_runner(RsyncDriver(tmp_path), runner).cap_store(source, operation())
 
     assert runner.commands[0][-2] == f"user@[2001:db8::1]:{source.path}/"
 
@@ -265,7 +270,7 @@ def test_cap_store_on_same_remote_endpoint(tmp_path):
     source = PathTree(tmp_path / "source", source_target)
     destination_dir = tmp_path / "destination"
 
-    RsyncDriver(destination_dir, destination_target, runner=runner).cap_store(
+    with_runner(RsyncDriver(destination_dir, destination_target), runner).cap_store(
         source,
         operation(),
     )
@@ -285,7 +290,7 @@ def test_cap_store_rejects_different_remote_endpoints(tmp_path):
     destination = SSHTarget("ssh://destination", tmp_path / "destination-key")
 
     with pytest.raises(RsyncDriverError, match="cannot copy between different SSH endpoints"):
-        RsyncDriver(tmp_path, destination, runner=runner).cap_store(source, operation())
+        with_runner(RsyncDriver(tmp_path, destination), runner).cap_store(source, operation())
 
     assert runner.commands == []
 
@@ -296,7 +301,7 @@ def test_cap_store_cleans_up_failure(tmp_path):
     destination_dir = tmp_path / "destination"
 
     with pytest.raises(RuntimeError, match="rsync failed"):
-        RsyncDriver(destination_dir, runner=runner).cap_store(source, operation())
+        with_runner(RsyncDriver(destination_dir), runner).cap_store(source, operation())
 
     destination = destination_dir / operation().artifact_name
     assert runner.commands[-1] == ("rm", "-rf", str(destination))
@@ -319,7 +324,7 @@ def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
         )
     )
 
-    artifacts = RsyncDriver(destination, runner=runner).cap_list("example")
+    artifacts = with_runner(RsyncDriver(destination), runner).cap_list("example")
 
     assert artifacts == (
         BackupArtifact(newer, RsyncTree(destination / newer.artifact_name)),
@@ -345,7 +350,7 @@ def test_cap_list_remote(tmp_path):
     target = SSHTarget("ssh://host", tmp_path / "key")
     destination = tmp_path / "destination"
 
-    assert RsyncDriver(destination, target, runner=runner).cap_list("example") == ()
+    assert with_runner(RsyncDriver(destination, target), runner).cap_list("example") == ()
     assert runner.commands == [
         target.openssh_command(
             (
@@ -370,7 +375,7 @@ def test_cap_delete_batches_artifacts(tmp_path):
         BackupArtifact(operation(), RsyncTree(tmp_path / "two")),
     )
 
-    RsyncDriver(tmp_path, runner=runner).cap_delete(artifacts)
+    with_runner(RsyncDriver(tmp_path), runner).cap_delete(artifacts)
 
     assert runner.commands == [("rm", "-rf", str(tmp_path / "one"), str(tmp_path / "two"))]
 
@@ -383,7 +388,7 @@ def test_cap_delete_batches_remote_artifacts(tmp_path):
         BackupArtifact(operation(), RsyncTree(tmp_path / "two", target)),
     )
 
-    RsyncDriver(tmp_path, target, runner=runner).cap_delete(artifacts)
+    with_runner(RsyncDriver(tmp_path, target), runner).cap_delete(artifacts)
 
     assert runner.commands == [
         target.openssh_command(("rm", "-rf", tmp_path / "one", tmp_path / "two"))
@@ -393,7 +398,7 @@ def test_cap_delete_batches_remote_artifacts(tmp_path):
 def test_cap_delete_accepts_empty_sequence(tmp_path):
     runner = RecordingRunner()
 
-    RsyncDriver(tmp_path, runner=runner).cap_delete(())
+    with_runner(RsyncDriver(tmp_path), runner).cap_delete(())
 
     assert runner.commands == []
 

@@ -8,8 +8,7 @@ import voluptuous as vlp
 
 import yaesm.backup as bckp
 import yaesm.ty as ty
-from yaesm.check import Check, CheckRole
-from yaesm.command import Command, CommandRunner
+from yaesm.command import Command
 from yaesm.driver.driverbase import DriverBase, DriverError
 from yaesm.errors import YaesmValueError
 from yaesm.representation import PathTree
@@ -33,8 +32,8 @@ class RsyncDriver(DriverBase):
         location: ty.Path,
         target: SSHTarget | None = None,
         extra_options: ty.Sequence[str] = (),
-        runner: CommandRunner | None = None,
     ) -> None:
+        super().__init__()
         if isinstance(extra_options, str) or any(
             not isinstance(option, str) or not option for option in extra_options
         ):
@@ -42,7 +41,6 @@ class RsyncDriver(DriverBase):
         self.location = Path(location)
         self.target = target
         self.extra_options = tuple(extra_options)
-        self.runner = CommandRunner() if runner is None else runner
 
     @classmethod
     def name(cls) -> str:
@@ -87,9 +85,6 @@ class RsyncDriver(DriverBase):
                 vlp.Optional("extra_options", default=()): extra_options,
             }
         )
-
-    def check(self, role: CheckRole) -> tuple[Check, ...]:
-        return ()
 
     def cap_source(self) -> PathTree:
         return PathTree(self.location, self.target)

@@ -7,7 +7,8 @@ import voluptuous as vlp
 
 import yaesm.backup as bckp
 import yaesm.ty as ty
-from yaesm.check import Check, CheckRole
+from yaesm.check import CheckRole
+from yaesm.command import CommandRunner
 from yaesm.driver.driverbase import DriverBase
 from yaesm.representation import (
     BlockDevice,
@@ -28,9 +29,6 @@ class AllCapabilitiesDriver(DriverBase):
     @staticmethod
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
-
-    def check(self, role: CheckRole) -> tuple[Check, ...]:
-        return ()
 
     def cap_source(self) -> Representation:
         return Representation()
@@ -96,20 +94,14 @@ class EmptyDriver(DriverBase):
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
 
-    def check(self, role: CheckRole) -> tuple[Check, ...]:
-        return ()
-
 
 class DriverWithoutConfiguration(DriverBase):
     @classmethod
     def name(cls) -> str:
         return "unconfigured"
 
-    def check(self, role: CheckRole) -> tuple[Check, ...]:
-        return ()
 
-
-class DriverWithoutCheck(DriverBase):
+class DriverWithoutCustomChecks(DriverBase):
     @classmethod
     def name(cls) -> str:
         return "unchecked"
@@ -169,7 +161,9 @@ def test_check_is_not_a_capability():
 
 @pytest.mark.parametrize("role", CheckRole)
 def test_driver_check_accepts_each_role(role):
-    assert EmptyDriver().check(role) == ()
+    assert tuple(check.description for check in EmptyDriver().check(role)) == (
+        "empty is installed",
+    )
 
 
 def test_capability_method_is_found_from_metadata():
@@ -229,13 +223,16 @@ def test_driver_configuration_schema_is_required():
         DriverWithoutConfiguration()
 
 
-def test_driver_check_is_required():
-    with pytest.raises(TypeError):
-        DriverWithoutCheck()
+def test_driver_check_is_inherited():
+    assert len(DriverWithoutCustomChecks().check(CheckRole.SOURCE)) == 1
 
 
 def test_driver_configuration_schema():
     assert EmptyDriver.config_schema()({}) == {}
+
+
+def test_driver_has_command_runner():
+    assert isinstance(EmptyDriver().runner, CommandRunner)
 
 
 def test_executable_defaults_to_driver_name():

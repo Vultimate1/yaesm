@@ -10,7 +10,7 @@ import voluptuous as vlp
 
 import yaesm.ty as ty
 from yaesm.backup import BackupArtifact, BackupOperation, DriverSource
-from yaesm.check import Check, CheckRole
+from yaesm.check import CheckRole
 from yaesm.command import CommandError, CommandRunner
 from yaesm.driver.btrfsdriver import BtrfsDriver
 from yaesm.driver.driverbase import DriverBase
@@ -26,8 +26,8 @@ class _EncryptedFile(Representation):
 
 class _FileDestination(DriverBase):
     def __init__(self, location: ty.Path) -> None:
+        super().__init__()
         self.location = location
-        self.runner = CommandRunner()
 
     @classmethod
     def name(cls) -> str:
@@ -36,9 +36,6 @@ class _FileDestination(DriverBase):
     @staticmethod
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
-
-    def check(self, role: CheckRole) -> tuple[Check, ...]:
-        return ()
 
     def cap_import(
         self,
@@ -55,6 +52,20 @@ class _FileDestination(DriverBase):
             )
         )
         return BackupArtifact(operation, _EncryptedFile(destination))
+
+
+@pytest.mark.parametrize("armored", [False, True], ids=("binary-key", "armored-key"))
+def test_gpg_checks_exported_public_key(tmp_path: ty.Path, armored: bool) -> None:
+    _require_gpg()
+    identity = "yaesm check test <yaesm-check@example.invalid>"
+    gpg_home = tmp_path / "gnupg"
+    public_key = tmp_path / ("public-key.asc" if armored else "public-key.gpg")
+    _generate_key(gpg_home, identity)
+    _export_public_key(gpg_home, identity, public_key, armored)
+
+    results = tuple(check.run() for check in GPGDriver(public_key).check(CheckRole.TRANSFORM))
+
+    assert all(result.passed for result in results)
 
 
 @pytest.mark.parametrize("armored", [False, True], ids=("binary-key", "armored-key"))
@@ -144,6 +155,12 @@ def test_gpg_rejects_invalid_public_key(tmp_path: ty.Path, malformed: bool) -> N
     public_key = tmp_path / "public-key.asc"
     if malformed:
         public_key.write_text("not an OpenPGP public key")
+
+    result = GPGDriver(public_key).check(CheckRole.TRANSFORM)[1].run()
+
+    assert result.passed is False
+    assert result.stderr
+
     encrypted_backup = tmp_path / "backup.gpg"
     stream = GPGDriver(public_key).cap_encrypt(CommandStream((("printf", "content"),)))
 

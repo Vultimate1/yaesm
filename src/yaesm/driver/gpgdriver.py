@@ -1,5 +1,6 @@
 """GnuPG encryption driver."""
 
+import os
 from pathlib import Path
 
 import voluptuous as vlp
@@ -19,6 +20,7 @@ class GPGDriver(DriverBase):
     """Encrypt byte streams for a public key using GnuPG."""
 
     def __init__(self, public_key: ty.Path) -> None:
+        super().__init__()
         if not isinstance(public_key, str | Path):
             raise YaesmValueError("public_key must be a path")
         public_key = Path(public_key)
@@ -45,23 +47,31 @@ class GPGDriver(DriverBase):
             lambda value: mapping({"public_key": value} if isinstance(value, str | Path) else value)
         )
 
-    def check(self, role: CheckRole) -> tuple[Check, ...]:
-        return ()
+    def _checks(self, role: CheckRole) -> tuple[Check, ...]:
+        return (
+            self._command_check(
+                f"public key can encrypt data: {self.public_key}",
+                (
+                    *self._command(),
+                    "--output",
+                    os.devnull,
+                    "--encrypt",
+                    str(self.public_key),
+                ),
+            ),
+        )
 
     def cap_encrypt(self, source: CommandStream) -> GPGStream:
-        return GPGStream(
-            (
-                *source.commands,
-                (
-                    "gpg",
-                    "--batch",
-                    "--no-tty",
-                    "--no-keyring",
-                    "--compress-algo",
-                    "none",
-                    "--recipient-file",
-                    str(self.public_key),
-                    "--encrypt",
-                ),
-            )
+        return GPGStream((*source.commands, (*self._command(), "--encrypt")))
+
+    def _command(self) -> tuple[str, ...]:
+        return (
+            self.executable_name(),
+            "--batch",
+            "--no-tty",
+            "--no-keyring",
+            "--compress-algo",
+            "none",
+            "--recipient-file",
+            str(self.public_key),
         )

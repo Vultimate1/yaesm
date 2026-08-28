@@ -1,9 +1,12 @@
 """Read-only backup feasibility checks."""
 
+from __future__ import annotations
+
 import dataclasses
 import enum
 
 import yaesm.ty as ty
+from yaesm.command import Command, CommandError, CommandRunner
 
 
 class CheckRole(enum.Enum):
@@ -39,6 +42,36 @@ class Check:
 
     description: str
     function: ty.Callable[[], CheckResult]
+
+    @classmethod
+    def command(
+        cls,
+        description: str,
+        command: Command,
+        runner: CommandRunner,
+    ) -> Check:
+        """Return a deferred check for a harmless command."""
+        command = tuple(str(argument) for argument in command)
+
+        def run() -> CheckResult:
+            try:
+                result = runner.run(command, capture_output=True, check=False)
+            except CommandError as error:
+                return CheckResult(
+                    description,
+                    f"could not start {command[0]}",
+                    stderr=error.stderr or None,
+                )
+            return CheckResult(
+                description,
+                None
+                if result.returncode == 0
+                else f"{command[0]} exited with status {result.returncode}",
+                result.stdout or None,
+                result.stderr or None,
+            )
+
+        return cls(description, run)
 
     def run(self) -> CheckResult:
         """Run the check and return its result."""

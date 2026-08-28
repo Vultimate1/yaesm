@@ -7,7 +7,6 @@ import voluptuous as vlp
 
 import yaesm.backup as bckp
 import yaesm.ty as ty
-from yaesm.check import Check, CheckRole
 from yaesm.driver.driverbase import DriverBase, DriverError
 from yaesm.errors import YaesmValueError
 from yaesm.representation import ByteStream, CommandStream, Representation
@@ -24,9 +23,6 @@ class SourceDriver(DriverBase):
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
 
-    def check(self, role: CheckRole) -> tuple[Check, ...]:
-        return ()
-
     def cap_source(self) -> Representation:
         return Representation()
 
@@ -37,6 +33,7 @@ class DestinationDriver(DriverBase):
         artifacts: ty.Sequence[bckp.BackupArtifact] = (),
         failure: str | None = None,
     ) -> None:
+        super().__init__()
         self.artifacts = tuple(artifacts)
         self.failure = failure
         self.base: Representation | None = None
@@ -50,9 +47,6 @@ class DestinationDriver(DriverBase):
     @staticmethod
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
-
-    def check(self, role: CheckRole) -> tuple[Check, ...]:
-        return ()
 
     def cap_store(
         self,
@@ -91,6 +85,7 @@ class ArtifactDriver(DestinationDriver):
 
 class StreamDestinationDriver(DriverBase):
     def __init__(self, artifacts: ty.Sequence[bckp.BackupArtifact] = ()) -> None:
+        super().__init__()
         self.artifacts = tuple(artifacts)
         self.call: tuple[ByteStream, bckp.BackupOperation, Representation | None] | None = None
 
@@ -101,9 +96,6 @@ class StreamDestinationDriver(DriverBase):
     @staticmethod
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
-
-    def check(self, role: CheckRole) -> tuple[Check, ...]:
-        return ()
 
     def cap_import(
         self,

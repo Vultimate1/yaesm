@@ -7,8 +7,6 @@ import voluptuous as vlp
 
 import yaesm.backup as bckp
 import yaesm.ty as ty
-from yaesm.check import Check, CheckRole
-from yaesm.command import CommandRunner
 from yaesm.driver.driverbase import CapabilityMetadata, DriverBase, DriverError, capability
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, DataProperty, Representation
@@ -57,16 +55,15 @@ class ZFSDriver(DriverBase):
         self,
         dataset: str,
         target: SSHTarget | None = None,
-        runner: CommandRunner | None = None,
         encryption: bool = False,
     ) -> None:
+        super().__init__()
         if not _dataset_valid(dataset):
             raise YaesmValueError(f"invalid ZFS dataset: {dataset!r}")
         if not isinstance(encryption, bool):
             raise YaesmValueError("encryption must be a boolean")
         self.dataset = dataset
         self.target = target
-        self.runner = CommandRunner() if runner is None else runner
         self.encryption = encryption
 
     @classmethod
@@ -100,9 +97,6 @@ class ZFSDriver(DriverBase):
         return vlp.Schema(
             lambda value: mapping({"dataset": value} if isinstance(value, str) else value)
         )
-
-    def check(self, role: CheckRole) -> tuple[Check, ...]:
-        return ()
 
     def capability_metadata(self, name: str) -> CapabilityMetadata:
         metadata = super().capability_metadata(name)

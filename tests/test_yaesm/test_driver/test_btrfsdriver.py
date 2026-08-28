@@ -64,6 +64,11 @@ class RecordingRunner(CommandRunner):
         return CommandResult(None, "", (0,) * len(pipeline))
 
 
+def with_runner(driver: BtrfsDriver, runner: RecordingRunner) -> BtrfsDriver:
+    driver.runner = runner
+    return driver
+
+
 def operation() -> BackupOperation:
     return BackupOperation("example", "manual", datetime(2026, 8, 27, 12, 30))
 
@@ -184,7 +189,7 @@ def test_cap_source_includes_ssh_target(tmp_path):
 
 def test_cap_snapshot(tmp_path):
     runner = RecordingRunner()
-    driver = BtrfsDriver(tmp_path, runner=runner)
+    driver = with_runner(BtrfsDriver(tmp_path), runner)
     source = driver.cap_source()
 
     snapshot = driver.cap_snapshot(source)
@@ -200,7 +205,7 @@ def test_cap_snapshot(tmp_path):
 def test_cap_snapshot_remote(tmp_path):
     runner = RecordingRunner()
     target = SSHTarget("ssh://host", tmp_path / "key")
-    driver = BtrfsDriver(tmp_path, target, runner=runner)
+    driver = with_runner(BtrfsDriver(tmp_path, target), runner)
 
     snapshot = driver.cap_snapshot(driver.cap_source())
 
@@ -212,7 +217,7 @@ def test_cap_snapshot_remote(tmp_path):
 def test_cap_store_uses_direct_snapshot_on_same_endpoint(tmp_path):
     runner = RecordingRunner()
     source = BtrfsSubvolume(tmp_path / "source")
-    driver = BtrfsDriver(tmp_path / "destination", runner=runner)
+    driver = with_runner(BtrfsDriver(tmp_path / "destination"), runner)
 
     artifact = driver.cap_store(source, operation())
 
@@ -235,7 +240,7 @@ def test_cap_store_falls_back_to_send_receive(tmp_path):
     runner = RecordingRunner((1, 1, 1))
     source = BtrfsSubvolume(tmp_path / "source")
     destination_dir = tmp_path / "destination"
-    driver = BtrfsDriver(destination_dir, runner=runner)
+    driver = with_runner(BtrfsDriver(destination_dir), runner)
 
     artifact = driver.cap_store(source, operation())
 
@@ -266,7 +271,7 @@ def test_backup_execute_uses_readonly_snapshot_with_incremental_send_fallback(tm
     backup = Backup(
         "example",
         DriverSource(BtrfsDriver(source)),
-        BtrfsDriver(destination, runner=runner),
+        with_runner(BtrfsDriver(destination), runner),
     )
 
     artifact = backup.execute("manual", operation().created_at)
@@ -311,7 +316,7 @@ def test_cap_store_uses_explicit_base_without_bootstrap(tmp_path):
     base = BtrfsSnapshot(source.path / "base")
     destination_dir = tmp_path / "destination"
 
-    BtrfsDriver(destination_dir, runner=runner).cap_store(source, operation(), base)
+    with_runner(BtrfsDriver(destination_dir), runner).cap_store(source, operation(), base)
 
     staging = ty.Path(runner.commands[1][-1])
     assert runner.pipelines == [
@@ -346,7 +351,7 @@ def test_cap_store_bootstraps_between_different_endpoints(
     destination_dir = tmp_path / "destination"
     runner = RecordingRunner((1, 1))
 
-    BtrfsDriver(destination_dir, destination_target, runner=runner).cap_store(
+    with_runner(BtrfsDriver(destination_dir, destination_target), runner).cap_store(
         source,
         operation(),
     )
@@ -372,7 +377,7 @@ def test_cap_store_uses_direct_snapshot_on_same_remote_endpoint(tmp_path):
     destination_dir = tmp_path / "destination"
     runner = RecordingRunner()
 
-    artifact = BtrfsDriver(destination_dir, destination_target, runner=runner).cap_store(
+    artifact = with_runner(BtrfsDriver(destination_dir, destination_target), runner).cap_store(
         source,
         operation(),
     )
@@ -394,10 +399,9 @@ def test_cap_store_reuses_bootstrap(tmp_path):
     runner = RecordingRunner((1, 0, 0), (None, None, None, ""))
     source = BtrfsSubvolume(tmp_path / "source")
     destination_dir = tmp_path / "destination"
-    driver = BtrfsDriver(
-        destination_dir,
-        bootstrap_refresh_days=21,
-        runner=runner,
+    driver = with_runner(
+        BtrfsDriver(destination_dir, bootstrap_refresh_days=21),
+        runner,
     )
 
     driver.cap_store(source, operation())
@@ -421,10 +425,9 @@ def test_cap_store_refreshes_stale_bootstrap(tmp_path):
         (1, 0, 0),
         (None, None, None, f"{source_bootstrap}\n"),
     )
-    driver = BtrfsDriver(
-        destination_dir,
-        bootstrap_refresh_days=21,
-        runner=runner,
+    driver = with_runner(
+        BtrfsDriver(destination_dir, bootstrap_refresh_days=21),
+        runner,
     )
 
     driver.cap_store(source, operation())
@@ -462,7 +465,7 @@ def test_cap_store_refreshes_stale_bootstrap_without_destination_copy(tmp_path):
         (1, 0, 1),
         (None, None, None, f"{source_bootstrap}\n"),
     )
-    driver = BtrfsDriver(destination_dir, runner=runner)
+    driver = with_runner(BtrfsDriver(destination_dir), runner)
 
     driver.cap_store(source, operation())
 
@@ -479,7 +482,7 @@ def test_cap_store_repairs_orphaned_destination_bootstrap(tmp_path):
     destination_bootstrap = destination_dir / ".yaesm-btrfs-bootstrap-example"
     runner = RecordingRunner((1, 1, 0))
 
-    BtrfsDriver(destination_dir, runner=runner).cap_store(source, operation())
+    with_runner(BtrfsDriver(destination_dir), runner).cap_store(source, operation())
 
     assert runner.commands[3] == (
         "btrfs",
@@ -499,10 +502,9 @@ def test_cap_store_with_disabled_bootstrap_refresh(tmp_path):
     bootstrap = source.path / ".yaesm-btrfs-bootstrap-example"
     runner = RecordingRunner((1, 0, 0))
 
-    BtrfsDriver(
-        destination_dir,
-        bootstrap_refresh_days=0,
-        runner=runner,
+    with_runner(
+        BtrfsDriver(destination_dir, bootstrap_refresh_days=0),
+        runner,
     ).cap_store(source, operation())
 
     assert all(command[0] != "find" for command in runner.commands)
@@ -520,7 +522,7 @@ def test_cap_store_cleans_up_failed_bootstrap_receive(tmp_path):
     )
 
     with pytest.raises(RuntimeError, match="receive failed"):
-        BtrfsDriver(destination_dir, runner=runner).cap_store(source, operation())
+        with_runner(BtrfsDriver(destination_dir), runner).cap_store(source, operation())
 
     assert runner.commands[-1] == (
         "btrfs",
@@ -590,7 +592,7 @@ def test_cap_import_cleans_up_failed_receive(tmp_path):
     )
 
     with pytest.raises(RuntimeError, match="receive failed"):
-        BtrfsDriver(tmp_path, runner=runner).cap_import(stream, operation())
+        with_runner(BtrfsDriver(tmp_path), runner).cap_import(stream, operation())
 
     assert runner.commands == [("btrfs", "subvolume", "delete", str(tmp_path / "snapshot"))]
 
@@ -611,7 +613,7 @@ def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
         )
     )
 
-    artifacts = BtrfsDriver(destination, runner=runner).cap_list("example")
+    artifacts = with_runner(BtrfsDriver(destination), runner).cap_list("example")
 
     assert artifacts == (
         BackupArtifact(newer, BtrfsSnapshot(destination / newer.artifact_name)),
@@ -637,7 +639,7 @@ def test_cap_list_remote(tmp_path):
     target = SSHTarget("ssh://host", tmp_path / "key")
     destination = tmp_path / "destination"
 
-    assert BtrfsDriver(destination, target, runner=runner).cap_list("example") == ()
+    assert with_runner(BtrfsDriver(destination, target), runner).cap_list("example") == ()
     assert runner.commands == [
         target.openssh_command(
             (
@@ -662,7 +664,7 @@ def test_cap_delete_batches_artifacts(tmp_path):
         BackupArtifact(operation(), BtrfsSnapshot(tmp_path / "two")),
     )
 
-    BtrfsDriver(tmp_path, runner=runner).cap_delete(artifacts)
+    with_runner(BtrfsDriver(tmp_path), runner).cap_delete(artifacts)
 
     assert runner.commands == [
         (
@@ -683,7 +685,7 @@ def test_cap_delete_batches_remote_artifacts(tmp_path):
         BackupArtifact(operation(), BtrfsSnapshot(tmp_path / "two", target)),
     )
 
-    BtrfsDriver(tmp_path, target, runner=runner).cap_delete(artifacts)
+    with_runner(BtrfsDriver(tmp_path, target), runner).cap_delete(artifacts)
 
     assert runner.commands == [
         target.openssh_command(
@@ -701,7 +703,7 @@ def test_cap_delete_batches_remote_artifacts(tmp_path):
 def test_cap_delete_accepts_empty_sequence(tmp_path):
     runner = RecordingRunner()
 
-    BtrfsDriver(tmp_path, runner=runner).cap_delete(())
+    with_runner(BtrfsDriver(tmp_path), runner).cap_delete(())
 
     assert runner.commands == []
 
@@ -722,7 +724,7 @@ def test_cap_cleanup_deletes_temporary_snapshot(tmp_path):
     runner = RecordingRunner()
     snapshot = BtrfsSnapshot(tmp_path / "staging")
 
-    BtrfsDriver(tmp_path, runner=runner).cap_cleanup(snapshot)
+    with_runner(BtrfsDriver(tmp_path), runner).cap_cleanup(snapshot)
 
     assert runner.commands == [
         ("btrfs", "subvolume", "delete", str(snapshot.path)),
