@@ -8,6 +8,7 @@ import voluptuous as vlp
 
 import yaesm.backup as bckp
 import yaesm.ty as ty
+from yaesm.check import Check, CheckRole
 from yaesm.command import Command
 from yaesm.driver.driverbase import DriverBase, DriverError
 from yaesm.errors import YaesmValueError
@@ -84,6 +85,30 @@ class RsyncDriver(DriverBase):
                 vlp.Optional("target"): ssh_target,
                 vlp.Optional("extra_options", default=()): extra_options,
             }
+        )
+
+    def _checks(self, role: CheckRole) -> tuple[Check, ...]:
+        if role is CheckRole.TRANSFORM:
+            return ()
+        permissions = [
+            ("directory is readable", "-r"),
+            ("directory is searchable", "-x"),
+        ]
+        if role is CheckRole.DESTINATION:
+            permissions.insert(1, ("directory is writable", "-w"))
+        requirements = (
+            ("directory exists", ("test", "-d", self.location)),
+            *(
+                (description, ("test", option, self.location))
+                for description, option in permissions
+            ),
+        )
+        return tuple(
+            self._command_check(
+                f"{description}: {self.location}",
+                command_for_target(self.target, command),
+            )
+            for description, command in requirements
         )
 
     def cap_source(self) -> PathTree:

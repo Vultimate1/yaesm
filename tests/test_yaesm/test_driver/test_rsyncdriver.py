@@ -9,6 +9,7 @@ import voluptuous as vlp
 
 import yaesm.ty as ty
 from yaesm.backup import Backup, BackupArtifact, BackupOperation, DriverSource
+from yaesm.check import CheckRole
 from yaesm.command import Command, CommandResult, CommandRunner
 from yaesm.driver.btrfsdriver import BtrfsDriver, BtrfsSubvolume
 from yaesm.driver.rsyncdriver import RsyncDriver, RsyncDriverError, RsyncTree
@@ -171,6 +172,59 @@ def test_cap_source_includes_ssh_target(tmp_path):
     target = SSHTarget("ssh://host", tmp_path / "key")
 
     assert RsyncDriver(tmp_path, target).cap_source() == PathTree(tmp_path, target)
+
+
+def test_source_checks_directory_requirements(tmp_path):
+    runner = RecordingRunner()
+    driver = with_runner(RsyncDriver(tmp_path), runner)
+
+    checks = driver.check(CheckRole.SOURCE)
+
+    assert tuple(check.description for check in checks) == (
+        "rsync is installed",
+        f"directory exists: {tmp_path}",
+        f"directory is readable: {tmp_path}",
+        f"directory is searchable: {tmp_path}",
+    )
+    assert runner.commands == []
+    assert all(check.run().passed for check in checks)
+    assert runner.commands == [
+        ("rsync", "--version"),
+        ("test", "-d", str(tmp_path)),
+        ("test", "-r", str(tmp_path)),
+        ("test", "-x", str(tmp_path)),
+    ]
+
+
+def test_destination_checks_directory_requirements_remotely(tmp_path):
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    runner = RecordingRunner()
+    driver = with_runner(RsyncDriver(tmp_path, target), runner)
+
+    checks = driver.check(CheckRole.DESTINATION)
+    for check in checks:
+        check.run()
+
+    assert tuple(check.description for check in checks) == (
+        "rsync is installed",
+        f"directory exists: {tmp_path}",
+        f"directory is readable: {tmp_path}",
+        f"directory is writable: {tmp_path}",
+        f"directory is searchable: {tmp_path}",
+    )
+    assert runner.commands == [
+        ("rsync", "--version"),
+        target.openssh_command(("test", "-d", tmp_path)),
+        target.openssh_command(("test", "-r", tmp_path)),
+        target.openssh_command(("test", "-w", tmp_path)),
+        target.openssh_command(("test", "-x", tmp_path)),
+    ]
+
+
+def test_transform_check_does_not_validate_unused_directory(tmp_path):
+    checks = RsyncDriver(tmp_path).check(CheckRole.TRANSFORM)
+
+    assert tuple(check.description for check in checks) == ("rsync is installed",)
 
 
 def test_cap_store_local(tmp_path):

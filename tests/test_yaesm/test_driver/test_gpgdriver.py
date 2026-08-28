@@ -154,6 +154,13 @@ def test_executable_check_reports_start_failure(tmp_path):
     assert result.stderr == "No such file or directory"
 
 
+@pytest.mark.parametrize("role", [CheckRole.SOURCE, CheckRole.DESTINATION])
+def test_key_check_is_only_used_for_transform_role(tmp_path, role):
+    checks = GPGDriver(tmp_path / "key").check(role)
+
+    assert tuple(check.description for check in checks) == ("gpg is installed",)
+
+
 def test_cap_encrypt_appends_noninteractive_gpg_filter(tmp_path):
     public_key = tmp_path / "backup-key.asc"
     source = CommandStream((("produce", "data"),))

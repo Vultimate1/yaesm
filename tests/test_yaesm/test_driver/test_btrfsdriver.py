@@ -232,6 +232,12 @@ def test_checks_remote_directory_requirements(tmp_path):
     ]
 
 
+def test_transform_check_does_not_validate_unused_directory(tmp_path):
+    checks = BtrfsDriver(tmp_path).check(CheckRole.TRANSFORM)
+
+    assert tuple(check.description for check in checks) == ("btrfs is installed",)
+
+
 def test_cap_snapshot(tmp_path):
     runner = RecordingRunner()
     driver = with_runner(BtrfsDriver(tmp_path), runner)

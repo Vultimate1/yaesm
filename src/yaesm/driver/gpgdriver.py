@@ -48,6 +48,8 @@ class GPGDriver(DriverBase):
         )
 
     def _checks(self, role: CheckRole) -> tuple[Check, ...]:
+        if role is not CheckRole.TRANSFORM:
+            return ()
         return (
             self._command_check(
                 f"public key can encrypt data: {self.public_key}",

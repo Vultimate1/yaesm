@@ -92,6 +92,8 @@ class BtrfsDriver(DriverBase):
         )
 
     def _checks(self, role: CheckRole) -> tuple[Check, ...]:
+        if role is CheckRole.TRANSFORM:
+            return ()
         filesystem = (
             ("directory is a Btrfs subvolume", ("btrfs", "subvolume", "show", self.location))
             if role is CheckRole.SOURCE
