@@ -6,6 +6,8 @@ elsewhere.
 
 import contextvars
 import logging
+import logging.handlers
+from pathlib import Path
 from uuid import UUID
 
 request_id: contextvars.ContextVar[UUID | None] = contextvars.ContextVar(
@@ -25,11 +27,27 @@ class RequestFilter(logging.Filter):
         return request_id.get() == self.expected
 
 
-def configure(level: int | str = logging.INFO) -> None:
-    """Configure logging to standard error with yaesm's format."""
+def configure(
+    level: int | str = logging.INFO,
+    *,
+    stderr: bool = False,
+    logfile: Path | str | None = None,
+    syslog_address: str | None = None,
+) -> None:
+    """Configure the selected logging destinations, defaulting to stderr."""
+    if not (stderr or logfile or syslog_address):
+        stderr = True
+    handlers: list[logging.Handler] = []
+    if stderr:
+        handlers.append(logging.StreamHandler())
+    if logfile:
+        handlers.append(logging.FileHandler(logfile, encoding="utf-8"))
+    if syslog_address:
+        handlers.append(logging.handlers.SysLogHandler(address=syslog_address))
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=handlers,
         force=True,
     )
