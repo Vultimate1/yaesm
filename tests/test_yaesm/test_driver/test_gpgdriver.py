@@ -7,7 +7,7 @@ import voluptuous as vlp
 
 import yaesm.command as command_module
 import yaesm.ty as ty
-from yaesm.check import CheckRole
+from yaesm.check import CheckResult, CheckRole
 from yaesm.command import Command, CommandError, CommandResult, CommandRunner
 from yaesm.driver.gpgdriver import GPGDriver, GPGStream
 from yaesm.errors import YaesmValueError
@@ -142,6 +142,21 @@ def test_key_check_reports_command_failure(tmp_path, monkeypatch):
     assert result.stderr == "invalid public key"
 
 
+def test_key_check_reports_start_failure(tmp_path, monkeypatch):
+    public_key = tmp_path / "bad-key.asc"
+    error = CommandError(("gpg", "--encrypt"), None, "Permission denied")
+    runner = RecordingRunner(error)
+    monkeypatch.setattr(command_module, "run", runner.run)
+
+    result = GPGDriver(public_key)._checks(CheckRole.TRANSFORM)[0].run()
+
+    assert result == CheckResult(
+        f"public key can encrypt data: {public_key}",
+        "could not start gpg",
+        stderr="Permission denied",
+    )
+
+
 def test_executable_check_reports_start_failure(tmp_path, monkeypatch):
     error = CommandError(("gpg", "--version"), None, "No such file or directory")
     runner = RecordingRunner(error)
@@ -157,9 +172,11 @@ def test_executable_check_reports_start_failure(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("role", [CheckRole.SOURCE, CheckRole.DESTINATION])
 def test_key_check_is_only_used_for_transform_role(tmp_path, role):
-    checks = GPGDriver(tmp_path / "key").check(role)
+    driver = GPGDriver(tmp_path / "key")
+    checks = driver.check(role)
 
     assert tuple(check.description for check in checks) == ("gpg is installed",)
+    assert driver._checks(role) == ()
 
 
 def test_cap_encrypt_appends_noninteractive_gpg_filter(tmp_path):

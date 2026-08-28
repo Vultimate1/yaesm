@@ -224,10 +224,40 @@ def test_destination_checks_directory_requirements_remotely(tmp_path, monkeypatc
     ]
 
 
+@pytest.mark.parametrize(
+    ("role", "index"),
+    [
+        (CheckRole.SOURCE, 0),
+        (CheckRole.SOURCE, 1),
+        (CheckRole.SOURCE, 2),
+        (CheckRole.DESTINATION, 0),
+        (CheckRole.DESTINATION, 1),
+        (CheckRole.DESTINATION, 2),
+        (CheckRole.DESTINATION, 3),
+    ],
+)
+def test_each_directory_check_reports_failure(role, index, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        command_module,
+        "run",
+        lambda *args, **kwargs: CommandResult(None, "permission denied", (6,)),
+    )
+    check = RsyncDriver(tmp_path)._checks(role)[index]
+
+    result = check.run()
+
+    assert result.description == check.description
+    assert result.passed is False
+    assert result.failure == "test exited with status 6"
+    assert result.stderr == "permission denied"
+
+
 def test_transform_check_does_not_validate_unused_directory(tmp_path):
-    checks = RsyncDriver(tmp_path).check(CheckRole.TRANSFORM)
+    driver = RsyncDriver(tmp_path)
+    checks = driver.check(CheckRole.TRANSFORM)
 
     assert tuple(check.description for check in checks) == ("rsync is installed",)
+    assert driver._checks(CheckRole.TRANSFORM) == ()
 
 
 def test_cap_store_local(tmp_path):

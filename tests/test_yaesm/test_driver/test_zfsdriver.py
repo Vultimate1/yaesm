@@ -247,10 +247,66 @@ def test_encrypted_source_check_rejects_unencrypted_dataset(value, monkeypatch):
     assert result.failure == "ZFS dataset is not encrypted: tank/home"
 
 
+@pytest.mark.parametrize(
+    ("role", "encryption", "index"),
+    [
+        (CheckRole.SOURCE, False, 0),
+        (CheckRole.SOURCE, True, 0),
+        (CheckRole.SOURCE, True, 1),
+        (CheckRole.DESTINATION, False, 0),
+        (CheckRole.DESTINATION, False, 1),
+    ],
+)
+def test_each_dataset_check_reports_command_failure(
+    role,
+    encryption,
+    index,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        command_module,
+        "run",
+        lambda *args, **kwargs: CommandResult("off\n", "permission denied", (7,)),
+    )
+    check = ZFSDriver("tank/home", encryption=encryption)._checks(role)[index]
+
+    result = check.run()
+
+    assert result.description == check.description
+    assert result.passed is False
+    assert result.failure == "zfs exited with status 7"
+    assert result.stdout == "off\n"
+    assert result.stderr == "permission denied"
+
+
+def test_destination_check_uses_pool_as_parent_for_top_level_dataset(monkeypatch):
+    calls = []
+
+    def run(command, *, capture_output=False, check=True):
+        calls.append(command)
+        return CommandResult(None, "", (0,))
+
+    monkeypatch.setattr(command_module, "run", run)
+    checks = ZFSDriver("tank")._checks(CheckRole.DESTINATION)
+    for check in checks:
+        check.run()
+
+    assert tuple(check.description for check in checks) == (
+        "destination parent dataset exists: tank",
+        "destination dataset can be created: tank",
+    )
+    assert calls == [
+        ("zfs", "list", "-H", "-t", "filesystem", "-o", "name", "tank"),
+        ("zfs", "create", "-n", "-p", "-u", "tank"),
+    ]
+
+
 def test_transform_check_does_not_validate_unused_dataset():
-    checks = ZFSDriver("tank/home").check(CheckRole.TRANSFORM)
+    driver = ZFSDriver("tank/home")
+    checks = driver.check(CheckRole.TRANSFORM)
 
     assert tuple(check.description for check in checks) == ("zfs is installed",)
+    assert driver._checks(CheckRole.TRANSFORM) == ()
 
 
 def test_cap_source_verifies_native_encryption():

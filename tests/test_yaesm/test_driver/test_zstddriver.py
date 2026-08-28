@@ -3,7 +3,10 @@
 import pytest
 import voluptuous as vlp
 
+import yaesm.command as command_module
 import yaesm.ty as ty
+from yaesm.check import CheckRole
+from yaesm.command import CommandResult
 from yaesm.driver.zstddriver import ZstdDriver, ZstdStream
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, CompressedStream, DataProperty
@@ -44,6 +47,24 @@ def test_config_schema_output_constructs_driver():
 def test_constructor_rejects_invalid_level(level):
     with pytest.raises(YaesmValueError, match="level must be an integer from 1 to 19"):
         ZstdDriver(ty.cast(int, level))
+
+
+@pytest.mark.parametrize("role", tuple(CheckRole))
+def test_checks_only_require_zstd_executable(role, monkeypatch):
+    calls = []
+
+    def run(command, *, capture_output=False, check=True):
+        calls.append((command, capture_output, check))
+        return CommandResult("zstd 1.5\n", "", (0,))
+
+    monkeypatch.setattr(command_module, "run", run)
+    driver = ZstdDriver()
+    checks = driver.check(role)
+
+    assert driver._checks(role) == ()
+    assert tuple(check.description for check in checks) == ("zstd is installed",)
+    assert checks[0].run().passed is True
+    assert calls == [(("zstd", "--version"), True, False)]
 
 
 def test_cap_compress_appends_zstd_filter():

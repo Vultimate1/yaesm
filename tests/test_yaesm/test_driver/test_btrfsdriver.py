@@ -255,10 +255,43 @@ def test_remote_check_failure_names_logical_executable(tmp_path, monkeypatch):
     assert result.failure == "btrfs exited with status 1"
 
 
+@pytest.mark.parametrize(
+    ("role", "index", "executable"),
+    [
+        (CheckRole.SOURCE, 0, "test"),
+        (CheckRole.SOURCE, 1, "btrfs"),
+        (CheckRole.SOURCE, 2, "test"),
+        (CheckRole.SOURCE, 3, "test"),
+        (CheckRole.SOURCE, 4, "test"),
+        (CheckRole.DESTINATION, 0, "test"),
+        (CheckRole.DESTINATION, 1, "btrfs"),
+        (CheckRole.DESTINATION, 2, "test"),
+        (CheckRole.DESTINATION, 3, "test"),
+        (CheckRole.DESTINATION, 4, "test"),
+    ],
+)
+def test_each_directory_check_reports_failure(role, index, executable, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        command_module,
+        "run",
+        lambda *args, **kwargs: CommandResult(None, "permission denied", (5,)),
+    )
+    check = BtrfsDriver(tmp_path)._checks(role)[index]
+
+    result = check.run()
+
+    assert result.description == check.description
+    assert result.passed is False
+    assert result.failure == f"{executable} exited with status 5"
+    assert result.stderr == "permission denied"
+
+
 def test_transform_check_does_not_validate_unused_directory(tmp_path):
-    checks = BtrfsDriver(tmp_path).check(CheckRole.TRANSFORM)
+    driver = BtrfsDriver(tmp_path)
+    checks = driver.check(CheckRole.TRANSFORM)
 
     assert tuple(check.description for check in checks) == ("btrfs is installed",)
+    assert driver._checks(CheckRole.TRANSFORM) == ()
 
 
 def test_cap_snapshot(tmp_path):
