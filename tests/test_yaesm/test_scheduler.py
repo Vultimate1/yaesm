@@ -98,6 +98,17 @@ def test_scheduler_replaces_config():
     assert [job.id for job in scheduler._scheduler.get_jobs()] == ["second:hourly:0"]
 
 
+def test_scheduler_replaces_finished_timer_job():
+    first, _first_backup = configured_backup("first")
+    second, _second_backup = configured_backup("second")
+    scheduler = Scheduler(first)
+    scheduler._scheduler.remove_job("first:hourly:0")
+
+    scheduler.replace_config(second)
+
+    assert [job.id for job in scheduler._scheduler.get_jobs()] == ["second:hourly:0"]
+
+
 def test_scheduler_enqueues_from_replaced_config():
     first, _first_backup = configured_backup("first", Schedule("manual", OnDemandSchedule()))
     second, second_backup = configured_backup("second", Schedule("manual", OnDemandSchedule()))
@@ -109,6 +120,20 @@ def test_scheduler_enqueues_from_replaced_config():
     job = scheduler._scheduler.get_job(request_id)
     assert job is not None
     assert job.args == (second_backup, "manual", second.backups, request_id)
+
+
+def test_scheduler_reload_preserves_queued_backup():
+    first, _first_backup = configured_backup("first", Schedule("manual", OnDemandSchedule()))
+    second, _second_backup = configured_backup("second")
+    scheduler = Scheduler(first)
+    request_id = scheduler.enqueue_backup("first", "manual")
+
+    scheduler.replace_config(second)
+
+    assert {job.id for job in scheduler._scheduler.get_jobs()} == {
+        request_id,
+        "second:hourly:0",
+    }
 
 
 def test_scheduled_job_executes_backup(monkeypatch):

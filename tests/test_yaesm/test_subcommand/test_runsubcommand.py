@@ -11,6 +11,7 @@ import pytest
 
 import yaesm.subcommand.runsubcommand as run_module
 from yaesm.config import Config, ConfigError
+from yaesm.control import ControlError
 from yaesm.errors import YaesmError
 from yaesm.subcommand.runsubcommand import RunError, RunSubcommand
 
@@ -19,7 +20,14 @@ def arguments(tmp_path: Path) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=tmp_path / "config.yaml")
     RunSubcommand.add_argparser_arguments(parser)
-    return parser.parse_args(["--lockfile", str(tmp_path / "yaesm.lock")])
+    return parser.parse_args(
+        [
+            "--lockfile",
+            str(tmp_path / "yaesm.lock"),
+            "--control-socket",
+            str(tmp_path / "control.sock"),
+        ]
+    )
 
 
 def test_run_error_is_expected_error():
@@ -30,6 +38,7 @@ def test_run_arguments(tmp_path):
     parsed = arguments(tmp_path)
 
     assert parsed.lockfile == tmp_path / "yaesm.lock"
+    assert parsed.control_socket == tmp_path / "control.sock"
 
 
 def test_run_uses_default_lockfile():
@@ -37,18 +46,70 @@ def test_run_uses_default_lockfile():
     RunSubcommand.add_argparser_arguments(parser)
 
     assert parser.parse_args([]).lockfile == Path("/run/lock/yaesm-run.lock")
+    assert parser.parse_args([]).control_socket == Path("/run/yaesm/control.sock")
+
+
+def test_control_request_enqueues_backup():
+    scheduler = mock.Mock()
+    scheduler.enqueue_backup.return_value = "request-id"
+
+    messages = RunSubcommand._control_request(
+        scheduler,
+        {"command": "backup", "backup": "home", "schedule": "manual"},
+    )
+
+    scheduler.enqueue_backup.assert_called_once_with("home", "manual")
+    assert messages == ({"type": "result", "ok": True, "request_id": "request-id"},)
+
+
+@pytest.mark.parametrize(
+    ("control_request", "error"),
+    [
+        ({"command": "backup", "schedule": "manual"}, "requires a backup name"),
+        ({"command": "backup", "backup": "home"}, "requires a schedule name"),
+        (
+            {"command": "backup", "backup": "home", "schedule": "manual", "extra": True},
+            "unknown fields: extra",
+        ),
+    ],
+)
+def test_control_request_rejects_invalid_fields(control_request, error):
+    with pytest.raises(ControlError, match=error):
+        RunSubcommand._control_request(mock.Mock(), control_request)
+
+
+@pytest.mark.parametrize(
+    ("control_request", "error"),
+    [
+        ({}, "requires a command"),
+        ({"command": "unknown"}, "unknown control command: 'unknown'"),
+    ],
+)
+def test_control_request_rejects_invalid_command(control_request, error):
+    with pytest.raises(ControlError, match=error):
+        RunSubcommand._control_request(mock.Mock(), control_request)
 
 
 def test_run_starts_and_stops_scheduler(monkeypatch, tmp_path):
     scheduler = mock.Mock()
+    scheduler.enqueue_backup.return_value = "request-id"
     scheduler_type = mock.Mock(return_value=scheduler)
+    control = mock.MagicMock()
+    control_type = mock.Mock(return_value=control)
     monkeypatch.setattr(run_module, "Scheduler", scheduler_type)
+    monkeypatch.setattr(run_module, "ControlServer", control_type)
     monkeypatch.setattr(signal, "signal", mock.Mock())
     config = Config({}, {})
 
     assert RunSubcommand().main(config, arguments(tmp_path)) == 0
 
     scheduler_type.assert_called_once_with(config)
+    control_type.assert_called_once()
+    path, handler = control_type.call_args.args
+    assert path == tmp_path / "control.sock"
+    assert handler({"command": "backup", "backup": "home", "schedule": "manual"}) == (
+        {"type": "result", "ok": True, "request_id": "request-id"},
+    )
     scheduler.start.assert_called_once_with()
     scheduler.stop.assert_called_once_with()
 
