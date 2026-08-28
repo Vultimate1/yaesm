@@ -275,6 +275,8 @@ def test_backup_accepts_valid_name(name):
         "-foo",
         ":foo",
         "f^oo",
+        "global_settings",
+        "GLOBAL_SETTINGS",
     ],
 )
 def test_backup_rejects_invalid_name(name):

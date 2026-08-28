@@ -10,7 +10,7 @@ import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.check import Check, CheckRole
 from yaesm.command import Command
-from yaesm.driver.driverbase import DriverBase, DriverError
+from yaesm.driver.driverbase import DriverBase, DriverError, GlobalSettings
 from yaesm.errors import YaesmValueError
 from yaesm.representation import PathTree
 from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
@@ -33,8 +33,10 @@ class RsyncDriver(DriverBase):
         location: ty.Path,
         target: SSHTarget | None = None,
         extra_options: ty.Sequence[str] = (),
+        *,
+        global_settings: GlobalSettings | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(global_settings)
         if isinstance(extra_options, str) or any(
             not isinstance(option, str) or not option for option in extra_options
         ):

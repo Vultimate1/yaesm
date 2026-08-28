@@ -93,7 +93,9 @@ class Backup:
     retention_policies: tuple[RetentionPolicyBase, ...] = ()
 
     def __post_init__(self) -> None:
-        if not re.fullmatch(r"[a-z][-_:@a-z0-9]*", self.name, re.IGNORECASE):
+        if self.name.casefold() == "global_settings" or not re.fullmatch(
+            r"[a-z][-_:@a-z0-9]*", self.name, re.IGNORECASE
+        ):
             raise YaesmValueError(f"invalid backup name: {self.name!r}")
 
     def execute(

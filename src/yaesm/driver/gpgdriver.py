@@ -7,7 +7,7 @@ import voluptuous as vlp
 
 import yaesm.ty as ty
 from yaesm.check import Check, CheckRole
-from yaesm.driver.driverbase import DriverBase
+from yaesm.driver.driverbase import DriverBase, GlobalSettings
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, EncryptedStream
 
@@ -19,8 +19,13 @@ class GPGStream(EncryptedStream):
 class GPGDriver(DriverBase):
     """Encrypt byte streams for a public key using GnuPG."""
 
-    def __init__(self, public_key: ty.Path) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        public_key: ty.Path,
+        *,
+        global_settings: GlobalSettings | None = None,
+    ) -> None:
+        super().__init__(global_settings)
         if not isinstance(public_key, str | Path):
             raise YaesmValueError("public_key must be a path")
         public_key = Path(public_key)

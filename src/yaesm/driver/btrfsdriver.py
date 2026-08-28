@@ -9,7 +9,7 @@ import voluptuous as vlp
 import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.check import Check, CheckRole
-from yaesm.driver.driverbase import DriverBase, DriverError, capability
+from yaesm.driver.driverbase import DriverBase, DriverError, GlobalSettings, capability
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, PathTree
 from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
@@ -47,8 +47,10 @@ class BtrfsDriver(DriverBase):
         location: ty.Path,
         target: SSHTarget | None = None,
         bootstrap_refresh_days: int = 21,
+        *,
+        global_settings: GlobalSettings | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(global_settings)
         if bootstrap_refresh_days < 0:
             raise YaesmValueError(
                 f"bootstrap_refresh_days must be at least 0, got {bootstrap_refresh_days}"

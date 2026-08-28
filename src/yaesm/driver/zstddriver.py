@@ -2,7 +2,7 @@
 
 import voluptuous as vlp
 
-from yaesm.driver.driverbase import DriverBase
+from yaesm.driver.driverbase import DriverBase, GlobalSettings
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, CompressedStream
 
@@ -14,8 +14,13 @@ class ZstdStream(CompressedStream):
 class ZstdDriver(DriverBase):
     """Compress byte streams using Zstandard."""
 
-    def __init__(self, level: int = 3) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        level: int = 3,
+        *,
+        global_settings: GlobalSettings | None = None,
+    ) -> None:
+        super().__init__(global_settings)
         if isinstance(level, bool) or not isinstance(level, int) or not 1 <= level <= 19:
             raise YaesmValueError(f"level must be an integer from 1 to 19, got {level!r}")
         self.level = level

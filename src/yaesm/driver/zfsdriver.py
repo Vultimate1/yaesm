@@ -9,7 +9,13 @@ import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.check import Check, CheckRole
 from yaesm.command import CommandResult
-from yaesm.driver.driverbase import CapabilityMetadata, DriverBase, DriverError, capability
+from yaesm.driver.driverbase import (
+    CapabilityMetadata,
+    DriverBase,
+    DriverError,
+    GlobalSettings,
+    capability,
+)
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, DataProperty, Representation
 from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
@@ -58,8 +64,10 @@ class ZFSDriver(DriverBase):
         dataset: str,
         target: SSHTarget | None = None,
         encryption: bool = False,
+        *,
+        global_settings: GlobalSettings | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(global_settings)
         if not _dataset_valid(dataset):
             raise YaesmValueError(f"invalid ZFS dataset: {dataset!r}")
         if not isinstance(encryption, bool):

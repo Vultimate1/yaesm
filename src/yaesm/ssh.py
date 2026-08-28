@@ -7,6 +7,8 @@ import shlex
 import urllib.parse
 from pathlib import Path
 
+import voluptuous as vlp
+
 import yaesm.ty as ty
 from yaesm.command import Command, CommandResult, CommandRunner
 from yaesm.errors import YaesmValueError
@@ -48,6 +50,30 @@ class SSHTarget:
         except SSHTargetError:
             return False
         return True
+
+    @classmethod
+    def from_config(cls, value: object) -> SSHTarget:
+        """Construct an SSH target from configuration data."""
+
+        def absolute_path(value: object) -> Path:
+            if not isinstance(value, str | Path):
+                raise vlp.Invalid("must be a path")
+            path = Path(value)
+            if not path.is_absolute():
+                raise vlp.Invalid("must be an absolute path")
+            return path
+
+        schema = vlp.Schema(
+            {
+                vlp.Required("spec"): str,
+                vlp.Required("key"): absolute_path,
+                vlp.Optional("ssh_config"): absolute_path,
+            }
+        )
+        try:
+            return cls(**schema(value))
+        except (vlp.Invalid, SSHTargetError, TypeError) as error:
+            raise SSHTargetError(f"invalid SSH target: {error}") from error
 
     def same_endpoint(self, other: SSHTarget) -> bool:
         """Return whether two targets use the same user, host, and port."""

@@ -44,6 +44,16 @@ def test_ssh_target_parses_spec(spec, user, host, port):
     assert SSHTarget.is_spec(spec)
 
 
+def test_ssh_target_parses_configuration():
+    assert SSHTarget.from_config(
+        {
+            "spec": "ssh://user@host:2222",
+            "key": "/key",
+            "ssh_config": "/config",
+        }
+    ) == SSHTarget("ssh://user@host:2222", Path("/key"), Path("/config"))
+
+
 @pytest.mark.parametrize(
     "spec",
     [

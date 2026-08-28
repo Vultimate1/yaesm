@@ -127,6 +127,13 @@ class DriverWithDifferentExecutableCheck(EmptyDriver):
         return ("special", "version")
 
 
+def test_driver_has_global_settings():
+    settings = {"setting": "value"}
+
+    assert EmptyDriver(global_settings=settings).global_settings is settings
+    assert EmptyDriver().global_settings == {}
+
+
 def test_capabilities_are_advertised_by_defining_methods():
     assert AllCapabilitiesDriver.capabilities() == {
         "source",
