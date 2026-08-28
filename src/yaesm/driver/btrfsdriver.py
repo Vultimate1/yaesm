@@ -8,6 +8,7 @@ import voluptuous as vlp
 
 import yaesm.backup as bckp
 import yaesm.ty as ty
+from yaesm.check import Check, CheckRole
 from yaesm.driver.driverbase import DriverBase, DriverError, capability
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, PathTree
@@ -88,6 +89,30 @@ class BtrfsDriver(DriverBase):
                 vlp.Optional("target"): ssh_target,
                 vlp.Optional("bootstrap_refresh_days", default=21): refresh_days,
             }
+        )
+
+    def _checks(self, role: CheckRole) -> tuple[Check, ...]:
+        filesystem = (
+            ("directory is a Btrfs subvolume", ("btrfs", "subvolume", "show", self.location))
+            if role is CheckRole.SOURCE
+            else (
+                "directory is on a Btrfs filesystem",
+                ("btrfs", "filesystem", "usage", self.location),
+            )
+        )
+        requirements = (
+            ("directory exists", ("test", "-d", self.location)),
+            filesystem,
+            ("directory is readable", ("test", "-r", self.location)),
+            ("directory is writable", ("test", "-w", self.location)),
+            ("directory is searchable", ("test", "-x", self.location)),
+        )
+        return tuple(
+            self._command_check(
+                f"{description}: {self.location}",
+                command_for_target(self.target, command),
+            )
+            for description, command in requirements
         )
 
     def cap_source(self) -> BtrfsSubvolume:

@@ -8,6 +8,7 @@ import voluptuous as vlp
 
 import yaesm.ty as ty
 from yaesm.backup import Backup, BackupArtifact, BackupOperation, DriverSource
+from yaesm.check import CheckRole
 from yaesm.command import Command, CommandResult, CommandRunner
 from yaesm.driver.btrfsdriver import (
     BtrfsDriver,
@@ -185,6 +186,50 @@ def test_cap_source_includes_ssh_target(tmp_path):
     target = SSHTarget("ssh://host", tmp_path / "key")
 
     assert BtrfsDriver(tmp_path, target).cap_source() == BtrfsSubvolume(tmp_path, target)
+
+
+def test_checks_directory_requirements(tmp_path):
+    runner = RecordingRunner()
+    driver = with_runner(BtrfsDriver(tmp_path), runner)
+
+    checks = driver.check(CheckRole.SOURCE)
+
+    assert tuple(check.description for check in checks) == (
+        "btrfs is installed",
+        f"directory exists: {tmp_path}",
+        f"directory is a Btrfs subvolume: {tmp_path}",
+        f"directory is readable: {tmp_path}",
+        f"directory is writable: {tmp_path}",
+        f"directory is searchable: {tmp_path}",
+    )
+    assert runner.commands == []
+    assert all(check.run().passed for check in checks)
+    assert runner.commands == [
+        ("btrfs", "--version"),
+        ("test", "-d", str(tmp_path)),
+        ("btrfs", "subvolume", "show", str(tmp_path)),
+        ("test", "-r", str(tmp_path)),
+        ("test", "-w", str(tmp_path)),
+        ("test", "-x", str(tmp_path)),
+    ]
+
+
+def test_checks_remote_directory_requirements(tmp_path):
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    runner = RecordingRunner()
+    driver = with_runner(BtrfsDriver(tmp_path, target), runner)
+
+    checks = driver.check(CheckRole.DESTINATION)
+    for check in checks:
+        check.run()
+
+    assert runner.commands[1:] == [
+        target.openssh_command(("test", "-d", tmp_path)),
+        target.openssh_command(("btrfs", "filesystem", "usage", tmp_path)),
+        target.openssh_command(("test", "-r", tmp_path)),
+        target.openssh_command(("test", "-w", tmp_path)),
+        target.openssh_command(("test", "-x", tmp_path)),
+    ]
 
 
 def test_cap_snapshot(tmp_path):
