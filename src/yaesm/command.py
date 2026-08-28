@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import logging
 import shlex
 import subprocess
 import tempfile
@@ -12,6 +13,7 @@ import yaesm.ty as ty
 from yaesm.errors import YaesmError
 
 Command: ty.TypeAlias = ty.Sequence[str | ty.Path]
+logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -71,6 +73,7 @@ class CommandRunner:
         if any(not command for command in normalized):
             raise ValueError("a command cannot be empty")
 
+        logger.debug("exec: %s", " | ".join(shlex.join(command) for command in normalized))
         processes: list[subprocess.Popen[bytes]] = []
         with contextlib.ExitStack() as stack:
             stderr_files = [

@@ -1,5 +1,7 @@
 """Tests for yaesm.command."""
 
+import logging
+import shlex
 import subprocess
 import sys
 
@@ -7,6 +9,18 @@ import pytest
 
 import yaesm.command as command_module
 from yaesm.command import CommandError, CommandRunner
+
+
+def test_pipeline_logs_commands(caplog):
+    commands = [
+        [sys.executable, "-c", "print('hello world')"],
+        [sys.executable, "-c", "import sys; sys.stdin.read()"],
+    ]
+
+    with caplog.at_level(logging.DEBUG, logger="yaesm.command"):
+        CommandRunner().pipeline(commands)
+
+    assert caplog.messages == ["exec: " + " | ".join(shlex.join(command) for command in commands)]
 
 
 def test_run_captures_output():
