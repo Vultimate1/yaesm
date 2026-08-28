@@ -128,6 +128,11 @@ class SSHTarget:
         remote_command = shlex.join(str(arg) for arg in command)
         return ("ssh", *self.openssh_options(), destination, remote_command)
 
+    def format_location(self, location: str | ty.Path) -> str:
+        """Format a location on this endpoint as an SSH URI."""
+        path = urllib.parse.quote(str(location), safe="/:@-._~")
+        return f"{self}{'' if path.startswith('/') else '/'}{path}"
+
     def run(
         self,
         command: Command,

@@ -183,6 +183,10 @@ class DriverBase(abc.ABC):
 
         return Check(description, run, self._check_target())
 
+    def format_locator(self, artifact: bckp.BackupArtifact) -> str:
+        """Format a stored artifact's location for display."""
+        raise NotImplementedError(f"{self.name()} driver cannot format artifact locators")
+
     def _checks(self, role: CheckRole) -> tuple[Check, ...]:
         """Return this driver's additional feasibility checks."""
         return ()

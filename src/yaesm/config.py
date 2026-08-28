@@ -300,6 +300,8 @@ def parse_schedules(
         try:
             if not isinstance(schedule_name, str) or not schedule_name:
                 raise ConfigError("schedule names must be nonempty strings")
+            if "," in schedule_name:
+                raise ConfigError("schedule names cannot contain commas")
             schedule, retention = _parse_schedule(schedule_name, definition)
             schedules.append(schedule)
             policies.extend(retention)

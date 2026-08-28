@@ -180,6 +180,10 @@ class RsyncDriver(DriverBase):
             sorted(artifacts, key=lambda artifact: artifact.operation.created_at, reverse=True)
         )
 
+    def format_locator(self, artifact: bckp.BackupArtifact[RsyncTree]) -> str:
+        tree = artifact.representation
+        return str(tree.path) if tree.target is None else tree.target.format_location(tree.path)
+
     def cap_delete(
         self,
         artifacts: ty.Sequence[bckp.BackupArtifact[RsyncTree]],

@@ -692,6 +692,11 @@ def test_parse_schedules_rejects_invalid_name(name):
         parse_schedules({name: {}})
 
 
+def test_parse_schedules_rejects_comma_in_name():
+    with pytest.raises(ConfigError, match="schedule names cannot contain commas"):
+        parse_schedules({"hourly,daily": {}})
+
+
 def test_parse_schedules_rejects_nonmapping_schedule():
     with pytest.raises(ConfigError, match="schedule 'hourly' must be a mapping"):
         parse_schedules({"hourly": "0 * * * *"})

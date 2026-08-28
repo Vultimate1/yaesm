@@ -138,6 +138,17 @@ def test_ssh_target_quotes_remote_command():
     assert shlex.split(command[-1]) == [str(arg) for arg in remote]
 
 
+def test_ssh_target_formats_remote_location():
+    target = SSHTarget("ssh://user@host:2222", Path("/key"))
+
+    assert target.format_location("/backups/a path@snapshot") == (
+        "ssh://user@host:2222/backups/a%20path@snapshot"
+    )
+    assert target.format_location("tank/backups@snapshot") == (
+        "ssh://user@host:2222/tank/backups@snapshot"
+    )
+
+
 def test_ssh_target_runs_through_command_runner():
     target = SSHTarget("ssh://user@host", Path("/key"))
     runner = RecordingRunner()

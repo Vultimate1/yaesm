@@ -336,6 +336,14 @@ class ZFSDriver(DriverBase):
             sorted(artifacts, key=lambda artifact: artifact.operation.created_at, reverse=True)
         )
 
+    def format_locator(self, artifact: bckp.BackupArtifact[ZFSSnapshot]) -> str:
+        snapshot = artifact.representation
+        return (
+            snapshot.name
+            if snapshot.target is None
+            else snapshot.target.format_location(snapshot.name)
+        )
+
     def cap_delete(
         self,
         artifacts: ty.Sequence[bckp.BackupArtifact[ZFSSnapshot]],

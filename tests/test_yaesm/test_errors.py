@@ -15,6 +15,7 @@ from yaesm.pipeline import PipelineError
 from yaesm.scheduler import SchedulerError
 from yaesm.ssh import SSHTargetError
 from yaesm.subcommand.checksubcommand import CheckError
+from yaesm.subcommand.findsubcommand import FindError, FindQueryError
 from yaesm.subcommand.runsubcommand import RunError
 
 
@@ -29,6 +30,8 @@ from yaesm.subcommand.runsubcommand import RunError
         (ControlError, (YaesmError,)),
         (SchedulerError, (YaesmError,)),
         (CheckError, (YaesmError,)),
+        (FindError, (YaesmValueError, YaesmError, ValueError)),
+        (FindQueryError, (FindError, YaesmValueError, YaesmError, ValueError)),
         (RunError, (YaesmError,)),
         (YaesmValueError, (YaesmError, ValueError)),
         (SSHTargetError, (YaesmValueError, YaesmError, ValueError)),
@@ -52,6 +55,8 @@ def test_error_hierarchy(error_type, parents):
         ControlError("control"),
         SchedulerError("scheduler"),
         CheckError("check"),
+        FindError("find"),
+        FindQueryError("query"),
         RunError("run"),
         YaesmValueError("value"),
         SSHTargetError("SSH target"),
@@ -76,6 +81,8 @@ def test_all_expected_errors_can_be_caught_together(error):
         (ControlError, "yaesm.control"),
         (SchedulerError, "yaesm.scheduler"),
         (CheckError, "yaesm.subcommand.checksubcommand"),
+        (FindError, "yaesm.subcommand.findsubcommand"),
+        (FindQueryError, "yaesm.subcommand.findsubcommand"),
         (RunError, "yaesm.subcommand.runsubcommand"),
         (YaesmValueError, "yaesm.errors"),
         (DriverError, "yaesm.driver.driverbase"),

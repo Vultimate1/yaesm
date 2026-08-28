@@ -779,6 +779,18 @@ def test_cap_list_remote(tmp_path):
     ]
 
 
+def test_formats_local_and_remote_artifact_locators(tmp_path):
+    operation_ = operation()
+    path = tmp_path / operation_.artifact_name
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    driver = BtrfsDriver(tmp_path)
+
+    assert driver.format_locator(BackupArtifact(operation_, BtrfsSnapshot(path))) == str(path)
+    assert driver.format_locator(
+        BackupArtifact(operation_, BtrfsSnapshot(path, target))
+    ) == target.format_location(path)
+
+
 def test_cap_delete_batches_artifacts(tmp_path):
     runner = RecordingRunner()
     artifacts = (

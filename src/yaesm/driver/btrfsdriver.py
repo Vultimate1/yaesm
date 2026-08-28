@@ -271,6 +271,14 @@ class BtrfsDriver(DriverBase):
             sorted(artifacts, key=lambda artifact: artifact.operation.created_at, reverse=True)
         )
 
+    def format_locator(self, artifact: bckp.BackupArtifact[BtrfsSnapshot]) -> str:
+        snapshot = artifact.representation
+        return (
+            str(snapshot.path)
+            if snapshot.target is None
+            else snapshot.target.format_location(snapshot.path)
+        )
+
     def cap_delete(
         self,
         artifacts: ty.Sequence[bckp.BackupArtifact[BtrfsSnapshot]],

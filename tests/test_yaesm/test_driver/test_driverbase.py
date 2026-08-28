@@ -273,6 +273,16 @@ def test_stored_artifact_check_reports_listing_failure(monkeypatch):
     assert result.failure == "listing failed"
 
 
+def test_driver_without_locator_formatting_reports_driver():
+    artifact = bckp.BackupArtifact(
+        bckp.BackupOperation("home", "daily", datetime(2026, 8, 28)),
+        Representation(),
+    )
+
+    with pytest.raises(NotImplementedError, match="empty driver cannot format artifact locators"):
+        EmptyDriver().format_locator(artifact)
+
+
 def test_driver_configuration_schema():
     assert EmptyDriver.config_schema()({}) == {}
 

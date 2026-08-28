@@ -705,6 +705,21 @@ def test_cap_list_remote(tmp_path):
     ]
 
 
+def test_formats_local_and_remote_artifact_locators(tmp_path):
+    operation_ = operation()
+    snapshot = ZFSSnapshot("backup/home", operation_.artifact_name)
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    driver = ZFSDriver("backup/home")
+
+    assert driver.format_locator(BackupArtifact(operation_, snapshot)) == snapshot.name
+    assert driver.format_locator(
+        BackupArtifact(
+            operation_,
+            ZFSSnapshot(snapshot.dataset, snapshot.snapshot, target),
+        )
+    ) == target.format_location(snapshot.name)
+
+
 def test_cap_delete_batches_snapshots():
     runner = RecordingRunner()
     artifacts = (
