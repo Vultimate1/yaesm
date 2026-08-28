@@ -15,7 +15,7 @@ from yaesm.errors import YaesmError
 from yaesm.pipeline import Pipeline
 from yaesm.representation import DataProperty
 from yaesm.retention import RetentionPolicyBase
-from yaesm.schedule import Schedule, ScheduleBase
+from yaesm.schedule import Schedule, ScheduleBase, schedule_name_valid
 from yaesm.ssh import SSHTarget, SSHTargetError
 
 
@@ -298,10 +298,8 @@ def parse_schedules(
     messages = []
     for schedule_name, definition in value.items():
         try:
-            if not isinstance(schedule_name, str) or not schedule_name:
-                raise ConfigError("schedule names must be nonempty strings")
-            if "," in schedule_name:
-                raise ConfigError("schedule names cannot contain commas")
+            if not schedule_name_valid(schedule_name):
+                raise ConfigError(f"invalid schedule name: {schedule_name!r}")
             schedule, retention = _parse_schedule(schedule_name, definition)
             schedules.append(schedule)
             policies.extend(retention)

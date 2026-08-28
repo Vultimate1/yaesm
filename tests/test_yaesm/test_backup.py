@@ -189,6 +189,15 @@ def test_backup_operation():
     assert operation.artifact_name == "yaesm-home-hourly.2026_08_27_12:30"
 
 
+@pytest.mark.parametrize(
+    "schedule_name",
+    ["../../../outside", "daily/../../outside", "daily,weekly", "daily backup"],
+)
+def test_backup_operation_rejects_unsafe_schedule_name(schedule_name):
+    with pytest.raises(YaesmValueError, match="invalid schedule name"):
+        bckp.BackupOperation("home", schedule_name, datetime(2026, 8, 27, 12, 30))
+
+
 def test_backup_operation_from_artifact_name():
     assert bckp.BackupOperation.from_artifact_name(
         "home-backup",

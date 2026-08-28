@@ -5,7 +5,13 @@ import voluptuous as vlp
 from apscheduler.triggers.cron import CronTrigger
 
 from yaesm.errors import YaesmValueError
-from yaesm.schedule import CronSchedule, OnDemandSchedule, Schedule, ScheduleBase
+from yaesm.schedule import (
+    CronSchedule,
+    OnDemandSchedule,
+    Schedule,
+    ScheduleBase,
+    schedule_name_valid,
+)
 
 
 class ScheduleWithoutName(ScheduleBase):
@@ -38,6 +44,25 @@ def test_schedule():
     assert schedule.implementation is implementation
     assert len(schedule.timer_triggers()) == 1
     assert isinstance(schedule.timer_triggers()[0], CronTrigger)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["hourly", "Every.Six-Hours", "manual_1", "daily@server", "daily:local"],
+)
+def test_schedule_accepts_safe_name(name):
+    assert schedule_name_valid(name)
+    assert Schedule(name, UntimedSchedule()).name == name
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["", None, 1, "../../../outside", "daily/../../outside", "daily,weekly", "daily backup"],
+)
+def test_schedule_rejects_unsafe_name(name):
+    assert not schedule_name_valid(name)
+    with pytest.raises(YaesmValueError, match="invalid schedule name"):
+        Schedule(name, UntimedSchedule())
 
 
 def test_schedule_can_have_no_timer_triggers():

@@ -686,15 +686,13 @@ def test_parse_schedules_rejects_empty_mapping():
         parse_schedules({})
 
 
-@pytest.mark.parametrize("name", ["", None, 1])
+@pytest.mark.parametrize(
+    "name",
+    ["", None, 1, "../../../outside", "daily/../../outside", "daily,weekly", "daily backup"],
+)
 def test_parse_schedules_rejects_invalid_name(name):
-    with pytest.raises(ConfigError, match="schedule names must be nonempty strings"):
+    with pytest.raises(ConfigError, match="invalid schedule name"):
         parse_schedules({name: {}})
-
-
-def test_parse_schedules_rejects_comma_in_name():
-    with pytest.raises(ConfigError, match="schedule names cannot contain commas"):
-        parse_schedules({"hourly,daily": {}})
 
 
 def test_parse_schedules_rejects_nonmapping_schedule():

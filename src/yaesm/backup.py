@@ -8,6 +8,7 @@ import re
 import yaesm.ty as ty
 from yaesm.errors import YaesmError, YaesmValueError
 from yaesm.representation import DataProperty, Representation
+from yaesm.schedule import schedule_name_valid
 
 _RepresentationT = ty.TypeVar("_RepresentationT", bound=Representation, covariant=True)
 
@@ -42,6 +43,10 @@ class BackupOperation:
     backup_name: str
     schedule_name: str
     created_at: ty.datetime
+
+    def __post_init__(self) -> None:
+        if not schedule_name_valid(self.schedule_name):
+            raise YaesmValueError(f"invalid schedule name: {self.schedule_name!r}")
 
     @classmethod
     def from_artifact_name(cls, backup_name: str, artifact_name: str) -> BackupOperation:
