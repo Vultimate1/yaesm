@@ -81,6 +81,7 @@ class ControlServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     def start(self) -> None:
         """Start serving in a background thread."""
         self._thread.start()
+        logger.info("control socket listening at %s", self.path)
 
     def stop(self) -> None:
         """Stop serving and remove the socket."""

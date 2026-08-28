@@ -1,6 +1,7 @@
 """Tests for yaesm.control."""
 
 import json
+import logging
 import socket
 import stat
 from contextlib import contextmanager
@@ -43,7 +44,8 @@ def test_control_error_is_expected_error():
     assert issubclass(ControlError, YaesmError)
 
 
-def test_control_server_streams_messages(tmp_path):
+def test_control_server_streams_messages(tmp_path, caplog):
+    caplog.set_level(logging.INFO)
     path = tmp_path / "run" / "control.sock"
     requests = []
 
@@ -63,6 +65,7 @@ def test_control_server_streams_messages(tmp_path):
         {"type": "log", "message": "starting backup"},
         {"type": "result", "ok": True},
     ]
+    assert f"control socket listening at {path}" in caplog.messages
     assert not path.exists()
 
 

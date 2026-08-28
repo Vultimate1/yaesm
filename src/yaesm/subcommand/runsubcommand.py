@@ -26,19 +26,30 @@ class RunSubcommand(SubcommandBase):
     @staticmethod
     def _control_request(
         scheduler: Scheduler,
+        config_path: Path,
         request: ty.Mapping[str, object],
     ) -> tuple[ControlMessage, ...]:
-        match request.get("command"):
+        command = request.get("command")
+        match command:
             case "backup":
-                pass
+                allowed = {"command", "backup", "schedule"}
+            case "reload-config":
+                allowed = {"command"}
             case str() as command:
                 raise ControlError(f"unknown control command: {command!r}")
             case _:
                 raise ControlError("control request requires a command")
 
-        unknown = set(request) - {"command", "backup", "schedule"}
+        unknown = set(request) - allowed
         if unknown:
-            raise ControlError(f"backup command has unknown fields: {', '.join(sorted(unknown))}")
+            raise ControlError(
+                f"{command} command has unknown fields: {', '.join(sorted(unknown))}"
+            )
+        if command == "reload-config":
+            if error := RunSubcommand._reload_config(scheduler, config_path):
+                raise ControlError(error)
+            return ({"type": "result", "ok": True},)
+
         backup_name = request.get("backup")
         if not isinstance(backup_name, str) or not backup_name:
             raise ControlError("backup command requires a backup name")
@@ -50,7 +61,7 @@ class RunSubcommand(SubcommandBase):
         return ({"type": "result", "ok": True, "request_id": request_id},)
 
     @staticmethod
-    def _reload_config(scheduler: Scheduler, path: Path) -> None:
+    def _reload_config(scheduler: Scheduler, path: Path) -> str | None:
         try:
             config = parse_config(path)
         except ConfigError as error:
@@ -59,10 +70,11 @@ class RunSubcommand(SubcommandBase):
                 "configuration reload failed; keeping current configuration\n%s",
                 details,
             )
-            return
+            return error.format()
 
         scheduler.replace_config(config)
         logger.info("configuration reloaded")
+        return None
 
     def main(self, config: Config, arguments: argparse.Namespace) -> int:
         try:
@@ -83,7 +95,7 @@ class RunSubcommand(SubcommandBase):
             scheduler = Scheduler(config)
             control = ControlServer(
                 arguments.control_socket,
-                lambda request: self._control_request(scheduler, request),
+                lambda request: self._control_request(scheduler, arguments.config, request),
             )
             signal.signal(
                 signal.SIGHUP,

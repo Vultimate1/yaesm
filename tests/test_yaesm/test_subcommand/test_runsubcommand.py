@@ -55,6 +55,7 @@ def test_control_request_enqueues_backup():
 
     messages = RunSubcommand._control_request(
         scheduler,
+        Path("config.yaml"),
         {"command": "backup", "backup": "home", "schedule": "manual"},
     )
 
@@ -71,11 +72,12 @@ def test_control_request_enqueues_backup():
             {"command": "backup", "backup": "home", "schedule": "manual", "extra": True},
             "unknown fields: extra",
         ),
+        ({"command": "reload-config", "extra": True}, "unknown fields: extra"),
     ],
 )
 def test_control_request_rejects_invalid_fields(control_request, error):
     with pytest.raises(ControlError, match=error):
-        RunSubcommand._control_request(mock.Mock(), control_request)
+        RunSubcommand._control_request(mock.Mock(), Path("config.yaml"), control_request)
 
 
 @pytest.mark.parametrize(
@@ -87,7 +89,34 @@ def test_control_request_rejects_invalid_fields(control_request, error):
 )
 def test_control_request_rejects_invalid_command(control_request, error):
     with pytest.raises(ControlError, match=error):
-        RunSubcommand._control_request(mock.Mock(), control_request)
+        RunSubcommand._control_request(mock.Mock(), Path("config.yaml"), control_request)
+
+
+def test_control_request_reloads_config(monkeypatch):
+    scheduler = mock.Mock()
+    reload_config = mock.Mock(return_value=None)
+    monkeypatch.setattr(RunSubcommand, "_reload_config", reload_config)
+    path = Path("config.yaml")
+
+    messages = RunSubcommand._control_request(scheduler, path, {"command": "reload-config"})
+
+    reload_config.assert_called_once_with(scheduler, path)
+    assert messages == ({"type": "result", "ok": True},)
+
+
+def test_control_request_reports_reload_error(monkeypatch):
+    monkeypatch.setattr(
+        RunSubcommand,
+        "_reload_config",
+        mock.Mock(return_value="invalid configuration"),
+    )
+
+    with pytest.raises(ControlError, match="invalid configuration"):
+        RunSubcommand._control_request(
+            mock.Mock(),
+            Path("config.yaml"),
+            {"command": "reload-config"},
+        )
 
 
 def test_run_starts_and_stops_scheduler(monkeypatch, tmp_path):
@@ -175,7 +204,7 @@ def test_reload_config(monkeypatch, tmp_path, caplog):
     scheduler = mock.Mock()
     monkeypatch.setattr(run_module, "parse_config", mock.Mock(return_value=config))
 
-    RunSubcommand._reload_config(scheduler, tmp_path / "config.yaml")
+    assert RunSubcommand._reload_config(scheduler, tmp_path / "config.yaml") is None
 
     scheduler.replace_config.assert_called_once_with(config)
     assert "configuration reloaded" in caplog.messages
@@ -186,7 +215,7 @@ def test_reload_invalid_config_keeps_current_jobs(monkeypatch, tmp_path, caplog)
     monkeypatch.setattr(run_module, "parse_config", mock.Mock(side_effect=error))
     scheduler = mock.Mock()
 
-    RunSubcommand._reload_config(scheduler, tmp_path / "config.yaml")
+    assert RunSubcommand._reload_config(scheduler, tmp_path / "config.yaml") == error.format()
 
     scheduler.replace_config.assert_not_called()
     records = [record for record in caplog.records if record.levelno == logging.ERROR]
