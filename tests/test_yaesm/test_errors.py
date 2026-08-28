@@ -12,6 +12,7 @@ from yaesm.driver.zfsdriver import ZFSDriverError
 from yaesm.errors import YaesmError, YaesmValueError
 from yaesm.pipeline import PipelineError
 from yaesm.ssh import SSHTargetError
+from yaesm.subcommand.runsubcommand import RunError
 
 
 @pytest.mark.parametrize(
@@ -22,6 +23,7 @@ from yaesm.ssh import SSHTargetError
         (PipelineError, (BackupError, YaesmError)),
         (CommandError, (YaesmError,)),
         (ConfigError, (YaesmError,)),
+        (RunError, (YaesmError,)),
         (YaesmValueError, (YaesmError, ValueError)),
         (SSHTargetError, (YaesmValueError, YaesmError, ValueError)),
         (BtrfsDriverError, (DriverError, BackupError, YaesmError)),
@@ -41,6 +43,7 @@ def test_error_hierarchy(error_type, parents):
         PipelineError("pipeline"),
         CommandError(("false",), 1, ""),
         ConfigError("config"),
+        RunError("run"),
         YaesmValueError("value"),
         SSHTargetError("SSH target"),
         BtrfsDriverError("Btrfs"),
@@ -61,6 +64,7 @@ def test_all_expected_errors_can_be_caught_together(error):
         (BackupError, "yaesm.backup"),
         (CommandError, "yaesm.command"),
         (ConfigError, "yaesm.config"),
+        (RunError, "yaesm.subcommand.runsubcommand"),
         (YaesmValueError, "yaesm.errors"),
         (DriverError, "yaesm.driver.driverbase"),
         (BtrfsDriverError, "yaesm.driver.btrfsdriver"),
