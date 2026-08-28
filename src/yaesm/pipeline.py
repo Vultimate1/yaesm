@@ -27,6 +27,13 @@ class PipelineStep:
     capability: str
 
 
+_Route: ty.TypeAlias = tuple[
+    type[Representation],
+    frozenset[DataProperty],
+    tuple[PipelineStep, ...],
+]
+
+
 @dataclasses.dataclass(frozen=True)
 class IncrementalBase:
     """Matching source and destination states used for incremental transfers."""
@@ -185,9 +192,11 @@ def _resolve(
     )
     furthest = (source_type, properties, steps)
     missing_route: tuple[frozenset[DataProperty], tuple[PipelineStep, ...]] | None = None
+    required_route: _Route | None = None
 
     while queue:
         current_type, properties, steps, used = queue.popleft()
+        advanced = False
         for driver in available:
             for capability in sorted(driver.pipeline_capabilities() - {"source"}):
                 step = PipelineStep(driver, capability)
@@ -203,15 +212,31 @@ def _resolve(
                     missing = (metadata.requires - properties) | (requirements - next_properties)
                     if not missing:
                         return next_steps
-                    if missing_route is None:
+                    if missing_route is None or len(missing) < len(missing_route[0]):
                         missing_route = (missing, next_steps)
                     continue
                 if not metadata.requires <= properties:
                     continue
                 if issubclass(output_type, Representation):
                     queue.append((output_type, next_properties, next_steps, used | {step_id}))
+                    advanced = True
                     if len(next_steps) > len(furthest[2]):
                         furthest = (output_type, next_properties, next_steps)
+        if (
+            requirements
+            and requirements <= properties
+            and not advanced
+            and not any(issubclass(current_type, _input_type(step)) for step in storage_steps)
+            and required_route is None
+        ):
+            required_route = (current_type, properties, steps)
+
+    if required_route is not None:
+        raise _incompatible_pipeline_error(
+            required_route,
+            storage_steps,
+            requirements_met=True,
+        )
 
     if missing_route is not None:
         missing, steps = missing_route
@@ -221,12 +246,25 @@ def _resolve(
             f"  missing required properties: {_format_properties(missing)}"
         )
 
-    current_type, properties, steps = furthest
-    accepted = ", ".join(sorted({_input_type(step).__name__ for step in storage_steps}))
-    raise PipelineError(
+    raise _incompatible_pipeline_error(furthest, storage_steps)
+
+
+def _incompatible_pipeline_error(
+    route: _Route,
+    storage_steps: ty.Sequence[PipelineStep],
+    *,
+    requirements_met: bool = False,
+) -> PipelineError:
+    representation, properties, steps = route
+    route_label = "route satisfying requirements" if requirements_met else "last usable route"
+    accepted = ", ".join(
+        f"{_input_type(step).__name__} via {step.driver.name()}.{step.capability}"
+        for step in storage_steps
+    )
+    return PipelineError(
         "cannot build backup pipeline:\n"
-        f"  last usable route: {_format_steps(steps) or 'existing artifact'}\n"
-        f"  produced: {current_type.__name__}\n"
+        f"  {route_label}: {_format_steps(steps) or 'existing artifact'}\n"
+        f"  produced: {representation.__name__}\n"
         f"  available properties: {_format_properties(properties)}\n"
         f"  destination accepts: {accepted}"
     )

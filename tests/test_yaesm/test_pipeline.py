@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 import voluptuous as vlp
@@ -9,7 +10,9 @@ import voluptuous as vlp
 import yaesm.ty as ty
 from yaesm.backup import BackupArtifact, BackupOperation, DriverSource
 from yaesm.command import CommandError
+from yaesm.driver.btrfsdriver import BtrfsDriver
 from yaesm.driver.driverbase import DriverBase, DriverError, capability
+from yaesm.driver.gpgdriver import GPGDriver
 from yaesm.pipeline import IncrementalBase, Pipeline, PipelineError, PipelineStep
 from yaesm.representation import (
     ByteStream,
@@ -152,6 +155,17 @@ class FailingDestinationDriver(DestinationDriver):
         base: Representation | None = None,
     ) -> BackupArtifact:
         raise CommandError(("import",), 1, "failed")
+
+
+class CompressionRequiredDestinationDriver(DestinationDriver):
+    @capability("import", requires=(DataProperty.COMPRESSED,))
+    def cap_import(
+        self,
+        source: ByteStream,
+        operation: BackupOperation,
+        base: Representation | None = None,
+    ) -> BackupArtifact:
+        return BackupArtifact(operation, source)
 
 
 class FailingCleanupDriver(SnapshotDriver):
@@ -422,7 +436,7 @@ def test_pipeline_explains_incompatible_representations():
         "  last usable route: source.source\n"
         "  produced: ReadableTree\n"
         "  available properties: none\n"
-        "  destination accepts: ByteStream"
+        "  destination accepts: ByteStream via destination.import"
     )
 
 
@@ -440,7 +454,7 @@ def test_pipeline_explains_incompatible_existing_artifact():
         "  last usable route: existing artifact\n"
         "  produced: ReadableTree\n"
         "  available properties: none\n"
-        "  destination accepts: ByteStream"
+        "  destination accepts: ByteStream via destination.import"
     )
 
 
@@ -478,6 +492,43 @@ def test_pipeline_rejects_unsatisfied_requirement():
         "cannot build backup pipeline:\n"
         "  compatible route: source.source -> export.export -> destination.import\n"
         "  missing required properties: encrypted"
+    )
+
+
+def test_pipeline_explains_when_required_representation_cannot_be_stored():
+    with pytest.raises(PipelineError) as error:
+        Pipeline(
+            DriverSource(BtrfsDriver(Path("/source"))),
+            BtrfsDriver(Path("/destination")),
+            (GPGDriver(Path("/public-key.asc")),),
+            requirements={DataProperty.ENCRYPTED},
+        )
+
+    assert str(error.value) == (
+        "cannot build backup pipeline:\n"
+        "  route satisfying requirements: btrfs.source -> btrfs.snapshot -> "
+        "btrfs.export -> gpg.encrypt\n"
+        "  produced: GPGStream\n"
+        "  available properties: encrypted, snapshot\n"
+        "  destination accepts: BtrfsStream via btrfs.import, "
+        "BtrfsSubvolume via btrfs.store"
+    )
+
+
+def test_pipeline_reports_the_storage_route_with_fewest_missing_properties():
+    with pytest.raises(PipelineError) as error:
+        Pipeline(
+            DriverSource(SourceDriver()),
+            CompressionRequiredDestinationDriver(),
+            (ExportDriver(), EncryptionDriver()),
+            requirements={DataProperty.ENCRYPTED},
+        )
+
+    assert str(error.value) == (
+        "cannot build backup pipeline:\n"
+        "  compatible route: source.source -> export.export -> encryption.encrypt -> "
+        "destination.import\n"
+        "  missing required properties: compressed"
     )
 
 
