@@ -1,12 +1,14 @@
 """Tests for yaesm.driver.zstddriver."""
 
+import shutil
+
 import pytest
 import voluptuous as vlp
 
 import yaesm.command as command_module
 import yaesm.ty as ty
 from yaesm.check import CheckRole
-from yaesm.command import CommandResult
+from yaesm.command import CommandResult, CommandRunner
 from yaesm.driver.zstddriver import ZstdDriver, ZstdStream
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, CompressedStream, DataProperty
@@ -89,3 +91,20 @@ def test_capability_advertises_only_compression():
 
 def test_zstd_stream_is_compressed_command_stream():
     assert issubclass(ZstdStream, CompressedStream)
+
+
+def test_zstd_compresses_and_restores_stream():
+    if shutil.which("zstd") is None:
+        pytest.skip("Zstandard is not installed")
+    source = CommandStream((("printf", "%s", "compressed backup content"),))
+    stream = ZstdDriver().cap_compress(source)
+
+    result = CommandRunner().pipeline(
+        (
+            *stream.commands,
+            ("zstd", "--decompress", "--stdout", "--quiet"),
+        ),
+        capture_output=True,
+    )
+
+    assert result.stdout == "compressed backup content"
