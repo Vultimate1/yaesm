@@ -13,7 +13,7 @@ import yaesm.command as command_module
 import yaesm.ty as ty
 from yaesm.backup import Backup, BackupArtifact, BackupOperation, DriverSource
 from yaesm.check import CheckRole
-from yaesm.command import Command, CommandResult, CommandRunner
+from yaesm.command import Command, CommandError, CommandResult, CommandRunner
 from yaesm.driver.zfsdriver import (
     ZFSDataset,
     ZFSDriver,
@@ -56,6 +56,8 @@ class RecordingRunner(CommandRunner):
             raise failure
         returncode = self.returncodes.pop(0) if self.returncodes else 0
         stdout = self.stdouts.pop(0) if self.stdouts else None
+        if check and returncode:
+            raise CommandError(command, returncode, "")
         return CommandResult(stdout, "", (returncode,))
 
     def pipeline(
@@ -726,13 +728,14 @@ def test_cap_list_returns_matching_artifacts_newest_first():
             "backup/home",
         )
     ]
-    assert runner.checks == [False]
+    assert runner.checks == [True]
 
 
-def test_cap_list_returns_empty_when_dataset_does_not_exist():
+def test_cap_list_propagates_command_failure():
     runner = RecordingRunner((1,))
 
-    assert with_runner(ZFSDriver("backup/home"), runner).cap_list("example") == ()
+    with pytest.raises(CommandError, match="command exited with status 1: zfs list"):
+        with_runner(ZFSDriver("backup/home"), runner).cap_list("example")
 
 
 def test_cap_list_remote(tmp_path):

@@ -310,10 +310,7 @@ class ZFSDriver(DriverBase):
                 ),
             ),
             capture_output=True,
-            check=False,
         )
-        if result.returncode:
-            return ()
 
         prefix = f"{self.dataset}@"
         artifacts = []
