@@ -381,7 +381,7 @@ def test_cap_store_falls_back_to_send_receive(tmp_path):
         ),
     ]
     assert runner.commands[5:] == [
-        ("mv", "--", str(destination_dir / staging.name), str(destination)),
+        ("mv", "-T", "--", str(destination_dir / staging.name), str(destination)),
         ("btrfs", "subvolume", "delete", str(staging)),
     ]
 
@@ -722,14 +722,27 @@ def test_cap_import_cleans_up_failed_receive(tmp_path):
 def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
     destination = tmp_path / "destination"
     older = BackupOperation("example", "hourly", datetime(2026, 8, 27, 12, 30))
-    newer = BackupOperation("example", "hourly", datetime(2026, 8, 27, 13, 30))
+    source_uuid = "11111111-1111-1111-1111-111111111111"
+    older_uuid = "22222222-2222-2222-2222-222222222222"
+    newer_uuid = "33333333-3333-3333-3333-333333333333"
+    newer = BackupOperation(
+        "example",
+        "hourly",
+        datetime(2026, 8, 27, 13, 30),
+        source_uuid,
+    )
     runner = RecordingRunner(
         stdouts=(
             "\n".join(
                 (
-                    str(destination / older.artifact_name),
-                    str(destination / "not-an-artifact"),
-                    str(destination / newer.artifact_name),
+                    "ID 256 gen 1 top level 5 parent_uuid - received_uuid - "
+                    f"uuid {older_uuid} path snapshots/{older.artifact_name}",
+                    "ID 257 gen 1 top level 5 parent_uuid - received_uuid - "
+                    "uuid 44444444-4444-4444-4444-444444444444 "
+                    "path snapshots/not-an-artifact",
+                    "ID 258 gen 1 top level 5 parent_uuid - "
+                    f"received_uuid {source_uuid} uuid {newer_uuid} "
+                    f"path snapshots/{newer.artifact_name}",
                 )
             ),
         )
@@ -738,22 +751,60 @@ def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
     artifacts = with_runner(BtrfsDriver(destination), runner).cap_list("example")
 
     assert artifacts == (
-        BackupArtifact(newer, BtrfsSnapshot(destination / newer.artifact_name)),
-        BackupArtifact(older, BtrfsSnapshot(destination / older.artifact_name)),
+        BackupArtifact(
+            newer,
+            BtrfsSnapshot(
+                destination / newer.artifact_name,
+                uuid=newer_uuid,
+                source_uuid=source_uuid,
+            ),
+        ),
+        BackupArtifact(
+            older,
+            BtrfsSnapshot(destination / older.artifact_name, uuid=older_uuid),
+        ),
     )
     assert runner.commands == [
         (
-            "find",
+            "btrfs",
+            "subvolume",
+            "list",
+            "-u",
+            "-q",
+            "-R",
+            "-o",
             str(destination),
-            "!",
-            "-path",
-            str(destination),
-            "-prune",
-            "-type",
-            "d",
-            "-print",
         )
     ]
+
+
+def test_cap_list_uses_parent_uuid_for_local_snapshot(tmp_path):
+    operation_ = operation()
+    snapshot_uuid = "11111111-1111-1111-1111-111111111111"
+    parent_uuid = "22222222-2222-2222-2222-222222222222"
+    runner = RecordingRunner(
+        stdouts=(
+            "ID 256 gen 1 top level 5 "
+            f"parent_uuid {parent_uuid} received_uuid - uuid {snapshot_uuid} "
+            f"path {operation_.artifact_name}",
+        )
+    )
+
+    (artifact,) = with_runner(BtrfsDriver(tmp_path), runner).cap_list("example")
+
+    assert artifact.operation.source_artifact_id == parent_uuid
+    assert artifact.representation.source_uuid == parent_uuid
+    assert BtrfsDriver(tmp_path).artifact_id(artifact) == snapshot_uuid
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    ["", "not Btrfs output", "ID 256 uuid missing path snapshot"],
+)
+def test_cap_list_ignores_malformed_output(tmp_path, stdout):
+    runner = RecordingRunner(stdouts=(stdout,))
+
+    assert with_runner(BtrfsDriver(tmp_path), runner).cap_list("example") == ()
 
 
 def test_cap_list_remote(tmp_path):
@@ -765,15 +816,14 @@ def test_cap_list_remote(tmp_path):
     assert runner.commands == [
         target.openssh_command(
             (
-                "find",
+                "btrfs",
+                "subvolume",
+                "list",
+                "-u",
+                "-q",
+                "-R",
+                "-o",
                 destination,
-                "!",
-                "-path",
-                destination,
-                "-prune",
-                "-type",
-                "d",
-                "-print",
             )
         )
     ]

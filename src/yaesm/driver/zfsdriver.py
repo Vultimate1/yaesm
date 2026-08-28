@@ -20,6 +20,8 @@ from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, DataProperty, Representation
 from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
 
+_SOURCE_ARTIFACT_PROPERTY = "yaesm:source-artifact"
+
 
 class ZFSDriverError(DriverError):
     """Raised when a ZFS capability cannot be performed."""
@@ -195,7 +197,7 @@ class ZFSDriver(DriverBase):
             self.runner.run(
                 command_for_target(source.target, ("zfs", "snapshot", destination.name))
             )
-            return bckp.BackupArtifact(operation, destination)
+            return self._record_artifact(bckp.BackupArtifact(operation, destination))
 
         if base is not None and (
             not same_endpoint(base.target, self.target) or base.dataset != self.dataset
@@ -288,7 +290,7 @@ class ZFSDriver(DriverBase):
         except BaseException:
             self._destroy((destination,), check=False)
             raise
-        return bckp.BackupArtifact(operation, destination)
+        return self._record_artifact(bckp.BackupArtifact(operation, destination))
 
     def cap_list(self, backup_name: str) -> tuple[bckp.BackupArtifact[ZFSSnapshot], ...]:
         result = self.runner.run(
@@ -301,7 +303,7 @@ class ZFSDriver(DriverBase):
                     "-t",
                     "snapshot",
                     "-o",
-                    "name",
+                    f"name,{_SOURCE_ARTIFACT_PROPERTY}",
                     "-d",
                     "1",
                     self.dataset,
@@ -315,7 +317,8 @@ class ZFSDriver(DriverBase):
 
         prefix = f"{self.dataset}@"
         artifacts = []
-        for name in (result.stdout or "").splitlines():
+        for line in (result.stdout or "").splitlines():
+            name, separator, source_artifact_id = line.partition("\t")
             if not name.startswith(prefix):
                 continue
             snapshot_name = name.removeprefix(prefix)
@@ -326,6 +329,12 @@ class ZFSDriver(DriverBase):
                 )
             except YaesmValueError:
                 continue
+            operation = dataclasses.replace(
+                operation,
+                source_artifact_id=(
+                    source_artifact_id if separator and source_artifact_id != "-" else None
+                ),
+            )
             artifacts.append(
                 bckp.BackupArtifact(
                     operation,
@@ -335,6 +344,30 @@ class ZFSDriver(DriverBase):
         return tuple(
             sorted(artifacts, key=lambda artifact: artifact.operation.created_at, reverse=True)
         )
+
+    def _record_artifact(
+        self,
+        artifact: bckp.BackupArtifact[ZFSSnapshot],
+    ) -> bckp.BackupArtifact[ZFSSnapshot]:
+        source_artifact_id = artifact.operation.source_artifact_id
+        if source_artifact_id is None:
+            return artifact
+        try:
+            self.runner.run(
+                command_for_target(
+                    self.target,
+                    (
+                        "zfs",
+                        "set",
+                        f"{_SOURCE_ARTIFACT_PROPERTY}={source_artifact_id}",
+                        artifact.representation.name,
+                    ),
+                )
+            )
+        except BaseException:
+            self._destroy((artifact.representation,), check=False)
+            raise
+        return artifact
 
     def format_locator(self, artifact: bckp.BackupArtifact[ZFSSnapshot]) -> str:
         snapshot = artifact.representation

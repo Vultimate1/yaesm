@@ -32,6 +32,7 @@ class RecordingRunner(CommandRunner):
         returncodes: ty.Iterable[int] = (),
         stdouts: ty.Iterable[str | None] = (),
         pipeline_failures: ty.Iterable[BaseException | None] = (),
+        run_failures: ty.Iterable[BaseException | None] = (),
     ) -> None:
         self.commands: list[tuple[str, ...]] = []
         self.checks: list[bool] = []
@@ -39,6 +40,7 @@ class RecordingRunner(CommandRunner):
         self.returncodes = list(returncodes)
         self.stdouts = list(stdouts)
         self.pipeline_failures = list(pipeline_failures)
+        self.run_failures = list(run_failures)
 
     def run(
         self,
@@ -49,6 +51,9 @@ class RecordingRunner(CommandRunner):
     ) -> CommandResult:
         self.commands.append(tuple(str(argument) for argument in command))
         self.checks.append(check)
+        failure = self.run_failures.pop(0) if self.run_failures else None
+        if failure is not None:
+            raise failure
         returncode = self.returncodes.pop(0) if self.returncodes else 0
         stdout = self.stdouts.pop(0) if self.stdouts else None
         return CommandResult(stdout, "", (returncode,))
@@ -75,6 +80,15 @@ def with_runner(driver: ZFSDriver, runner: RecordingRunner) -> ZFSDriver:
 
 def operation(hour: int = 12) -> BackupOperation:
     return BackupOperation("example", "hourly", datetime(2026, 8, 27, hour, 30))
+
+
+def replicated_operation() -> BackupOperation:
+    return BackupOperation(
+        "example",
+        "hourly",
+        datetime(2026, 8, 27, 12, 30),
+        "yaesm-local-hourly.2026_08_27_12:30",
+    )
 
 
 def test_name():
@@ -393,6 +407,44 @@ def test_cap_store_snapshots_directly_in_same_dataset():
     assert runner.pipelines == []
 
 
+def test_cap_store_records_replication_source():
+    runner = RecordingRunner()
+    operation_ = replicated_operation()
+
+    artifact = with_runner(ZFSDriver("tank/home"), runner).cap_store(
+        ZFSDataset("tank/home"),
+        operation_,
+    )
+
+    assert artifact.operation is operation_
+    assert runner.commands[-1] == (
+        "zfs",
+        "set",
+        f"yaesm:source-artifact={operation_.source_artifact_id}",
+        f"tank/home@{operation_.artifact_name}",
+    )
+
+
+def test_cap_store_cleans_up_source_metadata_failure():
+    runner = RecordingRunner(
+        run_failures=(None, RuntimeError("metadata failed"), None),
+    )
+    operation_ = replicated_operation()
+
+    with pytest.raises(RuntimeError, match="metadata failed"):
+        with_runner(ZFSDriver("tank/home"), runner).cap_store(
+            ZFSDataset("tank/home"),
+            operation_,
+        )
+
+    assert runner.commands[-1] == (
+        "zfs",
+        "destroy",
+        f"tank/home@{operation_.artifact_name}",
+    )
+    assert runner.checks[-1] is False
+
+
 def test_cap_store_snapshots_directly_on_same_remote(tmp_path):
     runner = RecordingRunner()
     source_target = SSHTarget("ssh://host", tmp_path / "source-key")
@@ -639,15 +691,16 @@ def test_cap_import_preserves_encryption_state():
 
 def test_cap_list_returns_matching_artifacts_newest_first():
     older = operation(11)
-    newer = operation(12)
+    source = "yaesm-local-hourly.2026_08_27_12:30"
+    newer = BackupOperation("example", "hourly", datetime(2026, 8, 27, 12, 30), source)
     runner = RecordingRunner(
         stdouts=(
             "\n".join(
                 (
-                    f"backup/home@{older.artifact_name}",
+                    f"backup/home@{older.artifact_name}\t-",
                     "backup/home@not-an-artifact",
                     f"other/home@{newer.artifact_name}",
-                    f"backup/home@{newer.artifact_name}",
+                    f"backup/home@{newer.artifact_name}\t{source}",
                 )
             ),
         )
@@ -667,7 +720,7 @@ def test_cap_list_returns_matching_artifacts_newest_first():
             "-t",
             "snapshot",
             "-o",
-            "name",
+            "name,yaesm:source-artifact",
             "-d",
             "1",
             "backup/home",
@@ -696,7 +749,7 @@ def test_cap_list_remote(tmp_path):
                 "-t",
                 "snapshot",
                 "-o",
-                "name",
+                "name,yaesm:source-artifact",
                 "-d",
                 "1",
                 "backup/home",

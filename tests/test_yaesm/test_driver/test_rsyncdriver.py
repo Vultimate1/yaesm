@@ -67,6 +67,15 @@ def operation(offset: int = 0) -> BackupOperation:
     )
 
 
+def replicated_operation() -> BackupOperation:
+    return BackupOperation(
+        "example",
+        "manual",
+        datetime(2026, 8, 27, 12, 30),
+        "yaesm-local-hourly.2026_08_27_12:30",
+    )
+
+
 def test_name():
     assert RsyncDriver.name() == "rsync"
 
@@ -288,6 +297,21 @@ def test_cap_store_local(tmp_path):
     ]
 
 
+def test_cap_store_does_not_write_replication_metadata(tmp_path):
+    runner = RecordingRunner()
+    source = PathTree(tmp_path / "source")
+    destination_dir = tmp_path / "destination"
+    operation_ = replicated_operation()
+
+    artifact = with_runner(RsyncDriver(destination_dir), runner).cap_store(source, operation_)
+
+    destination = destination_dir / operation_.artifact_name
+    assert artifact == BackupArtifact(operation_, RsyncTree(destination))
+    assert runner.commands == [
+        (*_RSYNC_OPTIONS, f"{source.path}/", f"{destination}/"),
+    ]
+
+
 def test_cap_store_root_source_has_one_trailing_slash(tmp_path):
     runner = RecordingRunner()
 
@@ -410,7 +434,11 @@ def test_cap_store_cleans_up_failure(tmp_path):
 def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
     destination = tmp_path / "destination"
     older = operation()
-    newer = operation(1)
+    newer = BackupOperation(
+        "example",
+        "manual",
+        datetime(2026, 8, 27, 12, 31),
+    )
     runner = RecordingRunner(
         stdouts=(
             "\n".join(
@@ -441,7 +469,7 @@ def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
             "-type",
             "d",
             "-print",
-        )
+        ),
     ]
 
 

@@ -83,6 +83,11 @@ class ArtifactDriver(DestinationDriver):
         return CommandStream()
 
 
+class IdentifiedArtifactDriver(ArtifactDriver):
+    def artifact_id(self, artifact: bckp.BackupArtifact) -> str:
+        return f"id:{artifact.name}"
+
+
 class StreamDestinationDriver(DriverBase):
     def __init__(self, artifacts: ty.Sequence[bckp.BackupArtifact] = ()) -> None:
         super().__init__()
@@ -186,7 +191,30 @@ def test_backup_operation():
     assert operation.backup_name == "home"
     assert operation.schedule_name == "hourly"
     assert operation.created_at == created_at
+    assert operation.source_artifact_id is None
     assert operation.artifact_name == "yaesm-home-hourly.2026_08_27_12:30"
+
+
+def test_backup_operation_records_source_artifact():
+    operation = bckp.BackupOperation(
+        "offsite",
+        "daily",
+        datetime(2026, 8, 27, 12, 30),
+        "yaesm-home-hourly.2026_08_27_12:30",
+    )
+
+    assert operation.source_artifact_id == "yaesm-home-hourly.2026_08_27_12:30"
+
+
+@pytest.mark.parametrize("source_artifact_id", ["", 1])
+def test_backup_operation_rejects_invalid_source_artifact_id(source_artifact_id):
+    with pytest.raises(YaesmValueError, match="invalid source artifact ID"):
+        bckp.BackupOperation(
+            "offsite",
+            "daily",
+            datetime(2026, 8, 27, 12, 30),
+            source_artifact_id,
+        )
 
 
 @pytest.mark.parametrize(
@@ -359,7 +387,15 @@ def test_backup_execute_replicates_newest_artifact_with_matching_bases():
         bckp.DriverSource(SourceDriver()),
         source_driver,
     )
-    previous_destination = artifact("daily", 11, "offsite", ByteStream())
+    previous_destination = bckp.BackupArtifact(
+        bckp.BackupOperation(
+            "offsite",
+            "daily",
+            previous_source.operation.created_at,
+            previous_source.name,
+        ),
+        ByteStream(),
+    )
     destination = StreamDestinationDriver((previous_destination,))
     backup = bckp.Backup("offsite", bckp.BackupSource("local"), destination)
 
@@ -373,6 +409,7 @@ def test_backup_execute_replicates_newest_artifact_with_matching_bases():
         "offsite",
         "daily",
         current_source.operation.created_at,
+        current_source.name,
     )
     assert source_driver.export_call == (
         current_source.representation,
@@ -406,6 +443,75 @@ def test_backup_execute_does_not_replicate_same_artifact_twice():
     assert result is existing
     assert source_driver.export_call is None
     assert destination.call is None
+
+
+def test_backup_execute_uses_exact_replication_base():
+    wanted = artifact("hourly", 11, "local")
+    same_time = artifact("daily", 11, "local")
+    current = artifact("hourly", 12, "local")
+    source_driver = IdentifiedArtifactDriver((current, same_time, wanted))
+    source_backup = bckp.Backup(
+        "local",
+        bckp.DriverSource(SourceDriver()),
+        source_driver,
+    )
+    previous_operation = bckp.BackupOperation(
+        "offsite",
+        "daily",
+        wanted.operation.created_at,
+        source_driver.artifact_id(wanted),
+    )
+    previous = bckp.BackupArtifact(previous_operation, ByteStream())
+    destination = StreamDestinationDriver((previous,))
+    backup = bckp.Backup("offsite", bckp.BackupSource("local"), destination)
+
+    result = backup.execute("daily", datetime(2026, 8, 27, 13), {"local": source_backup})
+
+    assert result.operation.source_artifact_id == source_driver.artifact_id(current)
+    assert source_driver.export_call == (current.representation, wanted.representation)
+
+
+def test_backup_execute_uses_full_replication_when_base_is_missing():
+    current = artifact("hourly", 12, "local")
+    source_driver = ArtifactDriver((current,))
+    source_backup = bckp.Backup(
+        "local",
+        bckp.DriverSource(SourceDriver()),
+        source_driver,
+    )
+    previous_operation = bckp.BackupOperation(
+        "offsite",
+        "daily",
+        datetime(2026, 8, 27, 11),
+        "yaesm-local-hourly.2026_08_27_11:00",
+    )
+    previous = bckp.BackupArtifact(previous_operation, ByteStream())
+    destination = StreamDestinationDriver((previous,))
+    backup = bckp.Backup("offsite", bckp.BackupSource("local"), destination)
+
+    backup.execute("daily", datetime(2026, 8, 27, 13), {"local": source_backup})
+
+    assert source_driver.export_call == (current.representation, None)
+    assert destination.call is not None
+    assert destination.call[2] is None
+
+
+def test_backup_execute_reuses_destination_only_base_without_source_metadata():
+    current = artifact("hourly", 12, "local")
+    source_driver = ArtifactDriver((current,))
+    source_backup = bckp.Backup(
+        "local",
+        bckp.DriverSource(SourceDriver()),
+        source_driver,
+    )
+    previous = artifact("daily", 11, "offsite")
+    destination = DestinationDriver((previous,))
+    backup = bckp.Backup("offsite", bckp.BackupSource("local"), destination)
+
+    backup.execute("daily", datetime(2026, 8, 27, 13), {"local": source_backup})
+
+    assert destination.base is previous.representation
+    assert source_driver.export_call is None
 
 
 def test_backup_execute_rejects_unknown_source_backup():

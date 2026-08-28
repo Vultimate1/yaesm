@@ -43,10 +43,15 @@ class BackupOperation:
     backup_name: str
     schedule_name: str
     created_at: ty.datetime
+    source_artifact_id: str | None = None
 
     def __post_init__(self) -> None:
         if not schedule_name_valid(self.schedule_name):
             raise YaesmValueError(f"invalid schedule name: {self.schedule_name!r}")
+        if self.source_artifact_id is not None and (
+            not isinstance(self.source_artifact_id, str) or not self.source_artifact_id
+        ):
+            raise YaesmValueError(f"invalid source artifact ID: {self.source_artifact_id!r}")
 
     @classmethod
     def from_artifact_name(cls, backup_name: str, artifact_name: str) -> BackupOperation:
@@ -114,6 +119,8 @@ class Backup:
 
         pipeline_drivers = self.drivers
         operation_created_at = created_at
+        source_artifact_id = None
+        source_driver = None
         source_artifacts: tuple[BackupArtifact, ...] = ()
         if isinstance(self.source, BackupSource):
             source_backup = None if backups is None else backups.get(self.source.backup_name)
@@ -134,13 +141,26 @@ class Backup:
                     f"backup {self.name!r} cannot run: source backup "
                     f"{source_backup.name!r} has no artifacts"
                 )
+            source_driver = source_backup.destination
             pipeline_source = source_artifacts[0]
-            pipeline_drivers = (source_backup.destination, *pipeline_drivers)
+            pipeline_drivers = (source_driver, *pipeline_drivers)
             operation_created_at = pipeline_source.operation.created_at
+            source_artifact_id = source_driver.artifact_id(pipeline_source)
         else:
             pipeline_source = self.source
 
-        operation = BackupOperation(self.name, schedule_name, operation_created_at)
+        operation = BackupOperation(
+            self.name,
+            schedule_name,
+            operation_created_at,
+            source_artifact_id,
+        )
+        pipeline = Pipeline(
+            pipeline_source,
+            self.destination,
+            pipeline_drivers,
+            self.requirements,
+        )
         try:
             artifacts = tuple(self.destination.cap_list(self.name))
         except YaesmError as error:
@@ -160,25 +180,33 @@ class Backup:
         base = None
         if artifacts:
             newest = artifacts[0]
-            source_base = next(
-                (
-                    item.representation
-                    for item in source_artifacts
-                    if item.operation.created_at == newest.operation.created_at
-                ),
-                None,
-            )
-            base = IncrementalBase(
-                source_base,
-                newest.representation,
-                newest.operation.created_at,
-            )
-        artifact = Pipeline(
-            pipeline_source,
-            self.destination,
-            pipeline_drivers,
-            self.requirements,
-        ).execute(operation, base)
+            if source_driver is not None:
+                source_base_id = self.destination.source_artifact_id(newest)
+                source_base = next(
+                    (
+                        item.representation
+                        for item in source_artifacts
+                        if source_driver.artifact_id(item) == source_base_id
+                    ),
+                    None,
+                )
+                needs_source_base = any(
+                    step.driver.capability_metadata(step.capability).base == "source"
+                    for step in pipeline.steps
+                )
+                if source_base is not None or not needs_source_base:
+                    base = IncrementalBase(
+                        source_base,
+                        newest.representation,
+                        newest.operation.created_at,
+                    )
+            else:
+                base = IncrementalBase(
+                    None,
+                    newest.representation,
+                    newest.operation.created_at,
+                )
+        artifact = pipeline.execute(operation, base)
 
         if self.retention_policies:
             artifacts = (artifact, *artifacts)

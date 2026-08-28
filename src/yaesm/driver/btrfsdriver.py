@@ -31,6 +31,9 @@ class BtrfsSubvolume(PathTree):
 class BtrfsSnapshot(BtrfsSubvolume):
     """A read-only Btrfs snapshot."""
 
+    uuid: str | None = None
+    source_uuid: str | None = None
+
 
 @dataclasses.dataclass(frozen=True)
 class BtrfsStream(CommandStream):
@@ -229,7 +232,7 @@ class BtrfsDriver(DriverBase):
             self.runner.run(
                 command_for_target(
                     self.target,
-                    ("mv", "--", received, destination),
+                    ("mv", "-T", "--", received, destination),
                 )
             )
         except BaseException:
@@ -246,27 +249,35 @@ class BtrfsDriver(DriverBase):
             command_for_target(
                 self.target,
                 (
-                    "find",
+                    "btrfs",
+                    "subvolume",
+                    "list",
+                    "-u",
+                    "-q",
+                    "-R",
+                    "-o",
                     self.location,
-                    "!",
-                    "-path",
-                    self.location,
-                    "-prune",
-                    "-type",
-                    "d",
-                    "-print",
                 ),
             ),
             capture_output=True,
         )
         artifacts = []
-        for value in (result.stdout or "").splitlines():
-            path = Path(value)
+        for line in (result.stdout or "").splitlines():
+            snapshot = self._parse_snapshot(line)
+            if snapshot is None:
+                continue
             try:
-                operation = bckp.BackupOperation.from_artifact_name(backup_name, path.name)
+                operation = bckp.BackupOperation.from_artifact_name(
+                    backup_name,
+                    snapshot.path.name,
+                )
             except YaesmValueError:
                 continue
-            artifacts.append(bckp.BackupArtifact(operation, BtrfsSnapshot(path, self.target)))
+            operation = dataclasses.replace(
+                operation,
+                source_artifact_id=snapshot.source_uuid,
+            )
+            artifacts.append(bckp.BackupArtifact(operation, snapshot))
         return tuple(
             sorted(artifacts, key=lambda artifact: artifact.operation.created_at, reverse=True)
         )
@@ -279,6 +290,11 @@ class BtrfsDriver(DriverBase):
             else snapshot.target.format_location(snapshot.path)
         )
 
+    def artifact_id(self, artifact: bckp.BackupArtifact) -> str:
+        """Return the snapshot UUID when Btrfs reported one."""
+        snapshot = ty.cast(BtrfsSnapshot, artifact.representation)
+        return snapshot.uuid or super().artifact_id(artifact)
+
     def cap_delete(
         self,
         artifacts: ty.Sequence[bckp.BackupArtifact[BtrfsSnapshot]],
@@ -290,6 +306,25 @@ class BtrfsDriver(DriverBase):
 
     def cap_cleanup(self, representation: BtrfsSnapshot) -> None:
         self._delete((representation,))
+
+    def _parse_snapshot(self, line: str) -> BtrfsSnapshot | None:
+        fields, separator, path = line.partition(" path ")
+        values = fields.split()
+        if not separator:
+            return None
+        try:
+            uuid_ = values[values.index("uuid") + 1]
+            parent_uuid = values[values.index("parent_uuid") + 1]
+            received_uuid = values[values.index("received_uuid") + 1]
+        except (IndexError, ValueError):
+            return None
+        source_uuid = received_uuid if received_uuid != "-" else parent_uuid
+        return BtrfsSnapshot(
+            self.location / Path(path).name,
+            self.target,
+            uuid_,
+            None if source_uuid == "-" else source_uuid,
+        )
 
     def _bootstrap(self, source: BtrfsSubvolume, backup_name: str) -> BtrfsSnapshot:
         name = f".yaesm-btrfs-bootstrap-{backup_name}"

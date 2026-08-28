@@ -187,6 +187,14 @@ class DriverBase(abc.ABC):
         """Format a stored artifact's location for display."""
         raise NotImplementedError(f"{self.name()} driver cannot format artifact locators")
 
+    def artifact_id(self, artifact: bckp.BackupArtifact) -> str:
+        """Return the driver's stable identifier for an artifact."""
+        return artifact.name
+
+    def source_artifact_id(self, artifact: bckp.BackupArtifact) -> str | None:
+        """Return the identifier of the artifact from which this artifact was copied."""
+        return artifact.operation.source_artifact_id
+
     def _checks(self, role: CheckRole) -> tuple[Check, ...]:
         """Return this driver's additional feasibility checks."""
         return ()

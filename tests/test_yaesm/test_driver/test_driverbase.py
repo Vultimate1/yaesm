@@ -291,6 +291,20 @@ def test_driver_has_command_runner():
     assert isinstance(EmptyDriver().runner, CommandRunner)
 
 
+def test_artifact_identifiers_default_to_names_and_recorded_sources():
+    operation = bckp.BackupOperation(
+        "offsite",
+        "daily",
+        datetime(2026, 8, 28),
+        "source-id",
+    )
+    artifact = bckp.BackupArtifact(operation, Representation())
+    driver = EmptyDriver()
+
+    assert driver.artifact_id(artifact) == artifact.name
+    assert driver.source_artifact_id(artifact) == "source-id"
+
+
 def test_executable_defaults_to_driver_name():
     assert EmptyDriver.executable_name() == "empty"
     assert EmptyDriver.executable_check_command() == ("empty", "--version")
