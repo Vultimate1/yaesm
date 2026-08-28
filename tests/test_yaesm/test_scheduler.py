@@ -69,6 +69,49 @@ def test_scheduler_enqueues_backup(monkeypatch):
     assert job.args == (backup, "manual", config.backups, request_id)
 
 
+def test_scheduler_selects_on_demand_schedule():
+    config, backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
+    scheduler = Scheduler(config)
+
+    request_id = scheduler.enqueue_backup("home")
+
+    job = scheduler._scheduler.get_job(request_id)
+    assert job is not None
+    assert job.args == (backup, "manual", config.backups, request_id)
+
+
+def test_scheduler_requires_on_demand_schedule():
+    config, _backup = configured_backup()
+    scheduler = Scheduler(config)
+
+    with pytest.raises(SchedulerError, match="backup 'home' has no on-demand schedule"):
+        scheduler.enqueue_backup("home")
+
+
+def test_scheduler_rejects_timer_schedule():
+    config, _backup = configured_backup()
+    scheduler = Scheduler(config)
+
+    with pytest.raises(SchedulerError, match="schedule 'hourly'.*is not on-demand"):
+        scheduler.enqueue_backup("home", "hourly")
+
+
+def test_scheduler_requires_explicit_name_for_multiple_on_demand_schedules():
+    backup = Backup(
+        "home",
+        DriverSource(mock.Mock()),
+        mock.Mock(),
+        schedules=(
+            Schedule("first", OnDemandSchedule()),
+            Schedule("second", OnDemandSchedule()),
+        ),
+    )
+    scheduler = Scheduler(Config({}, {"home": backup}))
+
+    with pytest.raises(SchedulerError, match="backup 'home' has multiple on-demand schedules"):
+        scheduler.enqueue_backup("home")
+
+
 def test_scheduler_rejects_unknown_backup():
     config, _backup = configured_backup()
     scheduler = Scheduler(config)

@@ -63,11 +63,24 @@ def test_control_request_enqueues_backup():
     assert messages == ({"type": "result", "ok": True, "request_id": "request-id"},)
 
 
+def test_control_request_uses_default_on_demand_schedule():
+    scheduler = mock.Mock()
+    scheduler.enqueue_backup.return_value = "request-id"
+
+    RunSubcommand._control_request(
+        scheduler,
+        Path("config.yaml"),
+        {"command": "backup", "backup": "home"},
+    )
+
+    scheduler.enqueue_backup.assert_called_once_with("home", None)
+
+
 @pytest.mark.parametrize(
     ("control_request", "error"),
     [
         ({"command": "backup", "schedule": "manual"}, "requires a backup name"),
-        ({"command": "backup", "backup": "home"}, "requires a schedule name"),
+        ({"command": "backup", "backup": "home", "schedule": ""}, "nonempty string"),
         (
             {"command": "backup", "backup": "home", "schedule": "manual", "extra": True},
             "unknown fields: extra",

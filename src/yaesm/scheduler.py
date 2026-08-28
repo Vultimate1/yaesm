@@ -12,6 +12,7 @@ import yaesm.ty as ty
 from yaesm.backup import Backup
 from yaesm.config import Config
 from yaesm.errors import YaesmError
+from yaesm.schedule import OnDemandSchedule
 
 
 class SchedulerError(YaesmError):
@@ -51,15 +52,31 @@ class Scheduler:
                         )
                         self._timer_job_ids.add(job_id)
 
-    def enqueue_backup(self, backup_name: str, schedule_name: str) -> str:
+    def enqueue_backup(self, backup_name: str, schedule_name: str | None = None) -> str:
         """Queue a configured backup for immediate execution."""
         with self._lock:
             config = self._config
             backup = config.backups.get(backup_name)
             if backup is None:
                 raise SchedulerError(f"unknown backup: {backup_name!r}")
-            if not any(schedule.name == schedule_name for schedule in backup.schedules):
+
+            schedules = [
+                schedule
+                for schedule in backup.schedules
+                if isinstance(schedule.implementation, OnDemandSchedule)
+            ]
+            if schedule_name is None:
+                if not schedules:
+                    raise SchedulerError(f"backup {backup_name!r} has no on-demand schedule")
+                if len(schedules) > 1:
+                    raise SchedulerError(f"backup {backup_name!r} has multiple on-demand schedules")
+                schedule_name = schedules[0].name
+            elif not any(schedule.name == schedule_name for schedule in backup.schedules):
                 raise SchedulerError(f"backup {backup_name!r} has no schedule {schedule_name!r}")
+            elif not any(schedule.name == schedule_name for schedule in schedules):
+                raise SchedulerError(
+                    f"schedule {schedule_name!r} for backup {backup_name!r} is not on-demand"
+                )
 
             request_id = uuid.uuid4().hex
             self._add_job(

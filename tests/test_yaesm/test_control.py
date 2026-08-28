@@ -11,7 +11,13 @@ import pytest
 
 import yaesm.control as control_module
 import yaesm.ty as ty
-from yaesm.control import ControlError, ControlHandler, ControlMessage, ControlServer
+from yaesm.control import (
+    ControlError,
+    ControlHandler,
+    ControlMessage,
+    ControlServer,
+    send_request,
+)
 from yaesm.errors import YaesmError
 
 
@@ -23,21 +29,6 @@ def running_server(path: ty.Path, handler: ControlHandler) -> ty.Iterator[None]:
         yield
     finally:
         server.stop()
-
-
-def request(path: ty.Path, message: object) -> list[ControlMessage]:
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.connect(str(path))
-        stream = client.makefile("rwb")
-        stream.write((json.dumps(message) + "\n").encode())
-        stream.flush()
-        responses = []
-        while data := stream.readline():
-            response = json.loads(data)
-            responses.append(response)
-            if response.get("type") == "result":
-                break
-        return responses
 
 
 def test_control_error_is_expected_error():
@@ -58,7 +49,7 @@ def test_control_server_streams_messages(tmp_path, caplog):
 
     with running_server(path, handler):
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
-        responses = request(path, {"command": "backup"})
+        responses = list(send_request(path, {"command": "backup"}))
 
     assert requests == [{"command": "backup"}]
     assert responses == [
@@ -75,7 +66,7 @@ def test_control_server_reports_handler_error(tmp_path):
 
     path = tmp_path / "control.sock"
     with running_server(path, handler):
-        responses = request(path, {})
+        responses = list(send_request(path, {}))
 
     assert responses == [{"type": "result", "ok": False, "error": "request failed"}]
 
@@ -86,7 +77,7 @@ def test_control_server_hides_unexpected_handler_error(tmp_path, caplog):
 
     path = tmp_path / "control.sock"
     with running_server(path, handler):
-        responses = request(path, {})
+        responses = list(send_request(path, {}))
 
     assert responses == [{"type": "result", "ok": False, "error": "internal control error"}]
     assert "control request failed" in caplog.messages
@@ -112,6 +103,33 @@ def test_control_server_rejects_invalid_requests(tmp_path, data, error):
     assert response["type"] == "result"
     assert response["ok"] is False
     assert error in response["error"]
+
+
+def test_control_request_reports_scheduler_not_running(tmp_path):
+    path = tmp_path / "missing.sock"
+
+    with pytest.raises(ControlError, match="could not connect to the yaesm scheduler") as raised:
+        list(send_request(path, {"command": "backup"}))
+
+    assert str(path) in str(raised.value)
+
+
+def test_control_request_reports_stale_scheduler_socket(tmp_path):
+    path = tmp_path / "control.sock"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stale_socket:
+        stale_socket.bind(str(path))
+
+    with pytest.raises(ControlError, match="could not connect to the yaesm scheduler"):
+        list(send_request(path, {"command": "backup"}))
+
+
+def test_control_request_requires_result(tmp_path):
+    path = tmp_path / "control.sock"
+    with (
+        running_server(path, lambda _request: ()),
+        pytest.raises(ControlError, match="control socket closed without a result"),
+    ):
+        list(send_request(path, {"command": "backup"}))
 
 
 def test_control_server_preserves_non_socket_path(tmp_path):

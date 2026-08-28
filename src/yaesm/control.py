@@ -5,14 +5,17 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import socketserver
 import threading
+from pathlib import Path
 
 import yaesm.ty as ty
 from yaesm.errors import YaesmError
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_CONTROL_SOCKET = Path("/run/yaesm/control.sock")
 ControlMessage: ty.TypeAlias = dict[str, object]
 ControlHandler: ty.TypeAlias = ty.Callable[
     [ty.Mapping[str, object]], ty.Iterable[ty.Mapping[str, object]]
@@ -21,6 +24,32 @@ ControlHandler: ty.TypeAlias = ty.Callable[
 
 class ControlError(YaesmError):
     """Raised when control socket communication fails."""
+
+
+def send_request(
+    path: ty.Path,
+    request: ty.Mapping[str, object],
+) -> ty.Iterator[ControlMessage]:
+    """Send one request and yield responses through its final result."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            try:
+                connection.connect(str(path))
+            except (FileNotFoundError, ConnectionRefusedError) as error:
+                raise ControlError(f"could not connect to the yaesm scheduler at {path}") from error
+            with connection.makefile("rwb") as stream:
+                stream.write((json.dumps(request) + "\n").encode())
+                stream.flush()
+                while data := stream.readline():
+                    response = json.loads(data)
+                    if not isinstance(response, dict):
+                        raise ControlError("control response must be an object")
+                    yield response
+                    if response.get("type") == "result":
+                        return
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise ControlError(f"control request failed: {error}") from error
+    raise ControlError("control socket closed without a result")
 
 
 class _RequestHandler(socketserver.StreamRequestHandler):

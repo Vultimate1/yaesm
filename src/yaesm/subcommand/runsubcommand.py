@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaesm.ty as ty
 from yaesm.config import Config, ConfigError, parse_config
-from yaesm.control import ControlError, ControlMessage, ControlServer
+from yaesm.control import DEFAULT_CONTROL_SOCKET, ControlError, ControlMessage, ControlServer
 from yaesm.errors import YaesmError
 from yaesm.scheduler import Scheduler
 from yaesm.subcommand.subcommandbase import SubcommandBase
@@ -54,8 +54,8 @@ class RunSubcommand(SubcommandBase):
         if not isinstance(backup_name, str) or not backup_name:
             raise ControlError("backup command requires a backup name")
         schedule_name = request.get("schedule")
-        if not isinstance(schedule_name, str) or not schedule_name:
-            raise ControlError("backup command requires a schedule name")
+        if schedule_name is not None and (not isinstance(schedule_name, str) or not schedule_name):
+            raise ControlError("backup command schedule must be a nonempty string")
 
         request_id = scheduler.enqueue_backup(backup_name, schedule_name)
         return ({"type": "result", "ok": True, "request_id": request_id},)
@@ -126,6 +126,6 @@ class RunSubcommand(SubcommandBase):
         parser.add_argument(
             "--control-socket",
             type=Path,
-            default=Path("/run/yaesm/control.sock"),
+            default=DEFAULT_CONTROL_SOCKET,
             help="path to the control socket",
         )
