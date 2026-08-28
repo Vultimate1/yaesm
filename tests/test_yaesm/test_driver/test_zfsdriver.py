@@ -228,6 +228,12 @@ def test_destination_checks_dataset_parent_and_creation_remotely(tmp_path, monke
     ]
 
 
+def test_artifact_source_checks_existing_dataset():
+    checks = ZFSDriver("tank/backups")._checks(CheckRole.ARTIFACT_SOURCE)
+
+    assert tuple(check.description for check in checks) == ("source dataset exists: tank/backups",)
+
+
 def test_encrypted_source_check_validates_encryption_property(monkeypatch):
     runner = RecordingRunner(stdouts=("aes-256-gcm\n",))
     monkeypatch.setattr(command_module, "run", runner.run)
@@ -257,6 +263,9 @@ def test_encrypted_source_check_rejects_unencrypted_dataset(value, monkeypatch):
         (CheckRole.SOURCE, False, 0),
         (CheckRole.SOURCE, True, 0),
         (CheckRole.SOURCE, True, 1),
+        (CheckRole.ARTIFACT_SOURCE, False, 0),
+        (CheckRole.ARTIFACT_SOURCE, True, 0),
+        (CheckRole.ARTIFACT_SOURCE, True, 1),
         (CheckRole.DESTINATION, False, 0),
         (CheckRole.DESTINATION, False, 1),
     ],

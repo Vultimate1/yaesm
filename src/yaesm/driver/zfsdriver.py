@@ -110,7 +110,7 @@ class ZFSDriver(DriverBase):
 
     def _checks(self, role: CheckRole) -> tuple[Check, ...]:
         match role:
-            case CheckRole.SOURCE:
+            case CheckRole.SOURCE | CheckRole.ARTIFACT_SOURCE:
                 dataset_check = self._command_check(
                     f"source dataset exists: {self.dataset}",
                     ("zfs", "list", "-H", "-t", "filesystem", "-o", "name", self.dataset),

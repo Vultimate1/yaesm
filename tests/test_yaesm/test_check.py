@@ -9,7 +9,12 @@ from yaesm.ssh import SSHTarget
 
 
 def test_check_roles():
-    assert {role.value for role in CheckRole} == {"source", "transform", "destination"}
+    assert {role.value for role in CheckRole} == {
+        "source",
+        "artifact-source",
+        "transform",
+        "destination",
+    }
 
 
 def test_check_result_passes_without_failure():
@@ -50,6 +55,7 @@ def test_check_is_deferred_and_returns_its_result():
     check = Check("tool runs", run)
 
     assert check.description == "tool runs"
+    assert check.target is None
     assert calls == []
     assert check.run() is result
     assert calls == [True]
@@ -101,6 +107,22 @@ def test_command_check_reports_exit_status(returncode, monkeypatch):
         "partial output",
         "failure details",
     )
+
+
+def test_command_check_can_override_failure_message(monkeypatch):
+    monkeypatch.setattr(
+        command_module,
+        "run",
+        lambda *args, **kwargs: CommandResult("", "failure details", (255,)),
+    )
+
+    result = Check.command(
+        "SSH connection works",
+        ("true",),
+        failure_message="could not connect",
+    ).run()
+
+    assert result.failure == "could not connect"
 
 
 def test_command_check_reports_start_failure(monkeypatch):
@@ -174,11 +196,26 @@ def test_command_check_runs_on_ssh_target(tmp_path, monkeypatch):
         return CommandResult(None, "remote failure", (4,))
 
     monkeypatch.setattr(command_module, "run", run)
-    result = Check.command("tool works", ("tool", "argument"), target=target).run()
+    check = Check.command("tool works", ("tool", "argument"), target=target)
+    result = check.run()
 
     assert result == CheckResult(
         f"tool works on {target}",
         "tool exited with status 4",
         stderr="remote failure",
     )
+    assert check.target is target
     assert calls == [target.openssh_command(("tool", "argument"))]
+
+
+def test_remote_command_check_reports_local_ssh_start_failure(tmp_path, monkeypatch):
+    target = SSHTarget("ssh://host", tmp_path / "key")
+
+    def run(*args, **kwargs):
+        raise CommandError(("ssh",), None, "No such file or directory")
+
+    monkeypatch.setattr(command_module, "run", run)
+
+    result = Check.command("tool works", ("tool",), target=target).run()
+
+    assert result.failure == "could not start ssh"

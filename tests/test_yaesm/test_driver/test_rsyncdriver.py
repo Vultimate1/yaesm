@@ -224,12 +224,25 @@ def test_destination_checks_directory_requirements_remotely(tmp_path, monkeypatc
     ]
 
 
+def test_artifact_source_checks_storage_read_requirements(tmp_path):
+    checks = RsyncDriver(tmp_path)._checks(CheckRole.ARTIFACT_SOURCE)
+
+    assert tuple(check.description for check in checks) == (
+        f"directory exists: {tmp_path}",
+        f"directory is readable: {tmp_path}",
+        f"directory is searchable: {tmp_path}",
+    )
+
+
 @pytest.mark.parametrize(
     ("role", "index"),
     [
         (CheckRole.SOURCE, 0),
         (CheckRole.SOURCE, 1),
         (CheckRole.SOURCE, 2),
+        (CheckRole.ARTIFACT_SOURCE, 0),
+        (CheckRole.ARTIFACT_SOURCE, 1),
+        (CheckRole.ARTIFACT_SOURCE, 2),
         (CheckRole.DESTINATION, 0),
         (CheckRole.DESTINATION, 1),
         (CheckRole.DESTINATION, 2),

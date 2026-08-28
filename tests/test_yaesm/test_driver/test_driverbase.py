@@ -9,7 +9,7 @@ import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.check import CheckRole
 from yaesm.command import CommandRunner
-from yaesm.driver.driverbase import DriverBase
+from yaesm.driver.driverbase import DriverBase, DriverError
 from yaesm.representation import (
     BlockDevice,
     ByteStream,
@@ -232,6 +232,45 @@ def test_driver_configuration_schema_is_required():
 
 def test_driver_check_is_inherited():
     assert len(DriverWithoutCustomChecks().check(CheckRole.SOURCE)) == 1
+
+
+def test_stored_artifact_check_is_deferred(monkeypatch):
+    driver = AllCapabilitiesDriver()
+    calls = []
+    artifact = bckp.BackupArtifact(
+        bckp.BackupOperation("home", "daily", datetime(2026, 8, 28)),
+        Representation(),
+    )
+    monkeypatch.setattr(
+        driver,
+        "cap_list",
+        lambda backup_name: calls.append(backup_name) or (artifact,),
+    )
+
+    check = driver.check_artifacts("home")
+
+    assert calls == []
+    assert check.run().passed
+    assert calls == ["home"]
+
+
+def test_stored_artifact_check_requires_an_artifact():
+    result = AllCapabilitiesDriver().check_artifacts("home").run()
+
+    assert result.failure == "no stored artifacts found for backup 'home'"
+
+
+def test_stored_artifact_check_reports_listing_failure(monkeypatch):
+    driver = AllCapabilitiesDriver()
+
+    def fail(_backup_name):
+        raise DriverError("listing failed")
+
+    monkeypatch.setattr(driver, "cap_list", fail)
+
+    result = driver.check_artifacts("home").run()
+
+    assert result.failure == "listing failed"
 
 
 def test_driver_configuration_schema():

@@ -7,8 +7,9 @@ import voluptuous as vlp
 
 import yaesm.backup as bckp
 import yaesm.ty as ty
-from yaesm.check import Check, CheckRole
+from yaesm.check import Check, CheckResult, CheckRole
 from yaesm.command import Command, CommandResult, CommandRunner
+from yaesm.errors import YaesmError
 from yaesm.representation import (
     BlockDevice,
     ByteStream,
@@ -166,6 +167,21 @@ class DriverBase(abc.ABC):
             ),
             *self._checks(role),
         )
+
+    @ty.final
+    def check_artifacts(self, backup_name: str) -> Check:
+        """Return a check that stored artifacts exist for a backup."""
+        description = f"stored artifacts exist for backup {backup_name!r}"
+
+        def run() -> CheckResult:
+            try:
+                artifacts = self.cap_list(backup_name)
+            except YaesmError as error:
+                return CheckResult(description, error.format())
+            failure = None if artifacts else f"no stored artifacts found for backup {backup_name!r}"
+            return CheckResult(description, failure)
+
+        return Check(description, run, self._check_target())
 
     def _checks(self, role: CheckRole) -> tuple[Check, ...]:
         """Return this driver's additional feasibility checks."""

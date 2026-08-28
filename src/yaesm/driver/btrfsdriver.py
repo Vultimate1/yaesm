@@ -106,6 +106,16 @@ class BtrfsDriver(DriverBase):
                     ("directory is writable", ("test", "-w", self.location)),
                     ("directory is searchable", ("test", "-x", self.location)),
                 )
+            case CheckRole.ARTIFACT_SOURCE:
+                requirements = (
+                    ("directory exists", ("test", "-d", self.location)),
+                    (
+                        "directory is on a Btrfs filesystem",
+                        ("btrfs", "filesystem", "usage", self.location),
+                    ),
+                    ("directory is readable", ("test", "-r", self.location)),
+                    ("directory is searchable", ("test", "-x", self.location)),
+                )
             case CheckRole.DESTINATION:
                 requirements = (
                     ("directory exists", ("test", "-d", self.location)),

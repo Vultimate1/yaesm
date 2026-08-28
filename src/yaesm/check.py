@@ -13,11 +13,13 @@ from yaesm.ssh import SSHTarget, command_for_target
 class CheckRole(enum.Enum):
     """How a driver participates in a backup.
 
-    A source supplies backup data, a transform changes data in transit, and a
-    destination stores and manages backup artifacts.
+    A source supplies live data, an artifact source supplies stored output from
+    another backup, a transform changes data in transit, and a destination
+    stores and manages backup artifacts.
     """
 
     SOURCE = "source"
+    ARTIFACT_SOURCE = "artifact-source"
     TRANSFORM = "transform"
     DESTINATION = "destination"
 
@@ -43,6 +45,7 @@ class Check:
 
     description: str
     function: ty.Callable[[], CheckResult]
+    target: SSHTarget | None = None
 
     @classmethod
     def command(
@@ -51,6 +54,7 @@ class Check:
         command: cmd.Command,
         *,
         target: SSHTarget | None = None,
+        failure_message: str | None = None,
         validate: ty.Callable[[cmd.CommandResult], str | None] | None = None,
     ) -> Check:
         """Return a deferred check for a harmless command."""
@@ -65,13 +69,17 @@ class Check:
             except cmd.CommandError as error:
                 return CheckResult(
                     description,
-                    f"could not start {command[0]}",
+                    f"could not start {execution_command[0]}",
                     stderr=error.stderr or None,
                 )
             failure = (
                 None
                 if result.returncode == 0
-                else f"{command[0]} exited with status {result.returncode}"
+                else (
+                    failure_message
+                    if failure_message is not None
+                    else f"{command[0]} exited with status {result.returncode}"
+                )
             )
             if failure is None and validate is not None:
                 failure = validate(result)
@@ -82,7 +90,7 @@ class Check:
                 result.stderr or None,
             )
 
-        return cls(description, run)
+        return cls(description, run, target)
 
     def run(self) -> CheckResult:
         """Run the check and return its result."""

@@ -91,7 +91,7 @@ class RsyncDriver(DriverBase):
 
     def _checks(self, role: CheckRole) -> tuple[Check, ...]:
         match role:
-            case CheckRole.SOURCE:
+            case CheckRole.SOURCE | CheckRole.ARTIFACT_SOURCE:
                 requirements = (
                     ("directory exists", ("test", "-d", self.location)),
                     ("directory is readable", ("test", "-r", self.location)),

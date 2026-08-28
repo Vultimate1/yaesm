@@ -244,6 +244,17 @@ def test_checks_remote_directory_requirements(tmp_path, monkeypatch):
     ]
 
 
+def test_artifact_source_checks_storage_read_requirements(tmp_path):
+    checks = BtrfsDriver(tmp_path)._checks(CheckRole.ARTIFACT_SOURCE)
+
+    assert tuple(check.description for check in checks) == (
+        f"directory exists: {tmp_path}",
+        f"directory is on a Btrfs filesystem: {tmp_path}",
+        f"directory is readable: {tmp_path}",
+        f"directory is searchable: {tmp_path}",
+    )
+
+
 def test_remote_check_failure_names_logical_executable(tmp_path, monkeypatch):
     target = SSHTarget("ssh://host", tmp_path / "key")
     runner = RecordingRunner((1,))
@@ -263,6 +274,10 @@ def test_remote_check_failure_names_logical_executable(tmp_path, monkeypatch):
         (CheckRole.SOURCE, 2, "test"),
         (CheckRole.SOURCE, 3, "test"),
         (CheckRole.SOURCE, 4, "test"),
+        (CheckRole.ARTIFACT_SOURCE, 0, "test"),
+        (CheckRole.ARTIFACT_SOURCE, 1, "btrfs"),
+        (CheckRole.ARTIFACT_SOURCE, 2, "test"),
+        (CheckRole.ARTIFACT_SOURCE, 3, "test"),
         (CheckRole.DESTINATION, 0, "test"),
         (CheckRole.DESTINATION, 1, "btrfs"),
         (CheckRole.DESTINATION, 2, "test"),
