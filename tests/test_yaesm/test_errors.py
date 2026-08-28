@@ -11,6 +11,7 @@ from yaesm.driver.rsyncdriver import RsyncDriverError
 from yaesm.driver.zfsdriver import ZFSDriverError
 from yaesm.errors import YaesmError, YaesmValueError
 from yaesm.pipeline import PipelineError
+from yaesm.scheduler import SchedulerError
 from yaesm.ssh import SSHTargetError
 from yaesm.subcommand.runsubcommand import RunError
 
@@ -23,6 +24,7 @@ from yaesm.subcommand.runsubcommand import RunError
         (PipelineError, (BackupError, YaesmError)),
         (CommandError, (YaesmError,)),
         (ConfigError, (YaesmError,)),
+        (SchedulerError, (YaesmError,)),
         (RunError, (YaesmError,)),
         (YaesmValueError, (YaesmError, ValueError)),
         (SSHTargetError, (YaesmValueError, YaesmError, ValueError)),
@@ -43,6 +45,7 @@ def test_error_hierarchy(error_type, parents):
         PipelineError("pipeline"),
         CommandError(("false",), 1, ""),
         ConfigError("config"),
+        SchedulerError("scheduler"),
         RunError("run"),
         YaesmValueError("value"),
         SSHTargetError("SSH target"),
@@ -64,6 +67,7 @@ def test_all_expected_errors_can_be_caught_together(error):
         (BackupError, "yaesm.backup"),
         (CommandError, "yaesm.command"),
         (ConfigError, "yaesm.config"),
+        (SchedulerError, "yaesm.scheduler"),
         (RunError, "yaesm.subcommand.runsubcommand"),
         (YaesmValueError, "yaesm.errors"),
         (DriverError, "yaesm.driver.driverbase"),

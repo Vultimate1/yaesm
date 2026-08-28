@@ -3,23 +3,15 @@
 from datetime import datetime
 from unittest import mock
 
+import pytest
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 
 import yaesm.scheduler as scheduler_module
 from yaesm.backup import Backup, DriverSource
 from yaesm.config import Config
-from yaesm.schedule import CronSchedule, Schedule, ScheduleBase
-from yaesm.scheduler import Scheduler
-
-
-class UntimedSchedule(ScheduleBase):
-    @classmethod
-    def name(cls) -> str:
-        return "untimed"
-
-    @staticmethod
-    def config_schema():
-        raise NotImplementedError
+from yaesm.schedule import CronSchedule, OnDemandSchedule, Schedule
+from yaesm.scheduler import Scheduler, SchedulerError
 
 
 def configured_backup(
@@ -46,15 +38,54 @@ def test_scheduler_adds_timer_jobs():
     assert jobs[0].id == "home:hourly:0"
     assert jobs[0].name == "home (hourly)"
     assert isinstance(jobs[0].trigger, CronTrigger)
-    assert jobs[0].args == (backup, "hourly", config.backups)
+    assert jobs[0].args == (backup, "hourly", config.backups, None)
 
 
-def test_scheduler_ignores_untimed_schedules():
-    config, _backup = configured_backup(schedule=Schedule("external", UntimedSchedule()))
+def test_scheduler_ignores_on_demand_schedules():
+    config, _backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
 
     scheduler = Scheduler(config)
 
     assert scheduler._scheduler.get_jobs() == []
+
+
+def test_scheduler_enqueues_backup(monkeypatch):
+    config, backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
+    monkeypatch.setattr(
+        scheduler_module.uuid,
+        "uuid4",
+        mock.Mock(return_value=mock.Mock(hex="request-id")),
+    )
+    scheduler = Scheduler(config)
+
+    request_id = scheduler.enqueue_backup("home", "manual")
+
+    assert request_id == "request-id"
+    job = scheduler._scheduler.get_job(request_id)
+    assert job is not None
+    assert job.id == request_id
+    assert job.name == "home (manual)"
+    assert isinstance(job.trigger, DateTrigger)
+    assert job.args == (backup, "manual", config.backups, request_id)
+
+
+def test_scheduler_rejects_unknown_backup():
+    config, _backup = configured_backup()
+    scheduler = Scheduler(config)
+
+    with pytest.raises(SchedulerError, match="unknown backup: 'missing'"):
+        scheduler.enqueue_backup("missing", "hourly")
+
+
+def test_scheduler_rejects_unknown_schedule():
+    config, _backup = configured_backup()
+    scheduler = Scheduler(config)
+
+    with pytest.raises(
+        SchedulerError,
+        match="backup 'home' has no schedule 'missing'",
+    ):
+        scheduler.enqueue_backup("home", "missing")
 
 
 def test_scheduler_replaces_config():
@@ -67,6 +98,19 @@ def test_scheduler_replaces_config():
     assert [job.id for job in scheduler._scheduler.get_jobs()] == ["second:hourly:0"]
 
 
+def test_scheduler_enqueues_from_replaced_config():
+    first, _first_backup = configured_backup("first", Schedule("manual", OnDemandSchedule()))
+    second, second_backup = configured_backup("second", Schedule("manual", OnDemandSchedule()))
+    scheduler = Scheduler(first)
+
+    scheduler.replace_config(second)
+    request_id = scheduler.enqueue_backup("second", "manual")
+
+    job = scheduler._scheduler.get_job(request_id)
+    assert job is not None
+    assert job.args == (second_backup, "manual", second.backups, request_id)
+
+
 def test_scheduled_job_executes_backup(monkeypatch):
     config, backup = configured_backup()
     now = datetime(2026, 8, 28, 12, 30)
@@ -74,7 +118,7 @@ def test_scheduled_job_executes_backup(monkeypatch):
     monkeypatch.setattr(Backup, "execute", execute)
     monkeypatch.setattr(scheduler_module, "datetime", mock.Mock(now=lambda: now))
 
-    scheduler_module._execute_backup(backup, "hourly", config.backups)
+    scheduler_module._execute_backup(backup, "hourly", config.backups, "request-id")
 
     execute.assert_called_once_with("hourly", now, config.backups)
 

@@ -18,7 +18,7 @@ from yaesm.driver.zfsdriver import ZFSDriver
 from yaesm.driver.zstddriver import ZstdDriver
 from yaesm.representation import DataProperty
 from yaesm.retention import KeepFor, KeepLast
-from yaesm.schedule import CronSchedule, Schedule, ScheduleBase
+from yaesm.schedule import CronSchedule, OnDemandSchedule, Schedule, ScheduleBase
 from yaesm.ssh import SSHTarget
 
 
@@ -73,11 +73,16 @@ _RETENTION = st.one_of(
 _SCHEDULES = st.dictionaries(
     _SCHEDULE_NAMES,
     st.builds(
-        lambda expression, retention: {
-            "cron": expression,
+        lambda implementation, retention: {
+            **implementation,
             "retention": retention,
         },
-        st.sampled_from(("* * * * *", "0 * * * *", "30 4 * * *")),
+        st.one_of(
+            st.sampled_from(("* * * * *", "0 * * * *", "30 4 * * *")).map(
+                lambda expression: {"cron": expression}
+            ),
+            st.just({"on-demand": {}}),
+        ),
         _RETENTION,
     ),
     min_size=1,
@@ -647,17 +652,23 @@ def test_parse_schedules():
                     {"keep-last": {"count": 3}},
                 ],
             },
+            "manual": {
+                "on-demand": {},
+                "retention": {"keep-last": 2},
+            },
         }
     )
 
     assert schedules == (
         Schedule("hourly", CronSchedule("0 * * * *")),
         Schedule("daily", CronSchedule("30 4 * * *")),
+        Schedule("manual", OnDemandSchedule()),
     )
     assert retention == (
         KeepLast(24, "hourly"),
         KeepFor(timedelta(days=30), "daily"),
         KeepLast(3, "daily"),
+        KeepLast(2, "manual"),
     )
 
 

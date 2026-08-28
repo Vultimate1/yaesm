@@ -29,6 +29,19 @@ class ScheduleBase(abc.ABC):
 
 
 @dataclasses.dataclass(frozen=True)
+class OnDemandSchedule(ScheduleBase):
+    """A schedule activated explicitly rather than by a timer."""
+
+    @classmethod
+    def name(cls) -> str:
+        return "on-demand"
+
+    @staticmethod
+    def config_schema() -> vlp.Schema:
+        return vlp.Schema({})
+
+
+@dataclasses.dataclass(frozen=True)
 class CronSchedule(ScheduleBase):
     """A schedule described by a standard five-field cron expression."""
 

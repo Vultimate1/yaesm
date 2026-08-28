@@ -5,7 +5,7 @@ import voluptuous as vlp
 from apscheduler.triggers.cron import CronTrigger
 
 from yaesm.errors import YaesmValueError
-from yaesm.schedule import CronSchedule, Schedule, ScheduleBase
+from yaesm.schedule import CronSchedule, OnDemandSchedule, Schedule, ScheduleBase
 
 
 class ScheduleWithoutName(ScheduleBase):
@@ -44,6 +44,23 @@ def test_schedule_can_have_no_timer_triggers():
     schedule = Schedule("external", UntimedSchedule())
 
     assert schedule.timer_triggers() == ()
+
+
+def test_on_demand_schedule_is_explicitly_triggered():
+    schedule = OnDemandSchedule()
+
+    assert schedule.name() == "on-demand"
+    assert schedule.timer_triggers() == ()
+
+
+def test_on_demand_schedule_config_schema_constructs_schedule():
+    assert OnDemandSchedule(**OnDemandSchedule.config_schema()({})).timer_triggers() == ()
+
+
+@pytest.mark.parametrize("config", [None, True, 1, "on-demand", [], {"unknown": True}])
+def test_on_demand_schedule_config_schema_rejects_settings(config):
+    with pytest.raises(vlp.Invalid):
+        OnDemandSchedule.config_schema()(config)
 
 
 def test_cron_schedule_name():
