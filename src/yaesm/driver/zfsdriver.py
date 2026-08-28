@@ -1,7 +1,7 @@
 """ZFS driver and representations."""
 
 import dataclasses
-import uuid
+from uuid import uuid4
 
 import voluptuous as vlp
 
@@ -170,7 +170,7 @@ class ZFSDriver(DriverBase):
     def cap_snapshot(self, source: ZFSDataset) -> ZFSSnapshot:
         snapshot = ZFSSnapshot(
             source.name,
-            f".yaesm-zfs-staging-{uuid.uuid4().hex}",
+            f".yaesm-zfs-staging-{uuid4().hex}",
             source.target,
             source.encrypted,
         )

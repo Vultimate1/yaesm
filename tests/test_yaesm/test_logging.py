@@ -2,6 +2,7 @@
 
 import logging
 from unittest import mock
+from uuid import UUID
 
 from yaesm.logging import RequestFilter, configure, request_id
 
@@ -26,12 +27,14 @@ def test_configure_defaults_to_info():
 
 
 def test_request_filter_matches_current_request():
-    request_filter = RequestFilter("first")
+    first = UUID("11111111-1111-1111-1111-111111111111")
+    second = UUID("22222222-2222-2222-2222-222222222222")
+    request_filter = RequestFilter(first)
     record = logging.LogRecord("test", logging.INFO, "", 0, "message", (), None)
-    token = request_id.set("first")
+    token = request_id.set(first)
     try:
         assert request_filter.filter(record)
-        assert not RequestFilter("second").filter(record)
+        assert not RequestFilter(second).filter(record)
     finally:
         request_id.reset(token)
 

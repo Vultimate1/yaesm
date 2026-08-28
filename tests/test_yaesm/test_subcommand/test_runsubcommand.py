@@ -6,6 +6,7 @@ import logging
 import signal
 from pathlib import Path
 from unittest import mock
+from uuid import UUID
 
 import pytest
 
@@ -14,6 +15,8 @@ from yaesm.config import Config, ConfigError
 from yaesm.control import ControlError
 from yaesm.errors import YaesmError
 from yaesm.subcommand.runsubcommand import RunError, RunSubcommand
+
+_REQUEST_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
 def arguments(tmp_path: Path) -> argparse.Namespace:
@@ -51,9 +54,9 @@ def test_run_uses_default_lockfile():
 
 def test_control_request_enqueues_backup():
     scheduler = mock.Mock()
-    scheduler.enqueue_backup.return_value = "request-id"
+    scheduler.enqueue_backup.return_value = _REQUEST_ID
     scheduler.request_messages.return_value = iter(
-        ({"type": "result", "ok": True, "request_id": "request-id"},)
+        ({"type": "result", "ok": True, "request_id": str(_REQUEST_ID)},)
     )
 
     messages = RunSubcommand._control_request(
@@ -63,13 +66,13 @@ def test_control_request_enqueues_backup():
     )
 
     scheduler.enqueue_backup.assert_called_once_with("home", "manual")
-    scheduler.request_messages.assert_called_once_with("request-id")
-    assert tuple(messages) == ({"type": "result", "ok": True, "request_id": "request-id"},)
+    scheduler.request_messages.assert_called_once_with(_REQUEST_ID)
+    assert tuple(messages) == ({"type": "result", "ok": True, "request_id": str(_REQUEST_ID)},)
 
 
 def test_control_request_uses_default_on_demand_schedule():
     scheduler = mock.Mock()
-    scheduler.enqueue_backup.return_value = "request-id"
+    scheduler.enqueue_backup.return_value = _REQUEST_ID
 
     RunSubcommand._control_request(
         scheduler,
@@ -138,9 +141,9 @@ def test_control_request_reports_reload_error(monkeypatch):
 
 def test_run_starts_and_stops_scheduler(monkeypatch, tmp_path):
     scheduler = mock.Mock()
-    scheduler.enqueue_backup.return_value = "request-id"
+    scheduler.enqueue_backup.return_value = _REQUEST_ID
     scheduler.request_messages.return_value = (
-        {"type": "result", "ok": True, "request_id": "request-id"},
+        {"type": "result", "ok": True, "request_id": str(_REQUEST_ID)},
     )
     scheduler_type = mock.Mock(return_value=scheduler)
     control = mock.MagicMock()
@@ -157,7 +160,7 @@ def test_run_starts_and_stops_scheduler(monkeypatch, tmp_path):
     path, handler = control_type.call_args.args
     assert path == tmp_path / "control.sock"
     assert tuple(handler({"command": "backup", "backup": "home", "schedule": "manual"})) == (
-        {"type": "result", "ok": True, "request_id": "request-id"},
+        {"type": "result", "ok": True, "request_id": str(_REQUEST_ID)},
     )
     scheduler.start.assert_called_once_with()
     scheduler.stop.assert_called_once_with()

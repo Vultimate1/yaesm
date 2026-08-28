@@ -2,10 +2,10 @@
 
 import logging
 import queue
-import uuid
 from _thread import LockType
 from datetime import datetime
 from threading import Lock
+from uuid import UUID, uuid4
 
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -32,7 +32,7 @@ class Scheduler:
     def __init__(self, config: Config) -> None:
         self._lock = Lock()
         self._backup_locks: dict[str, LockType] = {}
-        self._request_messages: dict[str, queue.Queue[ControlMessage]] = {}
+        self._request_messages: dict[UUID, queue.Queue[ControlMessage]] = {}
         self._timer_job_ids: set[str] = set()
         self._scheduler = BlockingScheduler(
             executors={"default": ThreadPoolExecutor(max_workers=10)},
@@ -61,7 +61,7 @@ class Scheduler:
                         )
                         self._timer_job_ids.add(job_id)
 
-    def enqueue_backup(self, backup_name: str, schedule_name: str | None = None) -> str:
+    def enqueue_backup(self, backup_name: str, schedule_name: str | None = None) -> UUID:
         """Queue a configured backup for immediate execution."""
         with self._lock:
             config = self._config
@@ -87,7 +87,7 @@ class Scheduler:
                     f"schedule {schedule_name!r} for backup {backup_name!r} is not on-demand"
                 )
 
-            request_id = uuid.uuid4().hex
+            request_id = uuid4()
             self._request_messages[request_id] = queue.Queue()
             try:
                 self._add_job(
@@ -95,14 +95,14 @@ class Scheduler:
                     schedule_name,
                     config.backups,
                     request_id=request_id,
-                    job_id=request_id,
+                    job_id=str(request_id),
                 )
             except BaseException:
                 del self._request_messages[request_id]
                 raise
         return request_id
 
-    def request_messages(self, request_id: str) -> ty.Iterator[ControlMessage]:
+    def request_messages(self, request_id: UUID) -> ty.Iterator[ControlMessage]:
         """Yield a queued backup's logs followed by its result."""
         with self._lock:
             try:
@@ -128,7 +128,7 @@ class Scheduler:
         *,
         job_id: str,
         trigger: BaseTrigger | None = None,
-        request_id: str | None = None,
+        request_id: UUID | None = None,
     ) -> None:
         backup_lock = self._backup_locks.setdefault(backup.name, Lock())
         messages = None if request_id is None else self._request_messages[request_id]
@@ -155,12 +155,13 @@ def _execute_backup(
     backup: Backup,
     schedule_name: str,
     backups: ty.Mapping[str, Backup],
-    backup_request_id: str | None,
+    backup_request_id: UUID | None,
     messages: queue.Queue[ControlMessage] | None,
     backup_lock: LockType,
 ) -> None:
     handler = None
     token = None
+    serialized_request_id = None if backup_request_id is None else str(backup_request_id)
     if backup_request_id is not None and messages is not None:
         handler = _ControlLogHandler(messages)
         handler.addFilter(RequestFilter(backup_request_id))
@@ -180,13 +181,13 @@ def _execute_backup(
                     "type": "result",
                     "ok": False,
                     "error": message,
-                    "request_id": backup_request_id,
+                    "request_id": serialized_request_id,
                 }
             )
         raise
     else:
         if messages is not None:
-            messages.put({"type": "result", "ok": True, "request_id": backup_request_id})
+            messages.put({"type": "result", "ok": True, "request_id": serialized_request_id})
     finally:
         if token is not None:
             request_id.reset(token)

@@ -4,6 +4,7 @@ import logging
 import queue
 from datetime import datetime
 from unittest import mock
+from uuid import UUID
 
 import pytest
 from apscheduler.triggers.cron import CronTrigger
@@ -14,6 +15,8 @@ from yaesm.backup import Backup, BackupError, DriverSource
 from yaesm.config import Config
 from yaesm.schedule import CronSchedule, OnDemandSchedule, Schedule
 from yaesm.scheduler import Scheduler, SchedulerError
+
+_REQUEST_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
 def configured_backup(
@@ -86,18 +89,18 @@ def test_scheduler_jobs_for_different_backups_use_different_locks():
 def test_scheduler_enqueues_backup(monkeypatch):
     config, backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
     monkeypatch.setattr(
-        scheduler_module.uuid,
+        scheduler_module,
         "uuid4",
-        mock.Mock(return_value=mock.Mock(hex="request-id")),
+        mock.Mock(return_value=_REQUEST_ID),
     )
     scheduler = Scheduler(config)
 
     request_id = scheduler.enqueue_backup("home", "manual")
 
-    assert request_id == "request-id"
-    job = scheduler._scheduler.get_job(request_id)
+    assert request_id == _REQUEST_ID
+    job = scheduler._scheduler.get_job(str(request_id))
     assert job is not None
-    assert job.id == request_id
+    assert job.id == str(request_id)
     assert job.name == "home (manual)"
     assert isinstance(job.trigger, DateTrigger)
     assert job.args[:4] == (backup, "manual", config.backups, request_id)
@@ -126,7 +129,7 @@ def test_scheduler_selects_on_demand_schedule():
 
     request_id = scheduler.enqueue_backup("home")
 
-    job = scheduler._scheduler.get_job(request_id)
+    job = scheduler._scheduler.get_job(str(request_id))
     assert job is not None
     assert job.args[:4] == (backup, "manual", config.backups, request_id)
 
@@ -211,7 +214,7 @@ def test_scheduler_enqueues_from_replaced_config():
     scheduler.replace_config(second)
     request_id = scheduler.enqueue_backup("second", "manual")
 
-    job = scheduler._scheduler.get_job(request_id)
+    job = scheduler._scheduler.get_job(str(request_id))
     assert job is not None
     assert job.args[:4] == (second_backup, "manual", second.backups, request_id)
 
@@ -225,7 +228,7 @@ def test_scheduler_reload_preserves_queued_backup():
     scheduler.replace_config(second)
 
     assert {job.id for job in scheduler._scheduler.get_jobs()} == {
-        request_id,
+        str(request_id),
         "second:hourly:0",
     }
 
@@ -255,7 +258,7 @@ def test_scheduled_job_executes_backup(monkeypatch):
         backup,
         "hourly",
         config.backups,
-        "request-id",
+        None,
         None,
         backup_lock,
     )
@@ -277,7 +280,7 @@ def test_requested_job_streams_logs_and_result(monkeypatch, caplog):
             backup,
             "hourly",
             config.backups,
-            "request-id",
+            _REQUEST_ID,
             messages,
             mock.MagicMock(),
         )
@@ -287,7 +290,7 @@ def test_requested_job_streams_logs_and_result(monkeypatch, caplog):
         {"type": "log", "message": "backup 'home' (hourly) started"},
         {"type": "log", "message": "copying data"},
         {"type": "log", "message": "backup 'home' (hourly) completed"},
-        {"type": "result", "ok": True, "request_id": "request-id"},
+        {"type": "result", "ok": True, "request_id": str(_REQUEST_ID)},
     ]
     assert caplog.messages == [
         "backup 'home' (hourly) started",
@@ -306,7 +309,7 @@ def test_requested_job_streams_expected_failure(monkeypatch):
             backup,
             "hourly",
             config.backups,
-            "request-id",
+            _REQUEST_ID,
             messages,
             mock.MagicMock(),
         )
@@ -315,7 +318,7 @@ def test_requested_job_streams_expected_failure(monkeypatch):
         "type": "result",
         "ok": False,
         "error": "copy failed",
-        "request_id": "request-id",
+        "request_id": str(_REQUEST_ID),
     }
 
 
@@ -329,7 +332,7 @@ def test_requested_job_hides_unexpected_failure(monkeypatch):
             backup,
             "hourly",
             config.backups,
-            "request-id",
+            _REQUEST_ID,
             messages,
             mock.MagicMock(),
         )
@@ -341,7 +344,7 @@ def test_scheduler_yields_request_messages():
     config, _backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
     scheduler = Scheduler(config)
     request_id = scheduler.enqueue_backup("home")
-    job = scheduler._scheduler.get_job(request_id)
+    job = scheduler._scheduler.get_job(str(request_id))
     assert job is not None
     messages = job.args[4]
     messages.put({"type": "log", "message": "starting"})

@@ -3,8 +3,8 @@
 import os
 import shutil
 import subprocess
-import uuid
 from datetime import datetime, timedelta
+from uuid import uuid4
 
 import pytest
 import voluptuous as vlp
@@ -887,7 +887,7 @@ def zfs_pools(tmp_path: ty.Path) -> ty.Iterator[tuple[str, str]]:
     if os.geteuid() != 0:
         pytest.skip("ZFS integration tests require root")
 
-    prefix = f"yaesm_test_{uuid.uuid4().hex[:10]}"
+    prefix = f"yaesm_test_{uuid4().hex[:10]}"
     pools = (f"{prefix}_source", f"{prefix}_destination")
     created = []
     try:

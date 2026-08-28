@@ -6,8 +6,9 @@ elsewhere.
 
 import contextvars
 import logging
+from uuid import UUID
 
-request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+request_id: contextvars.ContextVar[UUID | None] = contextvars.ContextVar(
     "yaesm_request_id", default=None
 )
 
@@ -15,7 +16,7 @@ request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 class RequestFilter(logging.Filter):
     """Keep log records emitted for one control request."""
 
-    def __init__(self, expected: str) -> None:
+    def __init__(self, expected: UUID) -> None:
         super().__init__()
         self.expected = expected
 

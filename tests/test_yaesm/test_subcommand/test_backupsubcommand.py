@@ -3,6 +3,7 @@
 import argparse
 from pathlib import Path
 from unittest import mock
+from uuid import UUID
 
 import pytest
 
@@ -10,6 +11,8 @@ import yaesm.subcommand.backupsubcommand as backup_module
 from yaesm.config import Config
 from yaesm.control import DEFAULT_CONTROL_SOCKET, ControlError
 from yaesm.subcommand.backupsubcommand import BackupSubcommand
+
+_REQUEST_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
 def arguments(*values: str) -> argparse.Namespace:
@@ -42,7 +45,7 @@ def test_backup_sends_request(monkeypatch, capsys):
         return_value=iter(
             (
                 {"type": "log", "message": "starting"},
-                {"type": "result", "ok": True, "request_id": "request-id"},
+                {"type": "result", "ok": True, "request_id": str(_REQUEST_ID)},
             )
         )
     )

@@ -1,8 +1,8 @@
 """Btrfs driver and representations."""
 
 import dataclasses
-import uuid
 from pathlib import Path
+from uuid import UUID, uuid4
 
 import voluptuous as vlp
 
@@ -31,8 +31,8 @@ class BtrfsSubvolume(PathTree):
 class BtrfsSnapshot(BtrfsSubvolume):
     """A read-only Btrfs snapshot."""
 
-    uuid: str | None = None
-    source_uuid: str | None = None
+    uuid: UUID = dataclasses.field(kw_only=True)
+    source_uuid: UUID | None = dataclasses.field(default=None, kw_only=True)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -147,8 +147,8 @@ class BtrfsDriver(DriverBase):
         return BtrfsSubvolume(self.location, self.target)
 
     def cap_snapshot(self, source: BtrfsSubvolume) -> BtrfsSnapshot:
-        snapshot = BtrfsSnapshot(
-            source.path / f".yaesm-btrfs-staging-{uuid.uuid4().hex}",
+        snapshot = BtrfsSubvolume(
+            source.path / f".yaesm-btrfs-staging-{uuid4().hex}",
             source.target,
         )
         self.runner.run(
@@ -157,7 +157,11 @@ class BtrfsDriver(DriverBase):
                 ("btrfs", "subvolume", "snapshot", "-r", source.path, snapshot.path),
             )
         )
-        return snapshot
+        try:
+            return self._read_snapshot(snapshot)
+        except BaseException:
+            self._delete((snapshot,), check=False)
+            raise
 
     @capability("store", base="source")
     def cap_store(
@@ -166,8 +170,7 @@ class BtrfsDriver(DriverBase):
         operation: bckp.BackupOperation,
         base: BtrfsSnapshot | None = None,
     ) -> bckp.BackupArtifact[BtrfsSnapshot]:
-        destination = BtrfsSnapshot(self.location / operation.artifact_name, self.target)
-        artifact = bckp.BackupArtifact(operation, destination)
+        destination = BtrfsSubvolume(self.location / operation.artifact_name, self.target)
 
         if same_endpoint(source.target, self.target):
             result = self.runner.run(
@@ -185,7 +188,11 @@ class BtrfsDriver(DriverBase):
                 check=False,
             )
             if result.returncode == 0:
-                return artifact
+                try:
+                    return bckp.BackupArtifact(operation, self._read_snapshot(destination))
+                except BaseException:
+                    self._delete((destination,), check=False)
+                    raise
 
         if base is None:
             base = self._bootstrap(source, operation.backup_name)
@@ -217,8 +224,9 @@ class BtrfsDriver(DriverBase):
         if base is not None and not same_endpoint(base.target, self.target):
             raise BtrfsDriverError("Btrfs import and base use different SSH endpoints")
 
-        received = self.location / source.subvolume_name
-        destination = self.location / operation.artifact_name
+        received = BtrfsSubvolume(self.location / source.subvolume_name, self.target)
+        destination = BtrfsSubvolume(self.location / operation.artifact_name, self.target)
+        stored = received
         try:
             self.runner.pipeline(
                 (
@@ -232,17 +240,16 @@ class BtrfsDriver(DriverBase):
             self.runner.run(
                 command_for_target(
                     self.target,
-                    ("mv", "-T", "--", received, destination),
+                    ("mv", "-T", "--", received.path, destination.path),
                 )
             )
+            stored = destination
+            snapshot = self._read_snapshot(destination)
         except BaseException:
-            self._delete((BtrfsSnapshot(received, self.target),), check=False)
+            self._delete((stored,), check=False)
             raise
 
-        return bckp.BackupArtifact(
-            operation,
-            BtrfsSnapshot(destination, self.target),
-        )
+        return bckp.BackupArtifact(operation, snapshot)
 
     def cap_list(self, backup_name: str) -> tuple[bckp.BackupArtifact[BtrfsSnapshot], ...]:
         result = self.runner.run(
@@ -275,7 +282,9 @@ class BtrfsDriver(DriverBase):
                 continue
             operation = dataclasses.replace(
                 operation,
-                source_artifact_id=snapshot.source_uuid,
+                source_artifact_id=(
+                    None if snapshot.source_uuid is None else str(snapshot.source_uuid)
+                ),
             )
             artifacts.append(bckp.BackupArtifact(operation, snapshot))
         return tuple(
@@ -291,9 +300,9 @@ class BtrfsDriver(DriverBase):
         )
 
     def artifact_id(self, artifact: bckp.BackupArtifact) -> str:
-        """Return the snapshot UUID when Btrfs reported one."""
+        """Return the snapshot UUID."""
         snapshot = ty.cast(BtrfsSnapshot, artifact.representation)
-        return snapshot.uuid or super().artifact_id(artifact)
+        return str(snapshot.uuid)
 
     def cap_delete(
         self,
@@ -318,30 +327,36 @@ class BtrfsDriver(DriverBase):
             received_uuid = values[values.index("received_uuid") + 1]
         except (IndexError, ValueError):
             return None
-        source_uuid = received_uuid if received_uuid != "-" else parent_uuid
+        try:
+            snapshot_uuid = UUID(uuid_)
+            source_uuid_value = received_uuid if received_uuid != "-" else parent_uuid
+            source_uuid = None if source_uuid_value == "-" else UUID(source_uuid_value)
+        except ValueError:
+            return None
         return BtrfsSnapshot(
             self.location / Path(path).name,
             self.target,
-            uuid_,
-            None if source_uuid == "-" else source_uuid,
+            uuid=snapshot_uuid,
+            source_uuid=source_uuid,
         )
 
     def _bootstrap(self, source: BtrfsSubvolume, backup_name: str) -> BtrfsSnapshot:
         name = f".yaesm-btrfs-bootstrap-{backup_name}"
-        source_bootstrap = BtrfsSnapshot(source.path / name, source.target)
-        destination_bootstrap = BtrfsSnapshot(self.location / name, self.target)
-        source_exists = self._exists(source_bootstrap)
-        destination_exists = self._exists(destination_bootstrap)
+        source_path = BtrfsSubvolume(source.path / name, source.target)
+        destination_path = BtrfsSubvolume(self.location / name, self.target)
+        source_bootstrap = self._find_snapshot(source_path)
+        destination_bootstrap = self._find_snapshot(destination_path)
 
-        if source_exists and self._stale(source_bootstrap):
+        if source_bootstrap is not None and self._stale(source_bootstrap):
             self._delete((source_bootstrap,))
-            if destination_exists:
+            if destination_bootstrap is not None:
                 self._delete((destination_bootstrap,))
-            source_exists = destination_exists = False
+            source_bootstrap = destination_bootstrap = None
 
-        if not source_exists:
-            if destination_exists:
+        if source_bootstrap is None:
+            if destination_bootstrap is not None:
                 self._delete((destination_bootstrap,))
+                destination_bootstrap = None
             self.runner.run(
                 command_for_target(
                     source.target,
@@ -351,12 +366,17 @@ class BtrfsDriver(DriverBase):
                         "snapshot",
                         "-r",
                         source.path,
-                        source_bootstrap.path,
+                        source_path.path,
                     ),
                 )
             )
+            try:
+                source_bootstrap = self._read_snapshot(source_path)
+            except BaseException:
+                self._delete((source_path,), check=False)
+                raise
 
-        if not source_exists or not destination_exists:
+        if destination_bootstrap is None:
             stream = self.cap_export(source_bootstrap)
             try:
                 self.runner.pipeline(
@@ -369,7 +389,7 @@ class BtrfsDriver(DriverBase):
                     )
                 )
             except BaseException:
-                self._delete((destination_bootstrap,), check=False)
+                self._delete((destination_path,), check=False)
                 raise
 
         return source_bootstrap
@@ -393,21 +413,67 @@ class BtrfsDriver(DriverBase):
         )
         return bool(result.stdout)
 
-    def _exists(self, snapshot: BtrfsSnapshot) -> bool:
-        return (
-            self.runner.run(
-                command_for_target(
-                    snapshot.target,
-                    ("btrfs", "subvolume", "show", snapshot.path),
-                ),
-                check=False,
-            ).returncode
-            == 0
+    def _read_snapshot(self, snapshot: BtrfsSubvolume) -> BtrfsSnapshot:
+        result = self.runner.run(
+            command_for_target(
+                snapshot.target,
+                ("btrfs", "subvolume", "show", snapshot.path),
+            ),
+            capture_output=True,
+        )
+        return self._read_snapshot_from_output(snapshot, result.stdout)
+
+    def _find_snapshot(self, snapshot: BtrfsSubvolume) -> BtrfsSnapshot | None:
+        result = self.runner.run(
+            command_for_target(
+                snapshot.target,
+                ("btrfs", "subvolume", "show", snapshot.path),
+            ),
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        return self._read_snapshot_from_output(snapshot, result.stdout)
+
+    def _read_snapshot_from_output(
+        self,
+        snapshot: BtrfsSubvolume,
+        output: str | None,
+    ) -> BtrfsSnapshot:
+        values = {}
+        for line in (output or "").splitlines():
+            name, separator, value = line.partition(":")
+            if separator:
+                values[name.strip()] = value.strip()
+
+        uuid_value = values.get("UUID")
+        if not uuid_value or uuid_value == "-":
+            raise BtrfsDriverError(f"could not read Btrfs snapshot UUID: {snapshot.path}")
+        source_uuid_value = values.get("Received UUID")
+        if not source_uuid_value or source_uuid_value == "-":
+            source_uuid_value = values.get("Parent UUID")
+        try:
+            snapshot_uuid = UUID(uuid_value)
+            source_uuid = (
+                None
+                if not source_uuid_value or source_uuid_value == "-"
+                else UUID(source_uuid_value)
+            )
+        except ValueError as error:
+            raise BtrfsDriverError(
+                f"could not read Btrfs snapshot UUID: {snapshot.path}"
+            ) from error
+        return BtrfsSnapshot(
+            snapshot.path,
+            snapshot.target,
+            uuid=snapshot_uuid,
+            source_uuid=source_uuid,
         )
 
     def _delete(
         self,
-        snapshots: ty.Sequence[BtrfsSnapshot],
+        snapshots: ty.Sequence[BtrfsSubvolume],
         *,
         check: bool = True,
     ) -> None:
