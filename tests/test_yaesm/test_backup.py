@@ -337,6 +337,19 @@ def test_backup_execute_without_retention_does_not_delete():
     assert destination.deleted is None
 
 
+def test_backup_execute_rejects_existing_artifact():
+    existing = artifact("hourly", 12)
+    destination = DestinationDriver((existing,))
+
+    with pytest.raises(
+        bckp.BackupError,
+        match="backup 'home' already has artifact 'yaesm-home-hourly.2026_08_27_12:00'",
+    ):
+        configured_backup(destination).execute("hourly", datetime(2026, 8, 27, 12))
+
+    assert destination.source is None
+
+
 def test_backup_execute_replicates_newest_artifact_with_matching_bases():
     current_source = artifact("hourly", 12, "local")
     previous_source = artifact("hourly", 11, "local")

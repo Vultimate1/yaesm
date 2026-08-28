@@ -146,13 +146,16 @@ class Backup:
         except YaesmError as error:
             raise BackupError(f"backup {self.name!r} failed while listing artifacts") from error
 
-        if isinstance(self.source, BackupSource):
-            existing = next(
-                (item for item in artifacts if item.name == operation.artifact_name),
-                None,
-            )
-            if existing is not None:
+        existing = next(
+            (item for item in artifacts if item.name == operation.artifact_name),
+            None,
+        )
+        if existing is not None:
+            if isinstance(self.source, BackupSource):
                 return existing
+            raise BackupError(
+                f"backup {self.name!r} already has artifact {operation.artifact_name!r}"
+            )
 
         base = None
         if artifacts:

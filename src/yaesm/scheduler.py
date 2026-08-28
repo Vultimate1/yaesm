@@ -1,6 +1,7 @@
 """Scheduling of configured backups."""
 
 import uuid
+from _thread import LockType
 from datetime import datetime
 from threading import Lock
 
@@ -24,6 +25,7 @@ class Scheduler:
 
     def __init__(self, config: Config) -> None:
         self._lock = Lock()
+        self._backup_locks: dict[str, LockType] = {}
         self._timer_job_ids: set[str] = set()
         self._scheduler = BlockingScheduler(
             executors={"default": ThreadPoolExecutor(max_workers=10)},
@@ -98,10 +100,11 @@ class Scheduler:
         trigger: BaseTrigger | None = None,
         request_id: str | None = None,
     ) -> None:
+        backup_lock = self._backup_locks.setdefault(backup.name, Lock())
         self._scheduler.add_job(
             _execute_backup,
             trigger=trigger,
-            args=(backup, schedule_name, backups, request_id),
+            args=(backup, schedule_name, backups, request_id, backup_lock),
             id=job_id,
             name=f"{backup.name} ({schedule_name})",
         )
@@ -122,5 +125,7 @@ def _execute_backup(
     schedule_name: str,
     backups: ty.Mapping[str, Backup],
     _request_id: str | None,
+    backup_lock: LockType,
 ) -> None:
-    backup.execute(schedule_name, datetime.now(), backups)
+    with backup_lock:
+        backup.execute(schedule_name, datetime.now(), backups)
