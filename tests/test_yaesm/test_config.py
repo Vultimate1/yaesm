@@ -14,6 +14,7 @@ from yaesm.config import ConfigError, parse_config, parse_schedules
 from yaesm.driver.btrfsdriver import BtrfsDriver
 from yaesm.driver.gpgdriver import GPGDriver
 from yaesm.driver.rsyncdriver import RsyncDriver
+from yaesm.driver.tardriver import TarDriver
 from yaesm.driver.zfsdriver import ZFSDriver
 from yaesm.driver.zstddriver import ZstdDriver
 from yaesm.representation import DataProperty
@@ -287,6 +288,28 @@ def test_parse_config_constructs_source_and_destination_drivers(driver, driver_t
     assert isinstance(backup.source, bckp.DriverSource)
     assert isinstance(backup.source.driver, driver_type)
     assert isinstance(backup.destination, driver_type)
+
+
+def test_parse_config_builds_encrypted_tar_archive_pipeline():
+    backup = parse_config(
+        {
+            "home": backup_config(
+                source={"rsync": {"location": "/source"}},
+                destination={
+                    "tar": {
+                        "location": "/archives",
+                        "one_file_system": False,
+                    }
+                },
+                drivers=[{"gpg": "/public-key.asc"}],
+                requirements=["encrypted"],
+            )
+        }
+    ).backups["home"]
+
+    assert isinstance(backup.destination, TarDriver)
+    assert backup.destination.location == Path("/archives")
+    assert not backup.destination.one_file_system
 
 
 def test_parse_config_accepts_forward_backup_source_reference():

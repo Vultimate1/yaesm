@@ -11,6 +11,7 @@ class DataProperty(enum.Enum):
     """Properties preserved while data moves through a pipeline."""
 
     SNAPSHOT = "snapshot"
+    ARCHIVED = "archived"
     COMPRESSED = "compressed"
     ENCRYPTED = "encrypted"
 

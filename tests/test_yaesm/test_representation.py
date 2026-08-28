@@ -42,6 +42,7 @@ def test_command_stream_contains_commands():
 def test_data_properties():
     assert {property_.value for property_ in DataProperty} == {
         "snapshot",
+        "archived",
         "compressed",
         "encrypted",
     }
