@@ -88,21 +88,22 @@ class RsyncDriver(DriverBase):
         )
 
     def _checks(self, role: CheckRole) -> tuple[Check, ...]:
-        if role is CheckRole.TRANSFORM:
-            return ()
-        permissions = [
-            ("directory is readable", "-r"),
-            ("directory is searchable", "-x"),
-        ]
-        if role is CheckRole.DESTINATION:
-            permissions.insert(1, ("directory is writable", "-w"))
-        requirements = (
-            ("directory exists", ("test", "-d", self.location)),
-            *(
-                (description, ("test", option, self.location))
-                for description, option in permissions
-            ),
-        )
+        match role:
+            case CheckRole.SOURCE:
+                requirements = (
+                    ("directory exists", ("test", "-d", self.location)),
+                    ("directory is readable", ("test", "-r", self.location)),
+                    ("directory is searchable", ("test", "-x", self.location)),
+                )
+            case CheckRole.DESTINATION:
+                requirements = (
+                    ("directory exists", ("test", "-d", self.location)),
+                    ("directory is readable", ("test", "-r", self.location)),
+                    ("directory is writable", ("test", "-w", self.location)),
+                    ("directory is searchable", ("test", "-x", self.location)),
+                )
+            case CheckRole.TRANSFORM:
+                return ()
         return tuple(
             self._command_check(
                 f"{description}: {self.location}",

@@ -92,23 +92,31 @@ class BtrfsDriver(DriverBase):
         )
 
     def _checks(self, role: CheckRole) -> tuple[Check, ...]:
-        if role is CheckRole.TRANSFORM:
-            return ()
-        filesystem = (
-            ("directory is a Btrfs subvolume", ("btrfs", "subvolume", "show", self.location))
-            if role is CheckRole.SOURCE
-            else (
-                "directory is on a Btrfs filesystem",
-                ("btrfs", "filesystem", "usage", self.location),
-            )
-        )
-        requirements = (
-            ("directory exists", ("test", "-d", self.location)),
-            filesystem,
-            ("directory is readable", ("test", "-r", self.location)),
-            ("directory is writable", ("test", "-w", self.location)),
-            ("directory is searchable", ("test", "-x", self.location)),
-        )
+        match role:
+            case CheckRole.SOURCE:
+                requirements = (
+                    ("directory exists", ("test", "-d", self.location)),
+                    (
+                        "directory is a Btrfs subvolume",
+                        ("btrfs", "subvolume", "show", self.location),
+                    ),
+                    ("directory is readable", ("test", "-r", self.location)),
+                    ("directory is writable", ("test", "-w", self.location)),
+                    ("directory is searchable", ("test", "-x", self.location)),
+                )
+            case CheckRole.DESTINATION:
+                requirements = (
+                    ("directory exists", ("test", "-d", self.location)),
+                    (
+                        "directory is on a Btrfs filesystem",
+                        ("btrfs", "filesystem", "usage", self.location),
+                    ),
+                    ("directory is readable", ("test", "-r", self.location)),
+                    ("directory is writable", ("test", "-w", self.location)),
+                    ("directory is searchable", ("test", "-x", self.location)),
+                )
+            case CheckRole.TRANSFORM:
+                return ()
         return tuple(
             self._command_check(
                 f"{description}: {self.location}",
