@@ -107,10 +107,13 @@ class RsyncDriver(DriverBase):
         return tuple(
             self._command_check(
                 f"{description}: {self.location}",
-                command_for_target(self.target, command),
+                command,
             )
             for description, command in requirements
         )
+
+    def _check_target(self) -> SSHTarget | None:
+        return self.target
 
     def cap_source(self) -> PathTree:
         return PathTree(self.location, self.target)

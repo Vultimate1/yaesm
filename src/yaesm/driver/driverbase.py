@@ -18,6 +18,7 @@ from yaesm.representation import (
     ReadableTree,
     Representation,
 )
+from yaesm.ssh import SSHTarget
 
 _CAPABILITY_ATTRIBUTE = "__yaesm_capability__"
 _Method = ty.TypeVar("_Method", bound=ty.Callable[..., object])
@@ -168,6 +169,10 @@ class DriverBase(abc.ABC):
         """Return this driver's additional feasibility checks."""
         return ()
 
+    def _check_target(self) -> SSHTarget | None:
+        """Return the SSH target on which this driver's checks run."""
+        return None
+
     def _command_check(
         self,
         description: str,
@@ -175,8 +180,13 @@ class DriverBase(abc.ABC):
         *,
         validate: ty.Callable[[CommandResult], str | None] | None = None,
     ) -> Check:
-        """Return a deferred command check using this driver's runner."""
-        return Check.command(description, command, self.runner, validate=validate)
+        """Return a deferred command check."""
+        return Check.command(
+            description,
+            command,
+            target=self._check_target(),
+            validate=validate,
+        )
 
     @capability("source")
     def cap_source(self) -> Representation:

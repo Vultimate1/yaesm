@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import pytest
 import voluptuous as vlp
 
+import yaesm.command as command_module
 import yaesm.ty as ty
 from yaesm.backup import Backup, BackupArtifact, BackupOperation, DriverSource
 from yaesm.check import CheckRole
@@ -174,9 +175,10 @@ def test_cap_source_includes_ssh_target(tmp_path):
     assert RsyncDriver(tmp_path, target).cap_source() == PathTree(tmp_path, target)
 
 
-def test_source_checks_directory_requirements(tmp_path):
+def test_source_checks_directory_requirements(tmp_path, monkeypatch):
     runner = RecordingRunner()
-    driver = with_runner(RsyncDriver(tmp_path), runner)
+    monkeypatch.setattr(command_module, "run", runner.run)
+    driver = RsyncDriver(tmp_path)
 
     checks = driver.check(CheckRole.SOURCE)
 
@@ -196,24 +198,25 @@ def test_source_checks_directory_requirements(tmp_path):
     ]
 
 
-def test_destination_checks_directory_requirements_remotely(tmp_path):
+def test_destination_checks_directory_requirements_remotely(tmp_path, monkeypatch):
     target = SSHTarget("ssh://host", tmp_path / "key")
     runner = RecordingRunner()
-    driver = with_runner(RsyncDriver(tmp_path, target), runner)
+    monkeypatch.setattr(command_module, "run", runner.run)
+    driver = RsyncDriver(tmp_path, target)
 
     checks = driver.check(CheckRole.DESTINATION)
     for check in checks:
         check.run()
 
     assert tuple(check.description for check in checks) == (
-        "rsync is installed",
-        f"directory exists: {tmp_path}",
-        f"directory is readable: {tmp_path}",
-        f"directory is writable: {tmp_path}",
-        f"directory is searchable: {tmp_path}",
+        f"rsync is installed on {target}",
+        f"directory exists: {tmp_path} on {target}",
+        f"directory is readable: {tmp_path} on {target}",
+        f"directory is writable: {tmp_path} on {target}",
+        f"directory is searchable: {tmp_path} on {target}",
     )
     assert runner.commands == [
-        ("rsync", "--version"),
+        target.openssh_command(("rsync", "--version")),
         target.openssh_command(("test", "-d", tmp_path)),
         target.openssh_command(("test", "-r", tmp_path)),
         target.openssh_command(("test", "-w", tmp_path)),

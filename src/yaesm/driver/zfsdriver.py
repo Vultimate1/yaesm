@@ -105,10 +105,7 @@ class ZFSDriver(DriverBase):
             case CheckRole.SOURCE:
                 dataset_check = self._command_check(
                     f"source dataset exists: {self.dataset}",
-                    command_for_target(
-                        self.target,
-                        ("zfs", "list", "-H", "-t", "filesystem", "-o", "name", self.dataset),
-                    ),
+                    ("zfs", "list", "-H", "-t", "filesystem", "-o", "name", self.dataset),
                 )
                 if not self.encryption:
                     return (dataset_check,)
@@ -116,17 +113,14 @@ class ZFSDriver(DriverBase):
                     dataset_check,
                     self._command_check(
                         f"source dataset is encrypted: {self.dataset}",
-                        command_for_target(
-                            self.target,
-                            (
-                                "zfs",
-                                "get",
-                                "-H",
-                                "-o",
-                                "value",
-                                "encryption",
-                                self.dataset,
-                            ),
+                        (
+                            "zfs",
+                            "get",
+                            "-H",
+                            "-o",
+                            "value",
+                            "encryption",
+                            self.dataset,
                         ),
                         validate=lambda result: _encryption_failure(self.dataset, result),
                     ),
@@ -136,21 +130,18 @@ class ZFSDriver(DriverBase):
                 return (
                     self._command_check(
                         f"destination parent dataset exists: {parent}",
-                        command_for_target(
-                            self.target,
-                            ("zfs", "list", "-H", "-t", "filesystem", "-o", "name", parent),
-                        ),
+                        ("zfs", "list", "-H", "-t", "filesystem", "-o", "name", parent),
                     ),
                     self._command_check(
                         f"destination dataset can be created: {self.dataset}",
-                        command_for_target(
-                            self.target,
-                            ("zfs", "create", "-n", "-p", "-u", self.dataset),
-                        ),
+                        ("zfs", "create", "-n", "-p", "-u", self.dataset),
                     ),
                 )
             case CheckRole.TRANSFORM:
                 return ()
+
+    def _check_target(self) -> SSHTarget | None:
+        return self.target
 
     def capability_metadata(self, name: str) -> CapabilityMetadata:
         metadata = super().capability_metadata(name)

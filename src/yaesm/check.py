@@ -5,8 +5,9 @@ from __future__ import annotations
 import dataclasses
 import enum
 
+import yaesm.command as cmd
 import yaesm.ty as ty
-from yaesm.command import Command, CommandError, CommandResult, CommandRunner
+from yaesm.ssh import SSHTarget, command_for_target
 
 
 class CheckRole(enum.Enum):
@@ -47,18 +48,21 @@ class Check:
     def command(
         cls,
         description: str,
-        command: Command,
-        runner: CommandRunner,
+        command: cmd.Command,
         *,
-        validate: ty.Callable[[CommandResult], str | None] | None = None,
+        target: SSHTarget | None = None,
+        validate: ty.Callable[[cmd.CommandResult], str | None] | None = None,
     ) -> Check:
         """Return a deferred check for a harmless command."""
         command = tuple(str(argument) for argument in command)
+        execution_command = command_for_target(target, command)
+        if target is not None:
+            description = f"{description} on {target}"
 
         def run() -> CheckResult:
             try:
-                result = runner.run(command, capture_output=True, check=False)
-            except CommandError as error:
+                result = cmd.run(execution_command, capture_output=True, check=False)
+            except cmd.CommandError as error:
                 return CheckResult(
                     description,
                     f"could not start {command[0]}",

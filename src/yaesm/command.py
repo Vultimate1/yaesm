@@ -128,6 +128,16 @@ class CommandRunner:
         )
 
 
+def run(
+    command: Command,
+    *,
+    capture_output: bool = False,
+    check: bool = True,
+) -> CommandResult:
+    """Run one command."""
+    return CommandRunner().run(command, capture_output=capture_output, check=check)
+
+
 def _terminate(processes: ty.Sequence[subprocess.Popen[bytes]]) -> None:
     for process in processes:
         if process.stdout is not None:

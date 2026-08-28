@@ -5,6 +5,7 @@ from datetime import datetime
 import pytest
 import voluptuous as vlp
 
+import yaesm.command as command_module
 import yaesm.ty as ty
 from yaesm.backup import Backup, BackupArtifact, BackupOperation, DriverSource
 from yaesm.check import CheckRole
@@ -180,9 +181,10 @@ def test_cap_source_includes_ssh_target(tmp_path):
     assert ZFSDriver("tank/home", target).cap_source() == ZFSDataset("tank/home", target)
 
 
-def test_source_checks_dataset(tmp_path):
+def test_source_checks_dataset(tmp_path, monkeypatch):
     runner = RecordingRunner()
-    driver = with_runner(ZFSDriver("tank/home"), runner)
+    monkeypatch.setattr(command_module, "run", runner.run)
+    driver = ZFSDriver("tank/home")
 
     checks = driver.check(CheckRole.SOURCE)
 
@@ -198,22 +200,23 @@ def test_source_checks_dataset(tmp_path):
     ]
 
 
-def test_destination_checks_dataset_parent_and_creation_remotely(tmp_path):
+def test_destination_checks_dataset_parent_and_creation_remotely(tmp_path, monkeypatch):
     target = SSHTarget("ssh://host", tmp_path / "key")
     runner = RecordingRunner()
-    driver = with_runner(ZFSDriver("tank/backups/home", target), runner)
+    monkeypatch.setattr(command_module, "run", runner.run)
+    driver = ZFSDriver("tank/backups/home", target)
 
     checks = driver.check(CheckRole.DESTINATION)
     for check in checks:
         check.run()
 
     assert tuple(check.description for check in checks) == (
-        "zfs is installed",
-        "destination parent dataset exists: tank/backups",
-        "destination dataset can be created: tank/backups/home",
+        f"zfs is installed on {target}",
+        f"destination parent dataset exists: tank/backups on {target}",
+        f"destination dataset can be created: tank/backups/home on {target}",
     )
     assert runner.commands == [
-        ("zfs", "--version"),
+        target.openssh_command(("zfs", "--version")),
         target.openssh_command(
             ("zfs", "list", "-H", "-t", "filesystem", "-o", "name", "tank/backups")
         ),
@@ -221,9 +224,10 @@ def test_destination_checks_dataset_parent_and_creation_remotely(tmp_path):
     ]
 
 
-def test_encrypted_source_check_validates_encryption_property():
+def test_encrypted_source_check_validates_encryption_property(monkeypatch):
     runner = RecordingRunner(stdouts=("aes-256-gcm\n",))
-    driver = with_runner(ZFSDriver("tank/home", encryption=True), runner)
+    monkeypatch.setattr(command_module, "run", runner.run)
+    driver = ZFSDriver("tank/home", encryption=True)
 
     result = driver.check(CheckRole.SOURCE)[2].run()
 
@@ -232,9 +236,10 @@ def test_encrypted_source_check_validates_encryption_property():
 
 
 @pytest.mark.parametrize("value", [None, "", "-\n", "off\n"])
-def test_encrypted_source_check_rejects_unencrypted_dataset(value):
+def test_encrypted_source_check_rejects_unencrypted_dataset(value, monkeypatch):
     runner = RecordingRunner(stdouts=(value,))
-    driver = with_runner(ZFSDriver("tank/home", encryption=True), runner)
+    monkeypatch.setattr(command_module, "run", runner.run)
+    driver = ZFSDriver("tank/home", encryption=True)
 
     result = driver.check(CheckRole.SOURCE)[2].run()
 

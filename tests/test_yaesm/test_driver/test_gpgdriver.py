@@ -5,6 +5,7 @@ import os
 import pytest
 import voluptuous as vlp
 
+import yaesm.command as command_module
 import yaesm.ty as ty
 from yaesm.check import CheckRole
 from yaesm.command import Command, CommandError, CommandResult, CommandRunner
@@ -82,14 +83,14 @@ def test_constructor_rejects_relative_public_key():
         GPGDriver(ty.Path("backup-key.asc"))
 
 
-def test_checks_are_deferred_and_capture_output(tmp_path):
+def test_checks_are_deferred_and_capture_output(tmp_path, monkeypatch):
     public_key = tmp_path / "backup-key.asc"
     runner = RecordingRunner(
         CommandResult("gpg 2.4\n", "", (0,)),
         CommandResult("", "gpg warning\n", (0,)),
     )
+    monkeypatch.setattr(command_module, "run", runner.run)
     driver = GPGDriver(public_key)
-    driver.runner = runner
     checks = driver.check(CheckRole.TRANSFORM)
 
     assert tuple(check.description for check in checks) == (
@@ -128,11 +129,11 @@ def test_checks_are_deferred_and_capture_output(tmp_path):
     ]
 
 
-def test_key_check_reports_command_failure(tmp_path):
+def test_key_check_reports_command_failure(tmp_path, monkeypatch):
     public_key = tmp_path / "bad-key.asc"
     runner = RecordingRunner(CommandResult(None, "invalid public key", (2,)))
+    monkeypatch.setattr(command_module, "run", runner.run)
     driver = GPGDriver(public_key)
-    driver.runner = runner
 
     result = driver.check(CheckRole.TRANSFORM)[1].run()
 
@@ -141,11 +142,11 @@ def test_key_check_reports_command_failure(tmp_path):
     assert result.stderr == "invalid public key"
 
 
-def test_executable_check_reports_start_failure(tmp_path):
+def test_executable_check_reports_start_failure(tmp_path, monkeypatch):
     error = CommandError(("gpg", "--version"), None, "No such file or directory")
     runner = RecordingRunner(error)
+    monkeypatch.setattr(command_module, "run", runner.run)
     driver = GPGDriver(tmp_path / "key")
-    driver.runner = runner
 
     result = driver.check(CheckRole.TRANSFORM)[0].run()
 

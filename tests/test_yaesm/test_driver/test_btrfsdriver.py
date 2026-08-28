@@ -6,6 +6,7 @@ from datetime import datetime
 import pytest
 import voluptuous as vlp
 
+import yaesm.command as command_module
 import yaesm.ty as ty
 from yaesm.backup import Backup, BackupArtifact, BackupOperation, DriverSource
 from yaesm.check import CheckRole
@@ -188,9 +189,10 @@ def test_cap_source_includes_ssh_target(tmp_path):
     assert BtrfsDriver(tmp_path, target).cap_source() == BtrfsSubvolume(tmp_path, target)
 
 
-def test_checks_directory_requirements(tmp_path):
+def test_checks_directory_requirements(tmp_path, monkeypatch):
     runner = RecordingRunner()
-    driver = with_runner(BtrfsDriver(tmp_path), runner)
+    monkeypatch.setattr(command_module, "run", runner.run)
+    driver = BtrfsDriver(tmp_path)
 
     checks = driver.check(CheckRole.SOURCE)
 
@@ -214,22 +216,43 @@ def test_checks_directory_requirements(tmp_path):
     ]
 
 
-def test_checks_remote_directory_requirements(tmp_path):
+def test_checks_remote_directory_requirements(tmp_path, monkeypatch):
     target = SSHTarget("ssh://host", tmp_path / "key")
     runner = RecordingRunner()
-    driver = with_runner(BtrfsDriver(tmp_path, target), runner)
+    monkeypatch.setattr(command_module, "run", runner.run)
+    driver = BtrfsDriver(tmp_path, target)
 
     checks = driver.check(CheckRole.DESTINATION)
     for check in checks:
         check.run()
 
-    assert runner.commands[1:] == [
+    assert tuple(check.description for check in checks) == (
+        f"btrfs is installed on {target}",
+        f"directory exists: {tmp_path} on {target}",
+        f"directory is on a Btrfs filesystem: {tmp_path} on {target}",
+        f"directory is readable: {tmp_path} on {target}",
+        f"directory is writable: {tmp_path} on {target}",
+        f"directory is searchable: {tmp_path} on {target}",
+    )
+    assert runner.commands == [
+        target.openssh_command(("btrfs", "--version")),
         target.openssh_command(("test", "-d", tmp_path)),
         target.openssh_command(("btrfs", "filesystem", "usage", tmp_path)),
         target.openssh_command(("test", "-r", tmp_path)),
         target.openssh_command(("test", "-w", tmp_path)),
         target.openssh_command(("test", "-x", tmp_path)),
     ]
+
+
+def test_remote_check_failure_names_logical_executable(tmp_path, monkeypatch):
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    runner = RecordingRunner((1,))
+    monkeypatch.setattr(command_module, "run", runner.run)
+    driver = BtrfsDriver(tmp_path, target)
+
+    result = driver.check(CheckRole.SOURCE)[0].run()
+
+    assert result.failure == "btrfs exited with status 1"
 
 
 def test_transform_check_does_not_validate_unused_directory(tmp_path):
