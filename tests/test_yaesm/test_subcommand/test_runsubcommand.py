@@ -52,6 +52,9 @@ def test_run_uses_default_lockfile():
 def test_control_request_enqueues_backup():
     scheduler = mock.Mock()
     scheduler.enqueue_backup.return_value = "request-id"
+    scheduler.request_messages.return_value = iter(
+        ({"type": "result", "ok": True, "request_id": "request-id"},)
+    )
 
     messages = RunSubcommand._control_request(
         scheduler,
@@ -60,7 +63,8 @@ def test_control_request_enqueues_backup():
     )
 
     scheduler.enqueue_backup.assert_called_once_with("home", "manual")
-    assert messages == ({"type": "result", "ok": True, "request_id": "request-id"},)
+    scheduler.request_messages.assert_called_once_with("request-id")
+    assert tuple(messages) == ({"type": "result", "ok": True, "request_id": "request-id"},)
 
 
 def test_control_request_uses_default_on_demand_schedule():
@@ -135,6 +139,9 @@ def test_control_request_reports_reload_error(monkeypatch):
 def test_run_starts_and_stops_scheduler(monkeypatch, tmp_path):
     scheduler = mock.Mock()
     scheduler.enqueue_backup.return_value = "request-id"
+    scheduler.request_messages.return_value = (
+        {"type": "result", "ok": True, "request_id": "request-id"},
+    )
     scheduler_type = mock.Mock(return_value=scheduler)
     control = mock.MagicMock()
     control_type = mock.Mock(return_value=control)
@@ -149,7 +156,7 @@ def test_run_starts_and_stops_scheduler(monkeypatch, tmp_path):
     control_type.assert_called_once()
     path, handler = control_type.call_args.args
     assert path == tmp_path / "control.sock"
-    assert handler({"command": "backup", "backup": "home", "schedule": "manual"}) == (
+    assert tuple(handler({"command": "backup", "backup": "home", "schedule": "manual"})) == (
         {"type": "result", "ok": True, "request_id": "request-id"},
     )
     scheduler.start.assert_called_once_with()

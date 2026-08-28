@@ -4,7 +4,24 @@ Call `configure()` once at startup and use `logging.getLogger(__name__)`
 elsewhere.
 """
 
+import contextvars
 import logging
+
+request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "yaesm_request_id", default=None
+)
+
+
+class RequestFilter(logging.Filter):
+    """Keep log records emitted for one control request."""
+
+    def __init__(self, expected: str) -> None:
+        super().__init__()
+        self.expected = expected
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Return whether the current request matches this filter."""
+        return request_id.get() == self.expected
 
 
 def configure(level: int | str = logging.INFO) -> None:

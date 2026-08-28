@@ -3,7 +3,7 @@
 import logging
 from unittest import mock
 
-from yaesm.logging import configure
+from yaesm.logging import RequestFilter, configure, request_id
 
 
 def test_configure_uses_uniform_format():
@@ -23,3 +23,16 @@ def test_configure_defaults_to_info():
         configure()
 
     assert basic_config.call_args.kwargs["level"] == logging.INFO
+
+
+def test_request_filter_matches_current_request():
+    request_filter = RequestFilter("first")
+    record = logging.LogRecord("test", logging.INFO, "", 0, "message", (), None)
+    token = request_id.set("first")
+    try:
+        assert request_filter.filter(record)
+        assert not RequestFilter("second").filter(record)
+    finally:
+        request_id.reset(token)
+
+    assert not request_filter.filter(record)

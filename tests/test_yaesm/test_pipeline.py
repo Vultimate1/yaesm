@@ -1,5 +1,6 @@
 """Tests for yaesm.pipeline."""
 
+import logging
 from datetime import datetime
 
 import pytest
@@ -236,6 +237,20 @@ def test_pipeline_executes_resolved_capabilities():
     assert exporter.call == (source.output, None)
     assert destination.call == (exporter.output, operation, None)
     assert artifact == BackupArtifact(operation, exporter.output)
+
+
+def test_pipeline_logs_capability_steps(caplog):
+    pipeline = Pipeline(DriverSource(SourceDriver()), DestinationDriver(), (ExportDriver(),))
+    operation = BackupOperation("home", "hourly", datetime(2026, 8, 27, 12, 30))
+
+    with caplog.at_level(logging.INFO, logger="yaesm.pipeline"):
+        pipeline.execute(operation)
+
+    assert caplog.messages == [
+        "backup 'home': source.source",
+        "backup 'home': export.export",
+        "backup 'home': destination.import",
+    ]
 
 
 def test_pipeline_executes_from_existing_artifact():

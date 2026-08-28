@@ -3,6 +3,7 @@
 import collections
 import dataclasses
 import inspect
+import logging
 import typing
 
 import yaesm.ty as ty
@@ -10,6 +11,8 @@ from yaesm.backup import BackupArtifact, BackupError, BackupOperation, DriverSou
 from yaesm.driver.driverbase import DriverBase
 from yaesm.errors import YaesmError
 from yaesm.representation import DataProperty, Representation
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineError(BackupError):
@@ -80,6 +83,12 @@ class Pipeline:
             for step in self.steps:
                 method = step.driver.capability_method(step.capability)
                 metadata = step.driver.capability_metadata(step.capability)
+                logger.info(
+                    "backup %r: %s.%s",
+                    operation.backup_name,
+                    step.driver.name(),
+                    step.capability,
+                )
                 step_base = (
                     None if base is None or metadata.base is None else getattr(base, metadata.base)
                 )

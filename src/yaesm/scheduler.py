@@ -1,5 +1,7 @@
 """Scheduling of configured backups."""
 
+import logging
+import queue
 import uuid
 from _thread import LockType
 from datetime import datetime
@@ -12,8 +14,12 @@ from apscheduler.triggers.base import BaseTrigger
 import yaesm.ty as ty
 from yaesm.backup import Backup
 from yaesm.config import Config
+from yaesm.control import ControlMessage
 from yaesm.errors import YaesmError
+from yaesm.logging import RequestFilter, request_id
 from yaesm.schedule import OnDemandSchedule
+
+logger = logging.getLogger(__name__)
 
 
 class SchedulerError(YaesmError):
@@ -26,6 +32,7 @@ class Scheduler:
     def __init__(self, config: Config) -> None:
         self._lock = Lock()
         self._backup_locks: dict[str, LockType] = {}
+        self._request_messages: dict[str, queue.Queue[ControlMessage]] = {}
         self._timer_job_ids: set[str] = set()
         self._scheduler = BlockingScheduler(
             executors={"default": ThreadPoolExecutor(max_workers=10)},
@@ -81,14 +88,37 @@ class Scheduler:
                 )
 
             request_id = uuid.uuid4().hex
-            self._add_job(
-                backup,
-                schedule_name,
-                config.backups,
-                request_id=request_id,
-                job_id=request_id,
-            )
+            self._request_messages[request_id] = queue.Queue()
+            try:
+                self._add_job(
+                    backup,
+                    schedule_name,
+                    config.backups,
+                    request_id=request_id,
+                    job_id=request_id,
+                )
+            except BaseException:
+                del self._request_messages[request_id]
+                raise
         return request_id
+
+    def request_messages(self, request_id: str) -> ty.Iterator[ControlMessage]:
+        """Yield a queued backup's logs followed by its result."""
+        with self._lock:
+            try:
+                messages = self._request_messages[request_id]
+            except KeyError as error:
+                raise SchedulerError(f"unknown backup request: {request_id!r}") from error
+
+        try:
+            while True:
+                message = messages.get()
+                yield message
+                if message.get("type") == "result":
+                    return
+        finally:
+            with self._lock:
+                self._request_messages.pop(request_id, None)
 
     def _add_job(
         self,
@@ -101,10 +131,11 @@ class Scheduler:
         request_id: str | None = None,
     ) -> None:
         backup_lock = self._backup_locks.setdefault(backup.name, Lock())
+        messages = None if request_id is None else self._request_messages[request_id]
         self._scheduler.add_job(
             _execute_backup,
             trigger=trigger,
-            args=(backup, schedule_name, backups, request_id, backup_lock),
+            args=(backup, schedule_name, backups, request_id, messages, backup_lock),
             id=job_id,
             name=f"{backup.name} ({schedule_name})",
         )
@@ -124,8 +155,51 @@ def _execute_backup(
     backup: Backup,
     schedule_name: str,
     backups: ty.Mapping[str, Backup],
-    _request_id: str | None,
+    backup_request_id: str | None,
+    messages: queue.Queue[ControlMessage] | None,
     backup_lock: LockType,
 ) -> None:
-    with backup_lock:
-        backup.execute(schedule_name, datetime.now(), backups)
+    handler = None
+    token = None
+    if backup_request_id is not None and messages is not None:
+        handler = _ControlLogHandler(messages)
+        handler.addFilter(RequestFilter(backup_request_id))
+        logging.getLogger().addHandler(handler)
+        token = request_id.set(backup_request_id)
+
+    try:
+        with backup_lock:
+            logger.info("backup %r (%s) started", backup.name, schedule_name)
+            backup.execute(schedule_name, datetime.now(), backups)
+            logger.info("backup %r (%s) completed", backup.name, schedule_name)
+    except BaseException as error:
+        if messages is not None:
+            message = error.format() if isinstance(error, YaesmError) else "internal backup error"
+            messages.put(
+                {
+                    "type": "result",
+                    "ok": False,
+                    "error": message,
+                    "request_id": backup_request_id,
+                }
+            )
+        raise
+    else:
+        if messages is not None:
+            messages.put({"type": "result", "ok": True, "request_id": backup_request_id})
+    finally:
+        if token is not None:
+            request_id.reset(token)
+        if handler is not None:
+            logging.getLogger().removeHandler(handler)
+
+
+class _ControlLogHandler(logging.Handler):
+    """Send matching log messages to a control request."""
+
+    def __init__(self, messages: queue.Queue[ControlMessage]) -> None:
+        super().__init__()
+        self.messages = messages
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.put({"type": "log", "message": self.format(record)})

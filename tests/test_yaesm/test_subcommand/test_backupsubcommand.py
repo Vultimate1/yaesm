@@ -55,7 +55,7 @@ def test_backup_sends_request(monkeypatch, capsys):
         DEFAULT_CONTROL_SOCKET,
         {"command": "backup", "backup": "home", "schedule": "manual"},
     )
-    assert capsys.readouterr() == ("backup queued: home\n", "starting\n")
+    assert capsys.readouterr() == ("backup completed: home\n", "starting\n")
 
 
 def test_backup_reports_failure(monkeypatch):

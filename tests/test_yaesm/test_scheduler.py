@@ -1,5 +1,7 @@
 """Tests for yaesm.scheduler."""
 
+import logging
+import queue
 from datetime import datetime
 from unittest import mock
 
@@ -8,7 +10,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
 import yaesm.scheduler as scheduler_module
-from yaesm.backup import Backup, DriverSource
+from yaesm.backup import Backup, BackupError, DriverSource
 from yaesm.config import Config
 from yaesm.schedule import CronSchedule, OnDemandSchedule, Schedule
 from yaesm.scheduler import Scheduler, SchedulerError
@@ -39,7 +41,8 @@ def test_scheduler_adds_timer_jobs():
     assert jobs[0].name == "home (hourly)"
     assert isinstance(jobs[0].trigger, CronTrigger)
     assert jobs[0].args[:4] == (backup, "hourly", config.backups, None)
-    assert hasattr(jobs[0].args[4], "acquire")
+    assert jobs[0].args[4] is None
+    assert hasattr(jobs[0].args[5], "acquire")
 
 
 def test_scheduler_ignores_on_demand_schedules():
@@ -98,7 +101,23 @@ def test_scheduler_enqueues_backup(monkeypatch):
     assert job.name == "home (manual)"
     assert isinstance(job.trigger, DateTrigger)
     assert job.args[:4] == (backup, "manual", config.backups, request_id)
-    assert hasattr(job.args[4], "acquire")
+    assert isinstance(job.args[4], queue.Queue)
+    assert hasattr(job.args[5], "acquire")
+
+
+def test_scheduler_cleans_up_request_when_queueing_fails(monkeypatch):
+    config, _backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
+    scheduler = Scheduler(config)
+    monkeypatch.setattr(
+        scheduler._scheduler,
+        "add_job",
+        mock.Mock(side_effect=RuntimeError("failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="failed"):
+        scheduler.enqueue_backup("home")
+
+    assert scheduler._request_messages == {}
 
 
 def test_scheduler_selects_on_demand_schedule():
@@ -237,11 +256,103 @@ def test_scheduled_job_executes_backup(monkeypatch):
         "hourly",
         config.backups,
         "request-id",
+        None,
         backup_lock,
     )
 
     execute.assert_called_once_with("hourly", now, config.backups)
     assert backup_lock.mock_calls == [mock.call.__enter__(), mock.call.__exit__(None, None, None)]
+
+
+def test_requested_job_streams_logs_and_result(monkeypatch, caplog):
+    config, backup = configured_backup()
+    messages: queue.Queue[dict[str, object]] = queue.Queue()
+    execute = mock.Mock(
+        side_effect=lambda *_args: logging.getLogger("yaesm.test").info("copying data")
+    )
+    monkeypatch.setattr(Backup, "execute", execute)
+
+    with caplog.at_level(logging.INFO):
+        scheduler_module._execute_backup(
+            backup,
+            "hourly",
+            config.backups,
+            "request-id",
+            messages,
+            mock.MagicMock(),
+        )
+
+    streamed = [messages.get_nowait() for _index in range(messages.qsize())]
+    assert streamed == [
+        {"type": "log", "message": "backup 'home' (hourly) started"},
+        {"type": "log", "message": "copying data"},
+        {"type": "log", "message": "backup 'home' (hourly) completed"},
+        {"type": "result", "ok": True, "request_id": "request-id"},
+    ]
+    assert caplog.messages == [
+        "backup 'home' (hourly) started",
+        "copying data",
+        "backup 'home' (hourly) completed",
+    ]
+
+
+def test_requested_job_streams_expected_failure(monkeypatch):
+    config, backup = configured_backup()
+    messages: queue.Queue[dict[str, object]] = queue.Queue()
+    monkeypatch.setattr(Backup, "execute", mock.Mock(side_effect=BackupError("copy failed")))
+
+    with pytest.raises(BackupError, match="copy failed"):
+        scheduler_module._execute_backup(
+            backup,
+            "hourly",
+            config.backups,
+            "request-id",
+            messages,
+            mock.MagicMock(),
+        )
+
+    assert messages.get_nowait() == {
+        "type": "result",
+        "ok": False,
+        "error": "copy failed",
+        "request_id": "request-id",
+    }
+
+
+def test_requested_job_hides_unexpected_failure(monkeypatch):
+    config, backup = configured_backup()
+    messages: queue.Queue[dict[str, object]] = queue.Queue()
+    monkeypatch.setattr(Backup, "execute", mock.Mock(side_effect=RuntimeError("secret")))
+
+    with pytest.raises(RuntimeError, match="secret"):
+        scheduler_module._execute_backup(
+            backup,
+            "hourly",
+            config.backups,
+            "request-id",
+            messages,
+            mock.MagicMock(),
+        )
+
+    assert messages.get_nowait()["error"] == "internal backup error"
+
+
+def test_scheduler_yields_request_messages():
+    config, _backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
+    scheduler = Scheduler(config)
+    request_id = scheduler.enqueue_backup("home")
+    job = scheduler._scheduler.get_job(request_id)
+    assert job is not None
+    messages = job.args[4]
+    messages.put({"type": "log", "message": "starting"})
+    messages.put({"type": "result", "ok": True})
+
+    assert tuple(scheduler.request_messages(request_id)) == (
+        {"type": "log", "message": "starting"},
+        {"type": "result", "ok": True},
+    )
+    with pytest.raises(SchedulerError, match="unknown backup request"):
+        next(scheduler.request_messages(request_id))
 
 
 def test_scheduler_start_and_stop_delegate():
