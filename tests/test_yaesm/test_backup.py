@@ -7,17 +7,12 @@ import voluptuous as vlp
 
 import yaesm.backup as bckp
 import yaesm.ty as ty
+from yaesm.check import Check, CheckRole
 from yaesm.driver.driverbase import DriverBase, DriverError
 from yaesm.errors import YaesmValueError
-from yaesm.pipeline import Pipeline
-from yaesm.representation import Representation
+from yaesm.representation import ByteStream, CommandStream, Representation
 from yaesm.retention import KeepLast
 from yaesm.schedule import CronSchedule, Schedule
-
-
-@pytest.fixture
-def pipeline() -> Pipeline:
-    return ty.cast(Pipeline, object())
 
 
 class SourceDriver(DriverBase):
@@ -28,6 +23,9 @@ class SourceDriver(DriverBase):
     @staticmethod
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
+
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
 
     def cap_source(self) -> Representation:
         return Representation()
@@ -42,6 +40,7 @@ class DestinationDriver(DriverBase):
         self.artifacts = tuple(artifacts)
         self.failure = failure
         self.base: Representation | None = None
+        self.source: Representation | None = None
         self.deleted: tuple[bckp.BackupArtifact, ...] | None = None
 
     @classmethod
@@ -52,12 +51,16 @@ class DestinationDriver(DriverBase):
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
 
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
+
     def cap_store(
         self,
         source: Representation,
         operation: bckp.BackupOperation,
         base: Representation | None = None,
     ) -> bckp.BackupArtifact:
+        self.source = source
         self.base = base
         return bckp.BackupArtifact(operation, Representation())
 
@@ -72,13 +75,63 @@ class DestinationDriver(DriverBase):
         self.deleted = tuple(artifacts)
 
 
-def artifact(schedule_name: str, hour: int) -> bckp.BackupArtifact:
+class ArtifactDriver(DestinationDriver):
+    def __init__(self, artifacts: ty.Sequence[bckp.BackupArtifact] = ()) -> None:
+        super().__init__(artifacts)
+        self.export_call: tuple[Representation, Representation | None] | None = None
+
+    def cap_export(
+        self,
+        source: Representation,
+        base: Representation | None = None,
+    ) -> CommandStream:
+        self.export_call = (source, base)
+        return CommandStream()
+
+
+class StreamDestinationDriver(DriverBase):
+    def __init__(self, artifacts: ty.Sequence[bckp.BackupArtifact] = ()) -> None:
+        self.artifacts = tuple(artifacts)
+        self.call: tuple[ByteStream, bckp.BackupOperation, Representation | None] | None = None
+
+    @classmethod
+    def name(cls) -> str:
+        return "stream-destination"
+
+    @staticmethod
+    def config_schema() -> vlp.Schema:
+        return vlp.Schema({})
+
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
+
+    def cap_import(
+        self,
+        source: ByteStream,
+        operation: bckp.BackupOperation,
+        base: Representation | None = None,
+    ) -> bckp.BackupArtifact:
+        self.call = (source, operation, base)
+        return bckp.BackupArtifact(operation, source)
+
+    def cap_list(self, backup_name: str) -> ty.Sequence[bckp.BackupArtifact]:
+        return self.artifacts
+
+
+def artifact(
+    schedule_name: str,
+    hour: int,
+    backup_name: str = "home",
+    representation: Representation | None = None,
+) -> bckp.BackupArtifact:
     operation = bckp.BackupOperation(
-        "home",
+        backup_name,
         schedule_name,
         datetime(2026, 8, 27, hour),
     )
-    return bckp.BackupArtifact(operation, Representation())
+    return bckp.BackupArtifact(
+        operation, Representation() if representation is None else representation
+    )
 
 
 def configured_backup(
@@ -87,20 +140,34 @@ def configured_backup(
 ) -> bckp.Backup:
     return bckp.Backup(
         "home",
-        Pipeline(bckp.DriverSource(SourceDriver()), destination),
-        (),
-        retention_policies,
+        bckp.DriverSource(SourceDriver()),
+        destination,
+        retention_policies=retention_policies,
     )
 
 
-def test_backup_has_composable_settings(pipeline):
+def test_backup_has_composable_settings():
+    source = bckp.DriverSource(SourceDriver())
+    destination = DestinationDriver()
+    drivers = (ArtifactDriver(),)
     schedules = (Schedule("hourly", CronSchedule("0 * * * *")),)
     retention_policies = (KeepLast(1),)
-    backup = bckp.Backup("home", pipeline, schedules, retention_policies)
+    backup = bckp.Backup(
+        "home",
+        source,
+        destination,
+        drivers,
+        frozenset(),
+        schedules,
+        retention_policies,
+    )
 
     assert vars(backup) == {
         "name": "home",
-        "pipeline": pipeline,
+        "source": source,
+        "destination": destination,
+        "drivers": drivers,
+        "requirements": frozenset(),
         "schedules": schedules,
         "retention_policies": retention_policies,
     }
@@ -194,8 +261,8 @@ def test_backup_artifact():
         "F@-_:",
     ],
 )
-def test_backup_accepts_valid_name(name, pipeline):
-    assert bckp.Backup(name, pipeline, (), ()).name == name
+def test_backup_accepts_valid_name(name):
+    assert bckp.Backup(name, bckp.DriverSource(SourceDriver()), DestinationDriver()).name == name
 
 
 @pytest.mark.parametrize(
@@ -218,9 +285,9 @@ def test_backup_accepts_valid_name(name, pipeline):
         "f^oo",
     ],
 )
-def test_backup_rejects_invalid_name(name, pipeline):
+def test_backup_rejects_invalid_name(name):
     with pytest.raises(YaesmValueError, match="invalid backup name"):
-        bckp.Backup(name, pipeline, (), ())
+        bckp.Backup(name, bckp.DriverSource(SourceDriver()), DestinationDriver())
 
 
 def test_backup_execute_uses_newest_artifact_as_base_and_applies_retention():
@@ -265,6 +332,117 @@ def test_backup_execute_without_retention_does_not_delete():
 
     assert destination.base is newest.representation
     assert destination.deleted is None
+
+
+def test_backup_execute_replicates_newest_artifact_with_matching_bases():
+    current_source = artifact("hourly", 12, "local")
+    previous_source = artifact("hourly", 11, "local")
+    source_driver = ArtifactDriver((current_source, previous_source))
+    source_backup = bckp.Backup(
+        "local",
+        bckp.DriverSource(SourceDriver()),
+        source_driver,
+    )
+    previous_destination = artifact("daily", 11, "offsite", ByteStream())
+    destination = StreamDestinationDriver((previous_destination,))
+    backup = bckp.Backup("offsite", bckp.BackupSource("local"), destination)
+
+    result = backup.execute(
+        "daily",
+        datetime(2026, 8, 27, 13),
+        {"local": source_backup},
+    )
+
+    assert result.operation == bckp.BackupOperation(
+        "offsite",
+        "daily",
+        current_source.operation.created_at,
+    )
+    assert source_driver.export_call == (
+        current_source.representation,
+        previous_source.representation,
+    )
+    assert destination.call == (
+        CommandStream(),
+        result.operation,
+        previous_destination.representation,
+    )
+
+
+def test_backup_execute_does_not_replicate_same_artifact_twice():
+    source_artifact = artifact("hourly", 12, "local")
+    source_driver = ArtifactDriver((source_artifact,))
+    source_backup = bckp.Backup(
+        "local",
+        bckp.DriverSource(SourceDriver()),
+        source_driver,
+    )
+    existing = artifact("daily", 12, "offsite", ByteStream())
+    destination = StreamDestinationDriver((existing,))
+    backup = bckp.Backup("offsite", bckp.BackupSource("local"), destination)
+
+    result = backup.execute(
+        "daily",
+        datetime(2026, 8, 27, 13),
+        {"local": source_backup},
+    )
+
+    assert result is existing
+    assert source_driver.export_call is None
+    assert destination.call is None
+
+
+def test_backup_execute_rejects_unknown_source_backup():
+    backup = bckp.Backup(
+        "offsite",
+        bckp.BackupSource("missing"),
+        StreamDestinationDriver(),
+    )
+
+    with pytest.raises(
+        bckp.BackupError,
+        match="backup 'offsite' references unknown source backup 'missing'",
+    ):
+        backup.execute("daily", datetime(2026, 8, 27, 13), {})
+
+
+def test_backup_execute_rejects_source_backup_without_artifacts():
+    source_backup = bckp.Backup(
+        "local",
+        bckp.DriverSource(SourceDriver()),
+        ArtifactDriver(),
+    )
+    backup = bckp.Backup(
+        "offsite",
+        bckp.BackupSource("local"),
+        StreamDestinationDriver(),
+    )
+
+    with pytest.raises(
+        bckp.BackupError,
+        match="backup 'offsite' cannot run: source backup 'local' has no artifacts",
+    ):
+        backup.execute("daily", datetime(2026, 8, 27, 13), {"local": source_backup})
+
+
+def test_backup_execute_formats_source_listing_failure():
+    source_backup = bckp.Backup(
+        "local",
+        bckp.DriverSource(SourceDriver()),
+        DestinationDriver(failure="list"),
+    )
+    backup = bckp.Backup(
+        "offsite",
+        bckp.BackupSource("local"),
+        StreamDestinationDriver(),
+    )
+
+    with pytest.raises(bckp.BackupError) as error:
+        backup.execute("daily", datetime(2026, 8, 27, 13), {"local": source_backup})
+
+    assert error.value.format() == (
+        "backup 'offsite' failed while listing source backup 'local' artifacts\n  list failed"
+    )
 
 
 def test_backup_execute_formats_listing_failure():

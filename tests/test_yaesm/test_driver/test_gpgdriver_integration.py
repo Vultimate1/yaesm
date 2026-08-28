@@ -10,6 +10,7 @@ import voluptuous as vlp
 
 import yaesm.ty as ty
 from yaesm.backup import BackupArtifact, BackupOperation, DriverSource
+from yaesm.check import Check, CheckRole
 from yaesm.command import CommandError, CommandRunner
 from yaesm.driver.btrfsdriver import BtrfsDriver
 from yaesm.driver.driverbase import DriverBase
@@ -35,6 +36,9 @@ class _FileDestination(DriverBase):
     @staticmethod
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
+
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
 
     def cap_import(
         self,

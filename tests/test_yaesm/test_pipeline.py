@@ -7,6 +7,7 @@ import voluptuous as vlp
 
 import yaesm.ty as ty
 from yaesm.backup import BackupArtifact, BackupOperation, DriverSource
+from yaesm.check import Check, CheckRole
 from yaesm.command import CommandError
 from yaesm.driver.driverbase import DriverBase, DriverError, capability
 from yaesm.pipeline import IncrementalBase, Pipeline, PipelineError, PipelineStep
@@ -33,6 +34,9 @@ class SourceDriver(DriverBase):
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
 
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
+
     def cap_source(self) -> ReadableTree:
         return self.output
 
@@ -49,6 +53,9 @@ class ExportDriver(DriverBase):
     @staticmethod
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
+
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
 
     def cap_export(
         self, source: Representation, base: Representation | None = None
@@ -78,6 +85,9 @@ class SnapshotDriver(DriverBase):
     @staticmethod
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
+
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
 
     def cap_snapshot(self, source: Representation) -> ReadableTree:
         return self.output
@@ -118,6 +128,9 @@ class DestinationDriver(DriverBase):
     @staticmethod
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
+
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
 
     def cap_import(
         self,
@@ -163,6 +176,9 @@ class EncryptionDriver(DriverBase):
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
 
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
+
     def cap_encrypt(self, source: ByteStream) -> EncryptedStream:
         return EncryptedStream()
 
@@ -175,6 +191,9 @@ class CompressionDriver(DriverBase):
     @staticmethod
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
+
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
 
     def cap_compress(self, source: ByteStream) -> CompressedStream:
         return CompressedStream()
@@ -198,6 +217,9 @@ class EmptyDriver(DriverBase):
     @staticmethod
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
+
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
 
 
 def test_incremental_base_pairs_source_and_destination_states():

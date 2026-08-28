@@ -7,6 +7,7 @@ import voluptuous as vlp
 
 import yaesm.backup as bckp
 import yaesm.ty as ty
+from yaesm.check import Check, CheckRole
 from yaesm.driver.driverbase import DriverBase
 from yaesm.representation import (
     BlockDevice,
@@ -27,6 +28,9 @@ class AllCapabilitiesDriver(DriverBase):
     @staticmethod
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
+
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
 
     def cap_source(self) -> Representation:
         return Representation()
@@ -92,11 +96,43 @@ class EmptyDriver(DriverBase):
     def config_schema() -> vlp.Schema:
         return vlp.Schema({})
 
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
+
 
 class DriverWithoutConfiguration(DriverBase):
     @classmethod
     def name(cls) -> str:
         return "unconfigured"
+
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
+
+
+class DriverWithoutCheck(DriverBase):
+    @classmethod
+    def name(cls) -> str:
+        return "unchecked"
+
+    @staticmethod
+    def config_schema() -> vlp.Schema:
+        return vlp.Schema({})
+
+
+class DriverWithDifferentExecutable(EmptyDriver):
+    @classmethod
+    def name(cls) -> str:
+        return "different"
+
+    @classmethod
+    def executable_name(cls) -> str:
+        return "actual"
+
+
+class DriverWithDifferentExecutableCheck(EmptyDriver):
+    @classmethod
+    def executable_check_command(cls) -> tuple[str, ...]:
+        return ("special", "version")
 
 
 def test_capabilities_are_advertised_by_defining_methods():
@@ -125,6 +161,15 @@ def test_driver_without_capabilities_advertises_none():
 
 def test_unmarked_method_is_not_a_capability():
     assert "fake" not in AllCapabilitiesDriver.capabilities()
+
+
+def test_check_is_not_a_capability():
+    assert "check" not in AllCapabilitiesDriver.capabilities()
+
+
+@pytest.mark.parametrize("role", CheckRole)
+def test_driver_check_accepts_each_role(role):
+    assert EmptyDriver().check(role) == ()
 
 
 def test_capability_method_is_found_from_metadata():
@@ -184,8 +229,30 @@ def test_driver_configuration_schema_is_required():
         DriverWithoutConfiguration()
 
 
+def test_driver_check_is_required():
+    with pytest.raises(TypeError):
+        DriverWithoutCheck()
+
+
 def test_driver_configuration_schema():
     assert EmptyDriver.config_schema()({}) == {}
+
+
+def test_executable_defaults_to_driver_name():
+    assert EmptyDriver.executable_name() == "empty"
+    assert EmptyDriver.executable_check_command() == ("empty", "--version")
+
+
+def test_executable_name_can_differ_from_driver_name():
+    assert DriverWithDifferentExecutable.executable_name() == "actual"
+    assert DriverWithDifferentExecutable.executable_check_command() == ("actual", "--version")
+
+
+def test_executable_check_command_can_be_overridden():
+    assert DriverWithDifferentExecutableCheck.executable_check_command() == (
+        "special",
+        "version",
+    )
 
 
 def test_unknown_capability_method_is_rejected():

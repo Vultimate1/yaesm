@@ -17,7 +17,6 @@ from yaesm.driver.btrfsdriver import (
     BtrfsSubvolume,
 )
 from yaesm.errors import YaesmValueError
-from yaesm.pipeline import Pipeline
 from yaesm.representation import CommandStream, PathTree
 from yaesm.ssh import SSHTarget, command_for_target
 
@@ -266,12 +265,8 @@ def test_backup_execute_uses_readonly_snapshot_with_incremental_send_fallback(tm
     runner = RecordingRunner((0, 1, 1, 1))
     backup = Backup(
         "example",
-        Pipeline(
-            DriverSource(BtrfsDriver(source)),
-            BtrfsDriver(destination, runner=runner),
-        ),
-        (),
-        (),
+        DriverSource(BtrfsDriver(source)),
+        BtrfsDriver(destination, runner=runner),
     )
 
     artifact = backup.execute("manual", operation().created_at)

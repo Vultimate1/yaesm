@@ -2,6 +2,7 @@
 
 import voluptuous as vlp
 
+from yaesm.check import Check, CheckRole
 from yaesm.driver.driverbase import DriverBase
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, CompressedStream
@@ -31,6 +32,9 @@ class ZstdDriver(DriverBase):
             return value
 
         return vlp.Schema({vlp.Optional("level", default=3): level})
+
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
 
     def cap_compress(self, source: CommandStream) -> ZstdStream:
         return ZstdStream(

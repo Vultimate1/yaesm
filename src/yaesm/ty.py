@@ -4,7 +4,7 @@ Always import this module qualified:
     import yaesm.ty as ty
 """
 
-from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from datetime import datetime, timedelta
 from logging import Logger
 from pathlib import Path
@@ -39,6 +39,7 @@ __all__ = [
     "Iterator",
     "Literal",
     "Logger",
+    "Mapping",
     "Match",
     "NoReturn",
     "Path",

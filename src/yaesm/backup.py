@@ -7,13 +7,12 @@ import re
 
 import yaesm.ty as ty
 from yaesm.errors import YaesmError, YaesmValueError
-from yaesm.representation import Representation
+from yaesm.representation import DataProperty, Representation
 
 _RepresentationT = ty.TypeVar("_RepresentationT", bound=Representation, covariant=True)
 
 if ty.TYPE_CHECKING:
     from yaesm.driver.driverbase import DriverBase
-    from yaesm.pipeline import Pipeline
     from yaesm.retention import RetentionPolicyBase
     from yaesm.schedule import Schedule
 
@@ -86,33 +85,90 @@ class Backup:
     """A named backup definition used to create operations."""
 
     name: str
-    pipeline: Pipeline
-    schedules: tuple[Schedule, ...]
-    retention_policies: tuple[RetentionPolicyBase, ...]
+    source: DriverSource | BackupSource
+    destination: DriverBase
+    drivers: tuple[DriverBase, ...] = ()
+    requirements: frozenset[DataProperty] = frozenset()
+    schedules: tuple[Schedule, ...] = ()
+    retention_policies: tuple[RetentionPolicyBase, ...] = ()
 
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z][-_:@a-z0-9]*", self.name, re.IGNORECASE):
             raise YaesmValueError(f"invalid backup name: {self.name!r}")
 
-    def execute(self, schedule_name: str, created_at: ty.datetime) -> BackupArtifact:
+    def execute(
+        self,
+        schedule_name: str,
+        created_at: ty.datetime,
+        backups: ty.Mapping[str, Backup] | None = None,
+    ) -> BackupArtifact:
         """Execute one backup operation and apply retention."""
-        from yaesm.pipeline import IncrementalBase
+        from yaesm.pipeline import IncrementalBase, Pipeline
 
-        operation = BackupOperation(self.name, schedule_name, created_at)
+        pipeline_drivers = self.drivers
+        operation_created_at = created_at
+        source_artifacts: tuple[BackupArtifact, ...] = ()
+        if isinstance(self.source, BackupSource):
+            source_backup = None if backups is None else backups.get(self.source.backup_name)
+            if source_backup is None:
+                raise BackupError(
+                    f"backup {self.name!r} references unknown source backup "
+                    f"{self.source.backup_name!r}"
+                )
+            try:
+                source_artifacts = tuple(source_backup.destination.cap_list(source_backup.name))
+            except YaesmError as error:
+                raise BackupError(
+                    f"backup {self.name!r} failed while listing source backup "
+                    f"{source_backup.name!r} artifacts"
+                ) from error
+            if not source_artifacts:
+                raise BackupError(
+                    f"backup {self.name!r} cannot run: source backup "
+                    f"{source_backup.name!r} has no artifacts"
+                )
+            pipeline_source = source_artifacts[0]
+            pipeline_drivers = (source_backup.destination, *pipeline_drivers)
+            operation_created_at = pipeline_source.operation.created_at
+        else:
+            pipeline_source = self.source
+
+        operation = BackupOperation(self.name, schedule_name, operation_created_at)
         try:
-            artifacts = tuple(self.pipeline.destination.cap_list(self.name))
+            artifacts = tuple(self.destination.cap_list(self.name))
         except YaesmError as error:
             raise BackupError(f"backup {self.name!r} failed while listing artifacts") from error
+
+        if isinstance(self.source, BackupSource):
+            existing = next(
+                (item for item in artifacts if item.name == operation.artifact_name),
+                None,
+            )
+            if existing is not None:
+                return existing
 
         base = None
         if artifacts:
             newest = artifacts[0]
-            base = IncrementalBase(
+            source_base = next(
+                (
+                    item.representation
+                    for item in source_artifacts
+                    if item.operation.created_at == newest.operation.created_at
+                ),
                 None,
+            )
+            base = IncrementalBase(
+                source_base,
                 newest.representation,
                 newest.operation.created_at,
             )
-        artifact = self.pipeline.execute(operation, base)
+        artifact = Pipeline(
+            pipeline_source,
+            self.destination,
+            pipeline_drivers,
+            self.requirements,
+        ).execute(operation, base)
 
         if self.retention_policies:
             artifacts = (artifact, *artifacts)
@@ -124,7 +180,7 @@ class Backup:
             expired = tuple(item for item in artifacts if item not in retained)
             if expired:
                 try:
-                    self.pipeline.destination.cap_delete(expired)
+                    self.destination.cap_delete(expired)
                 except YaesmError as error:
                     raise BackupError(
                         f"backup {self.name!r} failed while deleting expired artifacts"

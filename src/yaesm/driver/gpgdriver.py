@@ -5,6 +5,7 @@ from pathlib import Path
 import voluptuous as vlp
 
 import yaesm.ty as ty
+from yaesm.check import Check, CheckRole
 from yaesm.driver.driverbase import DriverBase
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, EncryptedStream
@@ -43,6 +44,9 @@ class GPGDriver(DriverBase):
         return vlp.Schema(
             lambda value: mapping({"public_key": value} if isinstance(value, str | Path) else value)
         )
+
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
 
     def cap_encrypt(self, source: CommandStream) -> GPGStream:
         return GPGStream(

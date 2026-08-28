@@ -8,6 +8,7 @@ import voluptuous as vlp
 
 import yaesm.backup as bckp
 import yaesm.ty as ty
+from yaesm.check import Check, CheckRole
 from yaesm.command import Command, CommandRunner
 from yaesm.driver.driverbase import DriverBase, DriverError
 from yaesm.errors import YaesmValueError
@@ -86,6 +87,9 @@ class RsyncDriver(DriverBase):
                 vlp.Optional("extra_options", default=()): extra_options,
             }
         )
+
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
 
     def cap_source(self) -> PathTree:
         return PathTree(self.location, self.target)

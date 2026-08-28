@@ -445,7 +445,7 @@ def test_rsync_integration(tmp_path):
     (source / "changed").write_text("before")
     source_driver = RsyncDriver(source)
     driver = RsyncDriver(destination)
-    backup = Backup("example", Pipeline(DriverSource(source_driver), driver), (), ())
+    backup = Backup("example", DriverSource(source_driver), driver)
 
     first = backup.execute("manual", operation().created_at)
     (source / "changed").write_text("after")

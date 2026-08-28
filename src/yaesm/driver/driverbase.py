@@ -7,6 +7,7 @@ import voluptuous as vlp
 
 import yaesm.backup as bckp
 import yaesm.ty as ty
+from yaesm.check import Check, CheckRole
 from yaesm.representation import (
     BlockDevice,
     ByteStream,
@@ -92,6 +93,16 @@ class DriverBase(abc.ABC):
         """Return the stable name used to select this driver."""
 
     @classmethod
+    def executable_name(cls) -> str:
+        """Return the primary executable, overriding this when it differs from ``name``."""
+        return cls.name()
+
+    @classmethod
+    def executable_check_command(cls) -> tuple[str, ...]:
+        """Return a harmless command that verifies the primary executable can run."""
+        return (cls.executable_name(), "--version")
+
+    @classmethod
     @ty.final
     def capabilities(cls) -> frozenset[str]:
         """Return the capabilities implemented by this driver."""
@@ -136,6 +147,10 @@ class DriverBase(abc.ABC):
     @abc.abstractmethod
     def config_schema() -> vlp.Schema:
         """Return the complete schema for this driver's configuration."""
+
+    @abc.abstractmethod
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        """Return deferred, read-only feasibility checks for this driver."""
 
     @capability("source")
     def cap_source(self) -> Representation:

@@ -8,6 +8,7 @@ import voluptuous as vlp
 
 import yaesm.backup as bckp
 import yaesm.ty as ty
+from yaesm.check import Check, CheckRole
 from yaesm.command import CommandRunner
 from yaesm.driver.driverbase import DriverBase, DriverError, capability
 from yaesm.errors import YaesmValueError
@@ -91,6 +92,9 @@ class BtrfsDriver(DriverBase):
                 vlp.Optional("bootstrap_refresh_days", default=21): refresh_days,
             }
         )
+
+    def check(self, role: CheckRole) -> tuple[Check, ...]:
+        return ()
 
     def cap_source(self) -> BtrfsSubvolume:
         return BtrfsSubvolume(self.location, self.target)

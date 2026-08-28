@@ -16,7 +16,6 @@ from yaesm.driver.zfsdriver import (
     ZFSStream,
 )
 from yaesm.errors import YaesmValueError
-from yaesm.pipeline import Pipeline
 from yaesm.representation import CommandStream, DataProperty, Representation
 from yaesm.ssh import SSHTarget
 
@@ -616,12 +615,8 @@ def test_backup_execute_uses_zfs_store_and_incremental_base():
     runner = RecordingRunner(stdouts=(f"backup/home@{old.artifact_name}\n",))
     backup = Backup(
         "example",
-        Pipeline(
-            DriverSource(ZFSDriver("tank/home")),
-            ZFSDriver("backup/home", runner=runner),
-        ),
-        (),
-        (),
+        DriverSource(ZFSDriver("tank/home")),
+        ZFSDriver("backup/home", runner=runner),
     )
 
     artifact = backup.execute("hourly", operation().created_at)
@@ -640,19 +635,15 @@ def test_backup_execute_uses_zfs_store_and_incremental_base():
     )
 
 
-@pytest.mark.parametrize("requirements", [(), (DataProperty.ENCRYPTED,)])
+@pytest.mark.parametrize("requirements", [frozenset(), frozenset({DataProperty.ENCRYPTED})])
 def test_backup_execute_preserves_configured_native_encryption(requirements):
     source_runner = RecordingRunner(stdouts=("aes-256-gcm\n",))
     destination_runner = RecordingRunner()
     backup = Backup(
         "example",
-        Pipeline(
-            DriverSource(ZFSDriver("tank/home", runner=source_runner, encryption=True)),
-            ZFSDriver("backup/home", runner=destination_runner),
-            requirements=requirements,
-        ),
-        (),
-        (),
+        DriverSource(ZFSDriver("tank/home", runner=source_runner, encryption=True)),
+        ZFSDriver("backup/home", runner=destination_runner),
+        requirements=requirements,
     )
 
     artifact = backup.execute("hourly", operation().created_at)
