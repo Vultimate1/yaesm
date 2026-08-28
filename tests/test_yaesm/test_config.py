@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 import voluptuous as vlp
+from hypothesis import given
+from hypothesis import strategies as st
 
 import yaesm.backup as bckp
 import yaesm.config as config_module
@@ -55,6 +57,124 @@ def backup_config(**settings):
     }
     config.update(settings)
     return config
+
+
+_BACKUP_NAMES = st.from_regex(r"[a-z][a-z0-9_-]{0,12}", fullmatch=True).filter(
+    lambda name: name != "global_settings"
+)
+_SCHEDULE_NAMES = st.from_regex(r"[a-z][a-z0-9_-]{0,8}", fullmatch=True)
+_RETENTION = st.one_of(
+    st.integers(min_value=1, max_value=100).map(lambda count: {"keep-last": count}),
+    st.tuples(
+        st.integers(min_value=1, max_value=100),
+        st.sampled_from(("s", "m", "h", "d", "w", "y")),
+    ).map(lambda duration: {"keep-for": f"{duration[0]}{duration[1]}"}),
+)
+_SCHEDULES = st.dictionaries(
+    _SCHEDULE_NAMES,
+    st.builds(
+        lambda expression, retention: {
+            "cron": expression,
+            "retention": retention,
+        },
+        st.sampled_from(("* * * * *", "0 * * * *", "30 4 * * *")),
+        _RETENTION,
+    ),
+    min_size=1,
+    max_size=3,
+)
+_TRANSFORMS = st.lists(
+    st.sampled_from(({"zstd": {}}, {"gpg": "/key.asc"})),
+    max_size=2,
+    unique_by=lambda driver: next(iter(driver)),
+)
+
+
+@st.composite
+def valid_backup_definitions(draw):
+    backend = draw(st.sampled_from(("btrfs", "rsync", "zfs")))
+    if backend == "zfs":
+        source = {"zfs": "source/data"}
+        destination = {"zfs": "destination/backups"}
+    else:
+        source = {backend: {"location": "/source"}}
+        destination = {backend: {"location": "/destination"}}
+    return backup_config(
+        source=source,
+        destination=destination,
+        drivers=draw(_TRANSFORMS),
+        schedules=draw(_SCHEDULES),
+    )
+
+
+@st.composite
+def valid_configs(draw):
+    names = draw(st.lists(_BACKUP_NAMES, min_size=1, max_size=4, unique=True))
+    config = {name: draw(valid_backup_definitions()) for name in names}
+    if draw(st.booleans()):
+        config["global_settings"] = draw(
+            st.dictionaries(
+                st.sampled_from(("timezone", "max_concurrent_backups", "notifications")),
+                st.none() | st.booleans() | st.integers() | st.text(max_size=20),
+                max_size=3,
+            )
+        )
+    return config
+
+
+_INVALID_MUTATIONS = st.sampled_from(
+    (
+        "missing-source",
+        "unknown-source",
+        "unknown-destination",
+        "invalid-drivers",
+        "invalid-requirements",
+        "invalid-schedules",
+        "unknown-setting",
+    )
+)
+
+
+def invalidate_backup(config, mutation):
+    match mutation:
+        case "missing-source":
+            del config["source"]
+            return "missing required settings: source"
+        case "unknown-source":
+            config["source"] = {"unknown": {}}
+            return "source uses unknown driver 'unknown'"
+        case "unknown-destination":
+            config["destination"] = {"unknown": {}}
+            return "destination uses unknown driver 'unknown'"
+        case "invalid-drivers":
+            config["drivers"] = {}
+            return "drivers must be a list"
+        case "invalid-requirements":
+            config["requirements"] = "snapshot"
+            return "requirements must be a list"
+        case "invalid-schedules":
+            config["schedules"] = []
+            return "schedules must be a mapping"
+        case "unknown-setting":
+            config["unexpected"] = True
+            return "unknown settings: unexpected"
+    raise AssertionError(f"unknown mutation: {mutation}")
+
+
+@st.composite
+def invalid_configs(draw):
+    names = draw(st.lists(_BACKUP_NAMES, min_size=2, max_size=4, unique=True))
+    config = {}
+    messages = []
+    if draw(st.booleans()):
+        config["global_settings"] = []
+        messages.append("global_settings must be a mapping")
+    for name in names:
+        definition = backup_config()
+        message = invalidate_backup(definition, draw(_INVALID_MUTATIONS))
+        config[name] = definition
+        messages.append(f"backup {name!r}: {message}")
+    return config, tuple(messages)
 
 
 def test_config_types_are_discovered_from_subclasses():
@@ -224,6 +344,59 @@ def test_parse_config_requires_backup_with_global_settings():
         parse_config({"global_settings": {}})
 
 
+def test_parse_config_collects_independent_errors():
+    value = {
+        "global_settings": [],
+        "first": backup_config(
+            source={"unknown": {}},
+            requirements="snapshot",
+        ),
+        "second": backup_config(
+            destination={"unknown": {}},
+            drivers={},
+        ),
+    }
+
+    with pytest.raises(ConfigError) as error:
+        parse_config(value)
+
+    assert error.value.messages == (
+        "global_settings must be a mapping",
+        "backup 'first': source uses unknown driver 'unknown'",
+        "backup 'first': requirements must be a list",
+        "backup 'second': destination uses unknown driver 'unknown'",
+        "backup 'second': drivers must be a list",
+    )
+    assert error.value.format() == (
+        "configuration errors:\n"
+        "  - global_settings must be a mapping\n"
+        "  - backup 'first': source uses unknown driver 'unknown'\n"
+        "  - backup 'first': requirements must be a list\n"
+        "  - backup 'second': destination uses unknown driver 'unknown'\n"
+        "  - backup 'second': drivers must be a list"
+    )
+
+
+@given(value=valid_configs())
+def test_generated_valid_configs_parse(value):
+    parsed = parse_config(value)
+
+    assert set(parsed.backups) == set(value) - {"global_settings"}
+
+
+@given(case=invalid_configs())
+def test_generated_invalid_configs_report_all_errors(case):
+    value, messages = case
+
+    with pytest.raises(ConfigError) as error:
+        parse_config(value)
+
+    assert error.value.messages == messages
+    assert str(error.value) == (
+        "configuration errors:\n" + "\n".join(f"  - {message}" for message in messages)
+    )
+
+
 def test_parse_config_rejects_nonstring_backup_name():
     with pytest.raises(ConfigError, match="backup names must be strings"):
         parse_config({1: backup_config()})
@@ -322,6 +495,21 @@ def test_parse_config_rejects_unknown_backup_source():
         parse_config({"offsite": backup_config(source={"backup": "missing"})})
 
 
+def test_parse_config_collects_unknown_backup_sources():
+    with pytest.raises(ConfigError) as error:
+        parse_config(
+            {
+                "first": backup_config(source={"backup": "missing-first"}),
+                "second": backup_config(source={"backup": "missing-second"}),
+            }
+        )
+
+    assert error.value.messages == (
+        "backup 'first' references unknown source backup 'missing-first'",
+        "backup 'second' references unknown source backup 'missing-second'",
+    )
+
+
 def test_parse_config_rejects_backup_source_cycle():
     with pytest.raises(ConfigError, match="backup source cycle: first -> second -> first"):
         parse_config(
@@ -330,6 +518,23 @@ def test_parse_config_rejects_backup_source_cycle():
                 "second": backup_config(source={"backup": "first"}),
             }
         )
+
+
+def test_parse_config_collects_independent_backup_source_cycles():
+    with pytest.raises(ConfigError) as error:
+        parse_config(
+            {
+                "first": backup_config(source={"backup": "second"}),
+                "second": backup_config(source={"backup": "first"}),
+                "third": backup_config(source={"backup": "fourth"}),
+                "fourth": backup_config(source={"backup": "third"}),
+            }
+        )
+
+    assert error.value.messages == (
+        "backup source cycle: first -> second -> first",
+        "backup source cycle: third -> fourth -> third",
+    )
 
 
 def test_parse_config_rejects_self_as_backup_source():

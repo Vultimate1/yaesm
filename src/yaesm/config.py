@@ -32,6 +32,24 @@ load_drivers()
 class ConfigError(YaesmError):
     """Raised when yaesm configuration is invalid."""
 
+    def __init__(self, messages: str | ty.Sequence[str]) -> None:
+        self.messages = (messages,) if isinstance(messages, str) else tuple(messages)
+        super().__init__(*self.messages)
+
+    def format(self) -> str:
+        """Format one error directly or multiple errors as a list."""
+        if len(self.messages) == 1:
+            return self.messages[0]
+        return "configuration errors:\n" + "\n".join(f"  - {message}" for message in self.messages)
+
+    def __str__(self) -> str:
+        return self.format()
+
+
+def _collect_messages(messages: list[str], error: YaesmError, prefix: str = "") -> None:
+    errors = error.messages if isinstance(error, ConfigError) else (error.format(),)
+    messages.extend(f"{prefix}{message}" for message in errors)
+
 
 @dataclasses.dataclass(frozen=True)
 class Config:
@@ -55,27 +73,40 @@ def parse_config(value: object) -> Config:
     if not isinstance(value, dict):
         raise ConfigError("configuration must be a mapping")
 
-    global_settings = value.get("global_settings", {})
-    if not isinstance(global_settings, dict):
-        raise ConfigError("global_settings must be a mapping")
-    if any(not isinstance(name, str) for name in global_settings):
-        raise ConfigError("global setting names must be strings")
-    global_settings = ty.cast(dict[str, object], dict(global_settings))
+    messages = []
+    raw_global_settings = value.get("global_settings", {})
+    if not isinstance(raw_global_settings, dict):
+        messages.append("global_settings must be a mapping")
+        global_settings = {}
+    else:
+        if any(not isinstance(name, str) for name in raw_global_settings):
+            messages.append("global setting names must be strings")
+        global_settings = {
+            name: setting for name, setting in raw_global_settings.items() if isinstance(name, str)
+        }
 
     backups = {}
+    backup_names = {name for name in value if isinstance(name, str) and name != "global_settings"}
+    has_backup_definition = any(name != "global_settings" for name in value)
     for name, definition in value.items():
         if name == "global_settings":
             continue
         if not isinstance(name, str):
-            raise ConfigError("backup names must be strings")
+            messages.append("backup names must be strings")
+            continue
         try:
             backups[name] = _parse_backup(name, definition, global_settings)
         except YaesmError as error:
-            raise ConfigError(f"backup {name!r}: {error}") from error
+            _collect_messages(messages, error, f"backup {name!r}: ")
 
-    if not backups:
-        raise ConfigError("at least one backup is required")
-    _validate_backup_sources(backups)
+    if not has_backup_definition:
+        messages.append("at least one backup is required")
+    try:
+        _validate_backup_sources(backups, backup_names)
+    except ConfigError as error:
+        messages.extend(error.messages)
+    if messages:
+        raise ConfigError(messages)
     return Config(global_settings, backups)
 
 
@@ -87,19 +118,52 @@ def _parse_backup(
     if not isinstance(value, dict):
         raise ConfigError("settings must be a mapping")
 
+    messages = []
     required = {"source", "destination", "schedules"}
     allowed = required | {"drivers", "requirements"}
     if missing := sorted(required - value.keys()):
-        raise ConfigError(f"missing required settings: {', '.join(missing)}")
+        messages.append(f"missing required settings: {', '.join(missing)}")
     if unknown := sorted(value.keys() - allowed, key=str):
-        raise ConfigError(f"unknown settings: {', '.join(str(item) for item in unknown)}")
+        messages.append(f"unknown settings: {', '.join(str(item) for item in unknown)}")
 
-    source = _parse_source(value["source"], global_settings)
-    destination = _parse_driver(value["destination"], "destination", global_settings)
-    _validate_destination(destination)
-    drivers = _parse_drivers(value.get("drivers", []), global_settings)
-    requirements = _parse_requirements(value.get("requirements", []))
-    schedules, retention = parse_schedules(value["schedules"])
+    source = None
+    if "source" in value:
+        try:
+            source = _parse_source(value["source"], global_settings)
+        except YaesmError as error:
+            _collect_messages(messages, error)
+
+    destination = None
+    if "destination" in value:
+        try:
+            destination = _parse_driver(value["destination"], "destination", global_settings)
+            _validate_destination(destination)
+        except YaesmError as error:
+            _collect_messages(messages, error)
+
+    try:
+        drivers = _parse_drivers(value.get("drivers", []), global_settings)
+    except YaesmError as error:
+        _collect_messages(messages, error)
+        drivers = ()
+
+    try:
+        requirements = _parse_requirements(value.get("requirements", []))
+    except YaesmError as error:
+        _collect_messages(messages, error)
+        requirements = frozenset()
+
+    schedules = ()
+    retention = ()
+    if "schedules" in value:
+        try:
+            schedules, retention = parse_schedules(value["schedules"])
+        except YaesmError as error:
+            _collect_messages(messages, error)
+
+    if messages:
+        raise ConfigError(messages)
+    assert source is not None and destination is not None
     backup = bckp.Backup(
         name,
         source,
@@ -133,10 +197,16 @@ def _parse_drivers(
 ) -> tuple[DriverBase, ...]:
     if not isinstance(value, list):
         raise ConfigError("drivers must be a list")
-    return tuple(
-        _parse_driver(definition, f"driver {index}", global_settings)
-        for index, definition in enumerate(value, start=1)
-    )
+    drivers = []
+    messages = []
+    for index, definition in enumerate(value, start=1):
+        try:
+            drivers.append(_parse_driver(definition, f"driver {index}", global_settings))
+        except YaesmError as error:
+            _collect_messages(messages, error)
+    if messages:
+        raise ConfigError(messages)
+    return tuple(drivers)
 
 
 def _parse_driver(
@@ -182,30 +252,36 @@ def _parse_requirements(value: object) -> frozenset[DataProperty]:
         raise ConfigError(f"unknown data requirement: {error}") from error
 
 
-def _validate_backup_sources(backups: ty.Mapping[str, bckp.Backup]) -> None:
+def _validate_backup_sources(
+    backups: ty.Mapping[str, bckp.Backup],
+    declared_names: set[str],
+) -> None:
+    messages = []
     visiting = []
     visited = set()
 
     def visit(name: str) -> None:
         if name in visiting:
             cycle = (*visiting[visiting.index(name) :], name)
-            raise ConfigError(f"backup source cycle: {' -> '.join(cycle)}")
+            messages.append(f"backup source cycle: {' -> '.join(cycle)}")
+            return
         if name in visited:
             return
         visiting.append(name)
         source = backups[name].source
         if isinstance(source, bckp.BackupSource):
             source_name = source.backup_name
-            if source_name not in backups:
-                raise ConfigError(
-                    f"backup {name!r} references unknown source backup {source_name!r}"
-                )
-            visit(source_name)
+            if source_name not in declared_names:
+                messages.append(f"backup {name!r} references unknown source backup {source_name!r}")
+            elif source_name in backups:
+                visit(source_name)
         visiting.pop()
         visited.add(name)
 
     for name in backups:
         visit(name)
+    if messages:
+        raise ConfigError(messages)
 
 
 def parse_schedules(
@@ -219,35 +295,49 @@ def parse_schedules(
 
     schedules = []
     policies = []
+    messages = []
     for schedule_name, definition in value.items():
-        if not isinstance(schedule_name, str) or not schedule_name:
-            raise ConfigError("schedule names must be nonempty strings")
-        if not isinstance(definition, dict):
-            raise ConfigError(f"schedule {schedule_name!r} must be a mapping")
-        if "retention" not in definition:
-            raise ConfigError(f"schedule {schedule_name!r} has no retention policy")
-
-        implementations = tuple(
-            (name, config) for name, config in definition.items() if name != "retention"
-        )
-        if len(implementations) != 1:
-            raise ConfigError(f"schedule {schedule_name!r} must select one schedule type")
-        type_name, config = implementations[0]
-        schedule_type = _type_named(ScheduleBase, type_name)
-        if schedule_type is None:
-            raise ConfigError(f"schedule {schedule_name!r} uses unknown type {type_name!r}")
-
         try:
-            config = schedule_type.config_schema()(config)
-        except vlp.Invalid as error:
-            raise ConfigError(
-                f"schedule {schedule_name!r} has invalid {type_name} configuration: {error}"
-            ) from error
-        implementation = ty.cast(ty.Callable[..., ScheduleBase], schedule_type)(**config)
-        schedules.append(Schedule(schedule_name, implementation))
-        policies.extend(_parse_retention(schedule_name, definition["retention"]))
+            if not isinstance(schedule_name, str) or not schedule_name:
+                raise ConfigError("schedule names must be nonempty strings")
+            schedule, retention = _parse_schedule(schedule_name, definition)
+            schedules.append(schedule)
+            policies.extend(retention)
+        except YaesmError as error:
+            _collect_messages(messages, error)
 
+    if messages:
+        raise ConfigError(messages)
     return tuple(schedules), tuple(policies)
+
+
+def _parse_schedule(
+    schedule_name: str,
+    value: object,
+) -> tuple[Schedule, tuple[RetentionPolicyBase, ...]]:
+    if not isinstance(value, dict):
+        raise ConfigError(f"schedule {schedule_name!r} must be a mapping")
+    if "retention" not in value:
+        raise ConfigError(f"schedule {schedule_name!r} has no retention policy")
+
+    implementations = tuple((name, config) for name, config in value.items() if name != "retention")
+    if len(implementations) != 1:
+        raise ConfigError(f"schedule {schedule_name!r} must select one schedule type")
+    type_name, config = implementations[0]
+    schedule_type = _type_named(ScheduleBase, type_name)
+    if schedule_type is None:
+        raise ConfigError(f"schedule {schedule_name!r} uses unknown type {type_name!r}")
+
+    try:
+        config = schedule_type.config_schema()(config)
+    except vlp.Invalid as error:
+        raise ConfigError(
+            f"schedule {schedule_name!r} has invalid {type_name} configuration: {error}"
+        ) from error
+    implementation = ty.cast(ty.Callable[..., ScheduleBase], schedule_type)(**config)
+    return Schedule(schedule_name, implementation), _parse_retention(
+        schedule_name, value["retention"]
+    )
 
 
 def _parse_retention(
@@ -259,28 +349,34 @@ def _parse_retention(
         raise ConfigError(f"schedule {schedule_name!r} has no retention policy")
 
     policies = []
+    messages = []
     for entry in entries:
-        if not isinstance(entry, dict) or len(entry) != 1:
-            raise ConfigError(
-                f"schedule {schedule_name!r} retention policies must select one policy type"
-            )
-        type_name, config = next(iter(entry.items()))
-        policy_type = _type_named(RetentionPolicyBase, type_name)
-        if policy_type is None:
-            raise ConfigError(
-                f"schedule {schedule_name!r} uses unknown retention policy {type_name!r}"
-            )
         try:
-            config = policy_type.config_schema()(config)
-        except vlp.Invalid as error:
-            raise ConfigError(
-                f"schedule {schedule_name!r} has invalid {type_name} configuration: {error}"
-            ) from error
-        policy = ty.cast(ty.Callable[..., RetentionPolicyBase], policy_type)(
-            **config,
-            schedule_name=schedule_name,
-        )
-        policies.append(policy)
+            if not isinstance(entry, dict) or len(entry) != 1:
+                raise ConfigError(
+                    f"schedule {schedule_name!r} retention policies must select one policy type"
+                )
+            type_name, config = next(iter(entry.items()))
+            policy_type = _type_named(RetentionPolicyBase, type_name)
+            if policy_type is None:
+                raise ConfigError(
+                    f"schedule {schedule_name!r} uses unknown retention policy {type_name!r}"
+                )
+            try:
+                config = policy_type.config_schema()(config)
+            except vlp.Invalid as error:
+                raise ConfigError(
+                    f"schedule {schedule_name!r} has invalid {type_name} configuration: {error}"
+                ) from error
+            policy = ty.cast(ty.Callable[..., RetentionPolicyBase], policy_type)(
+                **config,
+                schedule_name=schedule_name,
+            )
+            policies.append(policy)
+        except YaesmError as error:
+            _collect_messages(messages, error)
+    if messages:
+        raise ConfigError(messages)
     return tuple(policies)
 
 

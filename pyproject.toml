@@ -43,6 +43,7 @@ test = [
     "pytest-ruff>=0.4.0",
     "pytest-ty>=0.0.1",
     "freezegun>=1.5.1",
+    "hypothesis>=6.0.0",
 ]
 dev = [
     "ruff>=0.15.0",
