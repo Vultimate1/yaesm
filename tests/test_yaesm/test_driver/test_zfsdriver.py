@@ -849,9 +849,10 @@ def test_artifact_id_is_stable_before_and_after_listing():
     driver = with_runner(ZFSDriver("backup/home"), runner)
 
     assert driver.artifact_id(BackupArtifact(operation(), snapshot)) == "42"
-    assert driver.artifact_id(
-        BackupArtifact(operation(), dataclasses.replace(snapshot, guid=42))
-    ) == "42"
+    assert (
+        driver.artifact_id(BackupArtifact(operation(), dataclasses.replace(snapshot, guid=42)))
+        == "42"
+    )
     assert runner.commands == [
         ("zfs", "get", "-H", "-o", "value", "guid", snapshot.name),
     ]
