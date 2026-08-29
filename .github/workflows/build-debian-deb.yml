@@ -14,24 +14,7 @@ permissions:
   contents: read
 
 jobs:
-  manual-current:
-    name: Check generated manual
-    runs-on: ubuntu-latest
-    outputs:
-      current: ${{ steps.check.outputs.current }}
-    steps:
-      - uses: actions/checkout@v6
-      - id: check
-        run: |
-          if sh packaging/check-manual.sh; then
-            echo "current=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "current=false" >> "$GITHUB_OUTPUT"
-          fi
-
   build:
-    needs: manual-current
-    if: needs.manual-current.outputs.current == 'true'
     name: Build package for latest Debian
     runs-on: ubuntu-latest
     container:
@@ -51,6 +34,7 @@ jobs:
             iproute2 \
             lintian \
             mmdebstrap \
+            pandoc \
             sbuild \
             systemd \
             uidmap \
@@ -73,8 +57,11 @@ jobs:
         run: |
           version=$(dpkg-parsechangelog --show-field Version)
           upstream_version=${version%-*}
+          sh packaging/build-manual.sh
+          git add man/yaesm.1
+          source_tree=$(git write-tree)
           git archive --format=tar.gz --prefix="yaesm-$upstream_version/" \
-            --output="../yaesm_$upstream_version.orig.tar.gz" HEAD
+            --output="../yaesm_$upstream_version.orig.tar.gz" "$source_tree"
           tar --extract --file="../yaesm_$upstream_version.orig.tar.gz" \
             --directory=..
           cp --archive debian "../yaesm-$upstream_version/debian"

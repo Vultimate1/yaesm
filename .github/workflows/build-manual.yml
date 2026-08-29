@@ -6,6 +6,8 @@ on:
     paths:
       - 'man/yaesm.1.md'
       - 'pyproject.toml'
+      - 'packaging/build-manual.sh'
+      - 'packaging/check-manual.sh'
       - '.github/workflows/build-manual.yml'
 
 permissions:
@@ -20,16 +22,7 @@ jobs:
       - name: Install pandoc
         run: sudo apt-get update -y && sudo apt-get install -y pandoc
       - name: Build man page
-        run: |
-          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          pandoc man/yaesm.1.md -f markdown-smart -s -t man -o man/yaesm.1 \
-            --metadata title=YAESM \
-            --metadata section=1 \
-            --metadata "footer=yaesm $version"
-          source_hash=$(sha256sum man/yaesm.1.md | cut -d ' ' -f 1)
-          sed -i '1i .\\" Source-SHA256: '"$source_hash" man/yaesm.1
-          sed -i '1i .\\" Auto-generated from man/yaesm.1.md by pandoc. Do not edit.' man/yaesm.1
-          sh packaging/check-manual.sh
+        run: sh packaging/build-manual.sh
       - name: Commit man page
         run: |
           git config user.name "github-actions[bot]"
