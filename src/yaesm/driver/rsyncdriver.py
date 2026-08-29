@@ -1,6 +1,7 @@
 """Rsync driver and representations."""
 
 import dataclasses
+import hashlib
 import shlex
 from pathlib import Path
 
@@ -48,6 +49,15 @@ class RsyncDriver(DriverBase):
     @classmethod
     def name(cls) -> str:
         return "rsync"
+
+    @staticmethod
+    def _marker_prefix() -> str:
+        return ".yaesm-rsync-artifact-"
+
+    @staticmethod
+    def _marker(path: ty.Path) -> ty.Path:
+        digest = hashlib.sha256(path.name.encode()).hexdigest()
+        return path.with_name(f"{RsyncDriver._marker_prefix()}{digest}")
 
     @staticmethod
     def config_schema() -> vlp.Schema:
@@ -145,6 +155,12 @@ class RsyncDriver(DriverBase):
 
         try:
             self.runner.run(rsync_command)
+            self.runner.run(
+                command_for_target(
+                    self.target,
+                    ("touch", self._marker(destination.path)),
+                )
+            )
         except BaseException:
             self._delete((destination,), check=False)
             raise
@@ -161,16 +177,25 @@ class RsyncDriver(DriverBase):
                     "-path",
                     self.location,
                     "-prune",
+                    "(",
                     "-type",
                     "d",
+                    "-o",
+                    "-type",
+                    "f",
+                    "-name",
+                    f"{self._marker_prefix()}*",
+                    ")",
                     "-print",
                 ),
             ),
             capture_output=True,
         )
+        paths = {Path(value) for value in (result.stdout or "").splitlines()}
         artifacts = []
-        for value in (result.stdout or "").splitlines():
-            path = Path(value)
+        for path in paths:
+            if self._marker(path) not in paths:
+                continue
             try:
                 operation = bckp.BackupOperation.from_artifact_name(backup_name, path.name)
             except YaesmValueError:
@@ -218,10 +243,11 @@ class RsyncDriver(DriverBase):
     def _delete(self, trees: ty.Sequence[RsyncTree], *, check: bool = True) -> None:
         if not trees:
             return
+        paths = tuple(path for tree in trees for path in (tree.path, self._marker(tree.path)))
         self.runner.run(
             command_for_target(
                 trees[0].target,
-                ("rm", "-rf", *(tree.path for tree in trees)),
+                ("rm", "-rf", *paths),
             ),
             check=check,
         )

@@ -92,10 +92,23 @@ class Schedule:
 
     name: str
     implementation: ScheduleBase
+    previous_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not schedule_name_valid(self.name):
             raise YaesmValueError(f"invalid schedule name: {self.name!r}")
+        seen = {self.name}
+        for name in self.previous_names:
+            if not schedule_name_valid(name):
+                raise YaesmValueError(f"invalid previous schedule name: {name!r}")
+            if name in seen:
+                raise YaesmValueError(f"duplicate schedule name: {name!r}")
+            seen.add(name)
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        """Return the current and previous schedule names."""
+        return (self.name, *self.previous_names)
 
     def timer_triggers(self) -> tuple[BaseTrigger, ...]:
         """Return this schedule's timer triggers."""

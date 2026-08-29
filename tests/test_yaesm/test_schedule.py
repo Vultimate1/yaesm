@@ -46,6 +46,29 @@ def test_schedule():
     assert isinstance(schedule.timer_triggers()[0], CronTrigger)
 
 
+def test_schedule_accepts_previous_names():
+    schedule = Schedule(
+        "nightly",
+        UntimedSchedule(),
+        previous_names=("daily", "old-daily"),
+    )
+
+    assert schedule.previous_names == ("daily", "old-daily")
+    assert schedule.names == ("nightly", "daily", "old-daily")
+
+
+@pytest.mark.parametrize("name", ["", "old/schedule", "daily backup", 1])
+def test_schedule_rejects_invalid_previous_name(name):
+    with pytest.raises(YaesmValueError, match="invalid previous schedule name"):
+        Schedule("daily", UntimedSchedule(), previous_names=(name,))
+
+
+@pytest.mark.parametrize("previous_names", [("daily",), ("old", "old")])
+def test_schedule_rejects_duplicate_name_history(previous_names):
+    with pytest.raises(YaesmValueError, match="duplicate schedule name"):
+        Schedule("daily", UntimedSchedule(), previous_names=previous_names)
+
+
 @pytest.mark.parametrize(
     "name",
     ["hourly", "Every.Six-Hours", "manual_1", "daily@server", "daily:local"],

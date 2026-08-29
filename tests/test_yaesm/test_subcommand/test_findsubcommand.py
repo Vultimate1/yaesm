@@ -10,6 +10,7 @@ from yaesm.backup import Backup, BackupArtifact, BackupOperation
 from yaesm.config import Config
 from yaesm.errors import YaesmError, YaesmValueError
 from yaesm.representation import Representation
+from yaesm.schedule import CronSchedule, Schedule
 from yaesm.subcommand.findsubcommand import (
     FindError,
     FindQuery,
@@ -93,6 +94,12 @@ def test_find_argument_defaults():
     assert parsed.query == []
     assert parsed.additional_queries == []
     assert parsed.schedules == []
+    assert parsed.null is False
+
+
+def test_find_null_argument():
+    assert arguments("home", "--null").null is True
+    assert arguments("home", "-0").null is True
 
 
 def test_find_arguments_normalize_names_and_schedules():
@@ -248,6 +255,52 @@ def test_find_defaults_to_all_and_formats_locators(capsys):
         mock.call(artifacts[0]),
         mock.call(artifacts[1]),
     ]
+
+
+def test_find_can_separate_locators_with_null_bytes(capsys):
+    artifacts = (artifact(12), artifact(10))
+    backup, _destination = configured_backup("home", artifacts)
+
+    assert FindSubcommand().main(Config({}, {"home": backup}), arguments("home", "-0")) == 0
+
+    assert capsys.readouterr().out == (
+        f"locator:{artifacts[0].name}\0locator:{artifacts[1].name}\0"
+    )
+
+
+def test_find_includes_artifacts_under_previous_names(capsys):
+    stored = artifact(12, schedule="daily", backup_name="old-home")
+    destination = mock.Mock()
+    destination.cap_list.side_effect = lambda name: (stored,) if name == "old-home" else ()
+    destination.format_locator.return_value = "/backups/old-artifact"
+    backup = Backup(
+        "home",
+        mock.Mock(),
+        destination,
+        schedules=(
+            Schedule(
+                "nightly",
+                CronSchedule("0 1 * * *"),
+                previous_names=("daily",),
+            ),
+        ),
+        previous_names=("old-home",),
+    )
+
+    assert (
+        FindSubcommand().main(
+            Config({}, {"home": backup}),
+            arguments("home,old-home", "--schedule", "daily"),
+        )
+        == 0
+    )
+
+    assert capsys.readouterr().out == "/backups/old-artifact\n"
+    assert destination.cap_list.call_args_list == [mock.call("home"), mock.call("old-home")]
+    found = destination.format_locator.call_args.args[0]
+    assert found.operation.backup_name == "home"
+    assert found.operation.schedule_name == "nightly"
+    assert found.representation is stored.representation
 
 
 def test_find_combines_queries_without_duplicates(capsys):

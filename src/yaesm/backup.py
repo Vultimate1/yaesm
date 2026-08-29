@@ -22,6 +22,15 @@ class BackupError(YaesmError):
     """Raised when a backup cannot be prepared or executed."""
 
 
+def backup_name_valid(name: object) -> bool:
+    """Return whether a name is safe to use in an artifact name."""
+    return (
+        isinstance(name, str)
+        and name.casefold() != "global_settings"
+        and bool(re.fullmatch(r"[a-z][-_:@a-z0-9]*", name, re.IGNORECASE))
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class BackupSource:
     """Artifacts produced by another configured backup."""
@@ -37,6 +46,9 @@ class BackupOperation:
     schedule_name: str
     created_at: ty.datetime
     source_artifact_id: str | None = None
+    previous_backup_names: tuple[str, ...] = dataclasses.field(
+        default=(), repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if not schedule_name_valid(self.schedule_name):
@@ -72,10 +84,15 @@ class BackupOperation:
 
 @dataclasses.dataclass(frozen=True)
 class BackupArtifact(ty.Generic[_RepresentationT]):
-    """A successfully stored representation and the operation that created it."""
+    """A stored representation with its logical operation and original name."""
 
     operation: BackupOperation
     representation: _RepresentationT
+    stored_name: str = dataclasses.field(default="", kw_only=True)
+
+    def __post_init__(self) -> None:
+        if not self.stored_name:
+            object.__setattr__(self, "stored_name", self.name)
 
     @property
     def name(self) -> str:
@@ -93,12 +110,61 @@ class Backup:
     drivers: tuple[DriverBase, ...] = ()
     schedules: tuple[Schedule, ...] = ()
     retention_policies: tuple[RetentionPolicyBase, ...] = ()
+    previous_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.name.casefold() == "global_settings" or not re.fullmatch(
-            r"[a-z][-_:@a-z0-9]*", self.name, re.IGNORECASE
-        ):
+        if not backup_name_valid(self.name):
             raise YaesmValueError(f"invalid backup name: {self.name!r}")
+        seen = {self.name}
+        for name in self.previous_names:
+            if not backup_name_valid(name):
+                raise YaesmValueError(f"invalid previous backup name: {name!r}")
+            if name in seen:
+                raise YaesmValueError(f"duplicate backup name: {name!r}")
+            seen.add(name)
+
+        schedule_names: dict[str, str] = {}
+        for schedule in self.schedules:
+            for name in schedule.names:
+                if owner := schedule_names.get(name):
+                    raise YaesmValueError(
+                        f"schedule name {name!r} is used by both {owner!r} and {schedule.name!r}"
+                    )
+                schedule_names[name] = schedule.name
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        """Return the current and previous backup names."""
+        return (self.name, *self.previous_names)
+
+    def artifacts(self) -> tuple[BackupArtifact[Representation], ...]:
+        """Return stored artifacts under their current backup and schedule names."""
+        schedule_names = {
+            name: schedule.name for schedule in self.schedules for name in schedule.names
+        }
+        artifacts = []
+        seen = set()
+        for backup_name in self.names:
+            for artifact in self.destination.cap_list(backup_name):
+                operation = dataclasses.replace(
+                    artifact.operation,
+                    backup_name=self.name,
+                    schedule_name=schedule_names.get(
+                        artifact.operation.schedule_name,
+                        artifact.operation.schedule_name,
+                    ),
+                )
+                normalized = dataclasses.replace(artifact, operation=operation)
+                if normalized.name in seen:
+                    raise BackupError(
+                        f"backup {self.name!r} has multiple stored artifacts that resolve to "
+                        f"{normalized.name!r}"
+                    )
+                seen.add(normalized.name)
+                artifacts.append(normalized)
+        return tuple(
+            sorted(artifacts, key=lambda artifact: artifact.operation.created_at, reverse=True)
+        )
 
     def execute(
         self,
@@ -121,7 +187,7 @@ class Backup:
                     f"{self.source.backup_name!r}"
                 )
             try:
-                source_artifacts = tuple(source_backup.destination.cap_list(source_backup.name))
+                source_artifacts = source_backup.artifacts()
             except YaesmError as error:
                 raise BackupError(
                     f"backup {self.name!r} failed while listing source backup "
@@ -143,7 +209,8 @@ class Backup:
             self.name,
             schedule_name,
             operation_created_at,
-            source_artifact_id,
+            source_artifact_id=source_artifact_id,
+            previous_backup_names=self.previous_names,
         )
         pipeline = Pipeline(
             source_driver,
@@ -152,7 +219,7 @@ class Backup:
             source_artifact=source_artifact,
         )
         try:
-            artifacts = tuple(self.destination.cap_list(self.name))
+            artifacts = self.artifacts()
         except YaesmError as error:
             raise BackupError(f"backup {self.name!r} failed while listing artifacts") from error
 

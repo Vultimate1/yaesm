@@ -56,6 +56,20 @@ class Config:
 
     global_settings: GlobalSettings
     backups: dict[str, bckp.Backup]
+    backups_by_name: dict[str, bckp.Backup] = dataclasses.field(
+        init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        backups_by_name = {}
+        for backup in self.backups.values():
+            for name in backup.names:
+                if owner := backups_by_name.get(name):
+                    raise ConfigError(
+                        f"backup name {name!r} is used by both {owner.name!r} and {backup.name!r}"
+                    )
+                backups_by_name[name] = backup
+        object.__setattr__(self, "backups_by_name", backups_by_name)
 
 
 def parse_config(value: object) -> Config:
@@ -98,15 +112,25 @@ def parse_config(value: object) -> Config:
         except YaesmError as error:
             _collect_messages(messages, error, f"backup {name!r}: ")
 
+    config = None
+    try:
+        config = Config(global_settings, backups)
+    except ConfigError as error:
+        messages.extend(error.messages)
     if not has_backup_definition:
         messages.append("at least one backup is required")
     try:
-        _validate_backup_sources(backups, backup_names)
+        _validate_backup_sources(
+            backups,
+            backup_names,
+            {} if config is None else config.backups_by_name,
+        )
     except ConfigError as error:
         messages.extend(error.messages)
     if messages:
         raise ConfigError(messages)
-    return Config(global_settings, backups)
+    assert config is not None
+    return config
 
 
 def _parse_backup(
@@ -119,11 +143,22 @@ def _parse_backup(
 
     messages = []
     required = {"source", "destination", "schedules"}
-    allowed = required | {"drivers"}
+    allowed = required | {"drivers", "previous_names"}
     if missing := sorted(required - value.keys()):
         messages.append(f"missing required settings: {', '.join(missing)}")
     if unknown := sorted(value.keys() - allowed, key=str):
         messages.append(f"unknown settings: {', '.join(str(item) for item in unknown)}")
+
+    try:
+        previous_names = _parse_previous_names(
+            name,
+            value.get("previous_names", []),
+            bckp.backup_name_valid,
+            "backup",
+        )
+    except ConfigError as error:
+        _collect_messages(messages, error)
+        previous_names = ()
 
     source = None
     if "source" in value:
@@ -164,6 +199,7 @@ def _parse_backup(
         drivers,
         schedules,
         retention,
+        previous_names=previous_names,
     )
 
     if isinstance(source, DriverBase):
@@ -238,6 +274,7 @@ def _validate_destination(driver: DriverBase) -> None:
 def _validate_backup_sources(
     backups: ty.Mapping[str, bckp.Backup],
     declared_names: set[str],
+    backups_by_name: ty.Mapping[str, bckp.Backup],
 ) -> None:
     messages = []
     visiting = []
@@ -254,10 +291,11 @@ def _validate_backup_sources(
         source = backups[name].source
         if isinstance(source, bckp.BackupSource):
             source_name = source.backup_name
-            if source_name not in declared_names:
+            source_backup = backups_by_name.get(source_name)
+            if source_backup is not None:
+                visit(source_backup.name)
+            elif source_name not in declared_names:
                 messages.append(f"backup {name!r} references unknown source backup {source_name!r}")
-            elif source_name in backups:
-                visit(source_name)
         visiting.pop()
         visited.add(name)
 
@@ -303,7 +341,17 @@ def _parse_schedule(
     if "retention" not in value:
         raise ConfigError(f"schedule {schedule_name!r} has no retention policy")
 
-    implementations = tuple((name, config) for name, config in value.items() if name != "retention")
+    previous_names = _parse_previous_names(
+        schedule_name,
+        value.get("previous_names", []),
+        schedule_name_valid,
+        "schedule",
+    )
+    implementations = tuple(
+        (name, config)
+        for name, config in value.items()
+        if name not in {"previous_names", "retention"}
+    )
     if len(implementations) != 1:
         raise ConfigError(f"schedule {schedule_name!r} must select one schedule type")
     type_name, config = implementations[0]
@@ -318,9 +366,30 @@ def _parse_schedule(
             f"schedule {schedule_name!r} has invalid {type_name} configuration: {error}"
         ) from error
     implementation = ty.cast(ty.Callable[..., ScheduleBase], schedule_type)(**config)
-    return Schedule(schedule_name, implementation), _parse_retention(
-        schedule_name, value["retention"]
-    )
+    return Schedule(
+        schedule_name,
+        implementation,
+        previous_names=previous_names,
+    ), _parse_retention(schedule_name, value["retention"])
+
+
+def _parse_previous_names(
+    current_name: str,
+    value: object,
+    valid: ty.Callable[[object], bool],
+    kind: str,
+) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise ConfigError("previous_names must be a list")
+    names = tuple(value)
+    seen = {current_name}
+    for name in names:
+        if not valid(name):
+            raise ConfigError(f"invalid previous {kind} name: {name!r}")
+        if name in seen:
+            raise ConfigError(f"duplicate {kind} name: {name!r}")
+        seen.add(name)
+    return ty.cast(tuple[str, ...], names)
 
 
 def _parse_retention(

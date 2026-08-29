@@ -236,39 +236,46 @@ def test_driver_check_is_inherited():
 
 def test_stored_artifact_check_is_deferred(monkeypatch):
     driver = AllCapabilitiesDriver()
+    backup = bckp.Backup("home", driver, driver, previous_names=("old-home",))
     calls = []
     artifact = bckp.BackupArtifact(
-        bckp.BackupOperation("home", "daily", datetime(2026, 8, 28)),
+        bckp.BackupOperation("old-home", "daily", datetime(2026, 8, 28)),
         Representation(),
     )
     monkeypatch.setattr(
         driver,
         "cap_list",
-        lambda backup_name: calls.append(backup_name) or (artifact,),
+        lambda backup_name: (
+            calls.append(backup_name) or ((artifact,) if backup_name == "old-home" else ())
+        ),
     )
 
-    check = driver.check_artifacts("home")
+    check = driver.check_artifacts(backup)
 
     assert calls == []
     assert check.run().passed
-    assert calls == ["home"]
+    assert calls == ["home", "old-home"]
 
 
 def test_stored_artifact_check_requires_an_artifact():
-    result = AllCapabilitiesDriver().check_artifacts("home").run()
+    driver = AllCapabilitiesDriver()
+    backup = bckp.Backup("home", driver, driver)
+
+    result = driver.check_artifacts(backup).run()
 
     assert result.failure == "no stored artifacts found for backup 'home'"
 
 
 def test_stored_artifact_check_reports_listing_failure(monkeypatch):
     driver = AllCapabilitiesDriver()
+    backup = bckp.Backup("home", driver, driver)
 
     def fail(_backup_name):
         raise DriverError("listing failed")
 
     monkeypatch.setattr(driver, "cap_list", fail)
 
-    result = driver.check_artifacts("home").run()
+    result = driver.check_artifacts(backup).run()
 
     assert result.failure == "listing failed"
 
@@ -291,17 +298,17 @@ def test_driver_has_command_runner():
     assert isinstance(EmptyDriver().runner, CommandRunner)
 
 
-def test_artifact_identifiers_default_to_names_and_recorded_sources():
+def test_artifact_identifiers_use_stored_names_and_recorded_sources():
     operation = bckp.BackupOperation(
         "offsite",
         "daily",
         datetime(2026, 8, 28),
         "source-id",
     )
-    artifact = bckp.BackupArtifact(operation, Representation())
+    artifact = bckp.BackupArtifact(operation, Representation(), stored_name="original-name")
     driver = EmptyDriver()
 
-    assert driver.artifact_id(artifact) == artifact.name
+    assert driver.artifact_id(artifact) == "original-name"
     assert driver.source_artifact_id(artifact) == "source-id"
 
 

@@ -27,7 +27,7 @@ class CheckSubcommand(SubcommandBase):
         for backup in backups:
             if not arguments.quiet:
                 print(f"backup: {backup.name}", flush=True)
-            checks = self._backup_checks(backup, config.backups)
+            checks = self._backup_checks(backup, config.backups_by_name)
             targets = tuple(
                 dict.fromkeys(check.target for check in checks if check.target is not None)
             )
@@ -72,10 +72,11 @@ class CheckSubcommand(SubcommandBase):
             return tuple(config.backups.values())
         if not names:
             raise CheckError("no backup names specified")
-        if unknown := tuple(name for name in names if name not in config.backups):
+        if unknown := tuple(name for name in names if name not in config.backups_by_name):
             label = "backup" if len(unknown) == 1 else "backups"
             raise CheckError(f"unknown {label}: {', '.join(repr(name) for name in unknown)}")
-        return tuple(config.backups[name] for name in names)
+        selected = (config.backups_by_name[name] for name in names)
+        return tuple({backup.name: backup for backup in selected}.values())
 
     @staticmethod
     def _backup_checks(
@@ -90,7 +91,7 @@ class CheckSubcommand(SubcommandBase):
             source = source_backup.destination
             source_checks = (
                 *source.check(CheckRole.ARTIFACT_SOURCE),
-                source.check_artifacts(source_backup.name),
+                source.check_artifacts(source_backup),
             )
         return (
             *source_checks,

@@ -29,27 +29,35 @@ class FindSubcommand(SubcommandBase):
         queries = tuple(FindQuery(query, now) for query in raw_queries or ((),))
 
         for backup in backups:
-            artifacts = tuple(backup.destination.cap_list(backup.name))
+            artifacts = backup.artifacts()
             if arguments.schedules:
+                schedule_names = {
+                    name: schedule.name for schedule in backup.schedules for name in schedule.names
+                }
+                schedules = {schedule_names.get(name, name) for name in arguments.schedules}
                 artifacts = tuple(
                     artifact
                     for artifact in artifacts
-                    if artifact.operation.schedule_name in arguments.schedules
+                    if artifact.operation.schedule_name in schedules
                 )
             matches = {artifact.name for query in queries for artifact in query.select(artifacts)}
             for artifact in artifacts:
                 if artifact.name in matches:
-                    print(backup.destination.format_locator(artifact))
+                    print(
+                        backup.destination.format_locator(artifact),
+                        end="\0" if arguments.null else "\n",
+                    )
         return 0
 
     @staticmethod
     def _select_backups(config: Config, names: tuple[str, ...]) -> tuple[Backup, ...]:
         if not names:
             raise FindError("no backup names specified")
-        if unknown := tuple(name for name in names if name not in config.backups):
+        if unknown := tuple(name for name in names if name not in config.backups_by_name):
             label = "backup" if len(unknown) == 1 else "backups"
             raise FindError(f"unknown {label}: {', '.join(repr(name) for name in unknown)}")
-        return tuple(config.backups[name] for name in names)
+        selected = (config.backups_by_name[name] for name in names)
+        return tuple({backup.name: backup for backup in selected}.values())
 
     @classmethod
     def add_argparser_arguments(cls, parser: argparse.ArgumentParser) -> None:
@@ -79,6 +87,12 @@ class FindSubcommand(SubcommandBase):
             default=[],
             metavar="SCHEDULE[,SCHEDULE...]",
             help="limit results to schedules",
+        )
+        parser.add_argument(
+            "-0",
+            "--null",
+            action="store_true",
+            help="separate results with NUL bytes",
         )
 
 

@@ -196,7 +196,11 @@ class BtrfsDriver(DriverBase):
                     raise
 
         if base is None:
-            base = self._bootstrap(source, operation.backup_name)
+            base = self._bootstrap(
+                source,
+                operation.backup_name,
+                operation.previous_backup_names,
+            )
         snapshot = self.cap_snapshot(source)
         try:
             return self.cap_import(self.cap_export(snapshot, base), operation)
@@ -342,12 +346,33 @@ class BtrfsDriver(DriverBase):
             source_uuid=source_uuid,
         )
 
-    def _bootstrap(self, source: BtrfsSubvolume, backup_name: str) -> BtrfsSnapshot:
+    def _bootstrap(
+        self,
+        source: BtrfsSubvolume,
+        backup_name: str,
+        previous_backup_names: ty.Sequence[str],
+    ) -> BtrfsSnapshot:
         name = f".yaesm-btrfs-bootstrap-{backup_name}"
         source_path = BtrfsSubvolume(source.path / name, source.target)
         destination_path = BtrfsSubvolume(self.location / name, self.target)
         source_bootstrap = self._find_snapshot(source_path)
         destination_bootstrap = self._find_snapshot(destination_path)
+
+        if source_bootstrap is None and destination_bootstrap is None:
+            for previous_name in previous_backup_names:
+                name = f".yaesm-btrfs-bootstrap-{previous_name}"
+                previous_source = BtrfsSubvolume(source.path / name, source.target)
+                previous_destination = BtrfsSubvolume(self.location / name, self.target)
+                previous_source_bootstrap = self._find_snapshot(previous_source)
+                previous_destination_bootstrap = self._find_snapshot(previous_destination)
+                if (
+                    previous_source_bootstrap is not None
+                    or previous_destination_bootstrap is not None
+                ):
+                    source_path, destination_path = previous_source, previous_destination
+                    source_bootstrap = previous_source_bootstrap
+                    destination_bootstrap = previous_destination_bootstrap
+                    break
 
         if source_bootstrap is not None and self._stale(source_bootstrap):
             self._delete((source_bootstrap,))

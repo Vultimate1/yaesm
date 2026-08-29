@@ -101,8 +101,13 @@ def with_runner(driver: BtrfsDriver, runner: RecordingRunner) -> BtrfsDriver:
     return driver
 
 
-def operation() -> BackupOperation:
-    return BackupOperation("example", "manual", datetime(2026, 8, 27, 12, 30))
+def operation(*, previous_backup_names: tuple[str, ...] = ()) -> BackupOperation:
+    return BackupOperation(
+        "example",
+        "manual",
+        datetime(2026, 8, 27, 12, 30),
+        previous_backup_names=previous_backup_names,
+    )
 
 
 def test_name():
@@ -612,7 +617,7 @@ def test_cap_store_reuses_bootstrap(tmp_path):
         runner,
     )
 
-    driver.cap_store(source, operation())
+    driver.cap_store(source, operation(previous_backup_names=("old-example",)))
 
     bootstrap = source.path / ".yaesm-btrfs-bootstrap-example"
     staging = ty.Path(runner.commands[4][-1])
@@ -622,6 +627,33 @@ def test_cap_store_reuses_bootstrap(tmp_path):
             ("btrfs", "receive", str(destination_dir)),
         )
     ]
+    assert all("old-example" not in " ".join(command) for command in runner.commands)
+
+
+@pytest.mark.parametrize(
+    ("previous_names", "returncodes"),
+    [
+        (("old-example",), (1, 1, 1, 0, 0)),
+        (("missing", "old-example"), (1, 1, 1, 1, 1, 0, 0)),
+    ],
+)
+def test_cap_store_reuses_bootstrap_under_previous_backup_name(
+    tmp_path,
+    previous_names,
+    returncodes,
+):
+    runner = RecordingRunner(returncodes)
+    source = BtrfsSubvolume(tmp_path / "source")
+    destination = tmp_path / "destination"
+    driver = with_runner(BtrfsDriver(destination), runner)
+    driver.cap_store(source, operation(previous_backup_names=previous_names))
+
+    bootstrap = source.path / ".yaesm-btrfs-bootstrap-old-example"
+    assert runner.pipelines[0][0][: len(_BTRFS_SEND) + 2] == (
+        *_BTRFS_SEND,
+        "-p",
+        str(bootstrap),
+    )
 
 
 def test_cap_store_refreshes_stale_bootstrap(tmp_path):

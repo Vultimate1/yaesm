@@ -36,6 +36,7 @@ class DestinationDriver(DriverBase):
         super().__init__()
         self.artifacts = tuple(artifacts)
         self.failure = failure
+        self.listed_names: list[str] = []
         self.base: Representation | None = None
         self.source: Representation | None = None
         self.deleted: tuple[bckp.BackupArtifact, ...] | None = None
@@ -61,7 +62,10 @@ class DestinationDriver(DriverBase):
     def cap_list(self, backup_name: str) -> ty.Sequence[bckp.BackupArtifact]:
         if self.failure == "list":
             raise DriverError("list failed")
-        return self.artifacts
+        self.listed_names.append(backup_name)
+        return tuple(
+            artifact for artifact in self.artifacts if artifact.operation.backup_name == backup_name
+        )
 
     def cap_delete(self, artifacts: ty.Sequence[bckp.BackupArtifact]) -> None:
         if self.failure == "delete":
@@ -85,13 +89,14 @@ class ArtifactDriver(DestinationDriver):
 
 class IdentifiedArtifactDriver(ArtifactDriver):
     def artifact_id(self, artifact: bckp.BackupArtifact) -> str:
-        return f"id:{artifact.name}"
+        return f"id:{artifact.stored_name}"
 
 
 class StreamDestinationDriver(DriverBase):
     def __init__(self, artifacts: ty.Sequence[bckp.BackupArtifact] = ()) -> None:
         super().__init__()
         self.artifacts = tuple(artifacts)
+        self.listed_names: list[str] = []
         self.call: tuple[ByteStream, bckp.BackupOperation, Representation | None] | None = None
 
     @classmethod
@@ -112,7 +117,10 @@ class StreamDestinationDriver(DriverBase):
         return bckp.BackupArtifact(operation, source)
 
     def cap_list(self, backup_name: str) -> ty.Sequence[bckp.BackupArtifact]:
-        return self.artifacts
+        self.listed_names.append(backup_name)
+        return tuple(
+            artifact for artifact in self.artifacts if artifact.operation.backup_name == backup_name
+        )
 
 
 def artifact(
@@ -165,6 +173,7 @@ def test_backup_has_composable_settings():
         "drivers": drivers,
         "schedules": schedules,
         "retention_policies": retention_policies,
+        "previous_names": (),
     }
 
 
@@ -184,6 +193,7 @@ def test_backup_operation():
     assert operation.schedule_name == "hourly"
     assert operation.created_at == created_at
     assert operation.source_artifact_id is None
+    assert operation.previous_backup_names == ()
     assert operation.artifact_name == "yaesm-home-hourly.2026_08_27_12:30"
 
 
@@ -256,6 +266,7 @@ def test_backup_artifact():
     artifact = bckp.BackupArtifact(operation, representation)
 
     assert artifact.name == "yaesm-home-hourly.2026_08_22_12:30"
+    assert artifact.stored_name == artifact.name
     assert artifact.operation is operation
     assert artifact.representation is representation
 
@@ -313,6 +324,124 @@ def test_backup_rejects_invalid_name(name):
         bckp.Backup(name, SourceDriver(), DestinationDriver())
 
 
+def test_backup_accepts_previous_names():
+    backup = bckp.Backup(
+        "laptop-home",
+        SourceDriver(),
+        DestinationDriver(),
+        previous_names=("home", "old-home"),
+    )
+
+    assert backup.previous_names == ("home", "old-home")
+    assert backup.names == ("laptop-home", "home", "old-home")
+
+
+@pytest.mark.parametrize("name", ["", "global_settings", "old/home", 1])
+def test_backup_rejects_invalid_previous_name(name):
+    with pytest.raises(YaesmValueError, match="invalid previous backup name"):
+        bckp.Backup(
+            "home",
+            SourceDriver(),
+            DestinationDriver(),
+            previous_names=(name,),
+        )
+
+
+@pytest.mark.parametrize("previous_names", [("home",), ("old", "old")])
+def test_backup_rejects_duplicate_name_history(previous_names):
+    with pytest.raises(YaesmValueError, match="duplicate backup name"):
+        bckp.Backup(
+            "home",
+            SourceDriver(),
+            DestinationDriver(),
+            previous_names=previous_names,
+        )
+
+
+def test_backup_rejects_schedule_name_history_collision():
+    schedules = (
+        Schedule(
+            "nightly",
+            CronSchedule("0 1 * * *"),
+            previous_names=("daily",),
+        ),
+        Schedule("daily", CronSchedule("0 2 * * *")),
+    )
+
+    with pytest.raises(YaesmValueError, match="schedule name 'daily' is used by both"):
+        bckp.Backup("home", SourceDriver(), DestinationDriver(), schedules=schedules)
+
+
+def test_backup_artifacts_normalizes_previous_backup_and_schedule_names():
+    current = artifact("nightly", 13, "laptop-home")
+    previous_backup = artifact("nightly", 12, "home")
+    previous_schedule = artifact("daily", 11, "laptop-home")
+    previous_both = artifact("daily", 10, "home")
+    unknown_schedule = artifact("removed", 9, "home")
+    stored = (current, previous_backup, previous_schedule, previous_both, unknown_schedule)
+    destination = DestinationDriver(tuple(reversed(stored)))
+    backup = bckp.Backup(
+        "laptop-home",
+        SourceDriver(),
+        destination,
+        schedules=(
+            Schedule(
+                "nightly",
+                CronSchedule("0 1 * * *"),
+                previous_names=("daily",),
+            ),
+        ),
+        previous_names=("home",),
+    )
+
+    artifacts = backup.artifacts()
+
+    assert destination.listed_names == ["laptop-home", "home"]
+    assert tuple(item.operation.schedule_name for item in artifacts) == (
+        "nightly",
+        "nightly",
+        "nightly",
+        "nightly",
+        "removed",
+    )
+    assert all(item.operation.backup_name == "laptop-home" for item in artifacts)
+    assert tuple(item.representation for item in artifacts) == tuple(
+        item.representation for item in stored
+    )
+    assert tuple(item.stored_name for item in artifacts) == tuple(item.name for item in stored)
+
+
+def test_backup_artifacts_rejects_duplicate_logical_operation():
+    destination = DestinationDriver(
+        (
+            artifact("nightly", 12, "laptop-home"),
+            artifact("daily", 12, "home"),
+        )
+    )
+    backup = bckp.Backup(
+        "laptop-home",
+        SourceDriver(),
+        destination,
+        schedules=(
+            Schedule(
+                "nightly",
+                CronSchedule("0 1 * * *"),
+                previous_names=("daily",),
+            ),
+        ),
+        previous_names=("home",),
+    )
+
+    with pytest.raises(
+        bckp.BackupError,
+        match=(
+            "backup 'laptop-home' has multiple stored artifacts that resolve to "
+            "'yaesm-laptop-home-nightly.2026_08_27_12:00'"
+        ),
+    ):
+        backup.artifacts()
+
+
 def test_backup_execute_uses_newest_artifact_as_base_and_applies_retention():
     newest = artifact("hourly", 11)
     older = artifact("hourly", 10)
@@ -330,6 +459,36 @@ def test_backup_execute_uses_newest_artifact_as_base_and_applies_retention():
     )
     assert destination.base is newest.representation
     assert destination.deleted == (older,)
+
+
+def test_backup_execute_uses_previous_names_for_incremental_base_and_retention():
+    newest = artifact("daily", 11, "old-home")
+    older = artifact("daily", 10, "old-home")
+    destination = DestinationDriver((newest, older))
+    backup = bckp.Backup(
+        "home",
+        SourceDriver(),
+        destination,
+        schedules=(
+            Schedule(
+                "nightly",
+                CronSchedule("0 1 * * *"),
+                previous_names=("daily",),
+            ),
+        ),
+        retention_policies=(KeepLast(2, "nightly"),),
+        previous_names=("old-home",),
+    )
+
+    result = backup.execute("nightly", datetime(2026, 8, 27, 12))
+
+    assert destination.listed_names == ["home", "old-home"]
+    assert destination.base is newest.representation
+    assert result.operation.previous_backup_names == ("old-home",)
+    assert destination.deleted is not None
+    assert destination.deleted[0].operation.backup_name == "home"
+    assert destination.deleted[0].operation.schedule_name == "nightly"
+    assert destination.deleted[0].representation is older.representation
 
 
 def test_backup_execute_combines_retention_policies():
@@ -432,7 +591,7 @@ def test_backup_execute_does_not_replicate_same_artifact_twice():
         {"local": source_backup},
     )
 
-    assert result is existing
+    assert result == existing
     assert source_driver.export_call is None
     assert destination.call is None
 
@@ -461,6 +620,42 @@ def test_backup_execute_uses_exact_replication_base():
 
     assert result.operation.source_artifact_id == source_driver.artifact_id(current)
     assert source_driver.export_call == (current.representation, wanted.representation)
+
+
+def test_backup_execute_matches_replication_base_recorded_before_rename():
+    previous = artifact("daily", 11, "old-local")
+    current = artifact("daily", 12, "old-local")
+    source_driver = IdentifiedArtifactDriver((current, previous))
+    source_backup = bckp.Backup(
+        "local",
+        SourceDriver(),
+        source_driver,
+        schedules=(
+            Schedule(
+                "hourly",
+                CronSchedule("0 * * * *"),
+                previous_names=("daily",),
+            ),
+        ),
+        previous_names=("old-local",),
+    )
+    previous_destination = bckp.BackupArtifact(
+        bckp.BackupOperation(
+            "offsite",
+            "nightly",
+            previous.operation.created_at,
+            "id:yaesm-old-local-daily.2026_08_27_11:00",
+        ),
+        ByteStream(),
+    )
+    destination = StreamDestinationDriver((previous_destination,))
+    backup = bckp.Backup("offsite", bckp.BackupSource("local"), destination)
+
+    result = backup.execute("nightly", datetime(2026, 8, 27, 13), {"local": source_backup})
+
+    assert source_driver.listed_names == ["local", "old-local"]
+    assert result.operation.source_artifact_id == "id:yaesm-old-local-daily.2026_08_27_12:00"
+    assert source_driver.export_call == (current.representation, previous.representation)
 
 
 def test_backup_execute_uses_full_replication_when_base_is_missing():

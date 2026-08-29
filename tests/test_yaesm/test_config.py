@@ -265,6 +265,135 @@ def test_parse_config_builds_complete_backup():
     assert backup.retention_policies == (KeepLast(7, "daily"),)
 
 
+def test_parse_config_builds_previous_name_lookup():
+    config = parse_config(
+        {
+            "laptop-home": backup_config(
+                previous_names=["home", "old-home"],
+                schedules={
+                    "nightly": {
+                        "previous_names": ["daily", "old-daily"],
+                        "cron": "30 4 * * *",
+                        "retention": {"keep-last": 7},
+                    }
+                },
+            )
+        }
+    )
+    backup = config.backups["laptop-home"]
+
+    assert backup.previous_names == ("home", "old-home")
+    assert backup.schedules == (
+        Schedule(
+            "nightly",
+            CronSchedule("30 4 * * *"),
+            previous_names=("daily", "old-daily"),
+        ),
+    )
+    assert config.backups_by_name == {
+        "laptop-home": backup,
+        "home": backup,
+        "old-home": backup,
+    }
+
+
+@pytest.mark.parametrize(
+    "previous_names",
+    ["home", None, {}, ["global_settings"], ["GLOBAL_SETTINGS"], ["old/home"], [1]],
+)
+def test_parse_config_rejects_invalid_previous_backup_names(previous_names):
+    with pytest.raises(ConfigError, match="previous_names|invalid previous backup name"):
+        parse_config({"home": backup_config(previous_names=previous_names)})
+
+
+@pytest.mark.parametrize("previous_names", [["home"], ["old", "old"]])
+def test_parse_config_rejects_duplicate_backup_name_history(previous_names):
+    with pytest.raises(ConfigError, match="duplicate backup name"):
+        parse_config({"home": backup_config(previous_names=previous_names)})
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {
+            "first": backup_config(previous_names=["second"]),
+            "second": backup_config(),
+        },
+        {
+            "first": backup_config(previous_names=["old"]),
+            "second": backup_config(previous_names=["old"]),
+        },
+    ],
+)
+def test_parse_config_rejects_backup_name_history_collisions(config):
+    with pytest.raises(ConfigError, match="backup name .* is used by both 'first' and 'second'"):
+        parse_config(config)
+
+
+@pytest.mark.parametrize(
+    "previous_names",
+    ["daily", None, {}, ["old/schedule"], [1]],
+)
+def test_parse_config_rejects_invalid_previous_schedule_names(previous_names):
+    schedules = {
+        "daily": {
+            "previous_names": previous_names,
+            "cron": "30 4 * * *",
+            "retention": {"keep-last": 7},
+        }
+    }
+
+    with pytest.raises(ConfigError, match="previous_names|invalid previous schedule name"):
+        parse_config({"home": backup_config(schedules=schedules)})
+
+
+@pytest.mark.parametrize("previous_names", [["daily"], ["old", "old"]])
+def test_parse_config_rejects_duplicate_schedule_name_history(previous_names):
+    schedules = {
+        "daily": {
+            "previous_names": previous_names,
+            "cron": "30 4 * * *",
+            "retention": {"keep-last": 7},
+        }
+    }
+
+    with pytest.raises(ConfigError, match="duplicate schedule name"):
+        parse_config({"home": backup_config(schedules=schedules)})
+
+
+@pytest.mark.parametrize(
+    "schedules",
+    [
+        {
+            "nightly": {
+                "previous_names": ["daily"],
+                "cron": "0 1 * * *",
+                "retention": {"keep-last": 7},
+            },
+            "daily": {
+                "cron": "0 2 * * *",
+                "retention": {"keep-last": 7},
+            },
+        },
+        {
+            "nightly": {
+                "previous_names": ["old-daily"],
+                "cron": "0 1 * * *",
+                "retention": {"keep-last": 7},
+            },
+            "daily": {
+                "previous_names": ["old-daily"],
+                "cron": "0 2 * * *",
+                "retention": {"keep-last": 7},
+            },
+        },
+    ],
+)
+def test_parse_config_rejects_schedule_name_history_collisions(schedules):
+    with pytest.raises(ConfigError, match="schedule name .* is used by both"):
+        parse_config({"home": backup_config(schedules=schedules)})
+
+
 @pytest.mark.parametrize(
     ("driver", "driver_type"),
     [
@@ -572,6 +701,29 @@ def test_parse_config_collects_independent_backup_source_cycles():
 def test_parse_config_rejects_self_as_backup_source():
     with pytest.raises(ConfigError, match="backup source cycle: home -> home"):
         parse_config({"home": backup_config(source={"backup": "home"})})
+
+
+def test_parse_config_rejects_source_cycle_through_previous_name():
+    with pytest.raises(ConfigError, match="backup source cycle: home -> home"):
+        parse_config(
+            {
+                "home": backup_config(
+                    source={"backup": "old-home"},
+                    previous_names=["old-home"],
+                )
+            }
+        )
+
+
+def test_parse_config_accepts_previous_name_as_backup_source():
+    config = parse_config(
+        {
+            "local": backup_config(previous_names=["old-local"]),
+            "offsite": backup_config(source={"backup": "old-local"}),
+        }
+    )
+
+    assert config.backups["offsite"].source == bckp.BackupSource("old-local")
 
 
 def test_parse_config_rejects_requirements_setting():

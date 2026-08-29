@@ -138,7 +138,7 @@ def test_replication_checks_source_backup_destination():
 
     original_source.check.assert_not_called()
     original_destination.check.assert_called_once_with(CheckRole.ARTIFACT_SOURCE)
-    original_destination.check_artifacts.assert_called_once_with("original")
+    original_destination.check_artifacts.assert_called_once_with(original)
     artifact_run.assert_called_once_with()
     destination.check.assert_called_once_with(CheckRole.DESTINATION)
 
@@ -152,15 +152,21 @@ def test_check_selects_requested_backups():
     second_source.check.return_value = ()
     second_destination = mock.Mock()
     second_destination.check.return_value = ()
+    second = Backup(
+        "second",
+        second_source,
+        second_destination,
+        previous_names=("old-second",),
+    )
     config = Config(
         {},
         {
             "first": configured_backup("first", first_source, first_destination),
-            "second": configured_backup("second", second_source, second_destination),
+            "second": second,
         },
     )
 
-    assert CheckSubcommand().main(config, arguments("second", "-q")) == 0
+    assert CheckSubcommand().main(config, arguments("second,old-second", "-q")) == 0
 
     first_source.check.assert_not_called()
     second_source.check.assert_called_once_with(CheckRole.SOURCE)

@@ -43,7 +43,7 @@ def test_scheduler_adds_timer_jobs():
     assert jobs[0].id == "home:hourly:0"
     assert jobs[0].name == "home (hourly)"
     assert isinstance(jobs[0].trigger, CronTrigger)
-    assert jobs[0].args[:4] == (backup, "hourly", config.backups, None)
+    assert jobs[0].args[:4] == (backup, "hourly", config.backups_by_name, None)
     assert jobs[0].args[4] is None
     assert hasattr(jobs[0].args[5], "acquire")
 
@@ -103,9 +103,28 @@ def test_scheduler_enqueues_backup(monkeypatch):
     assert job.id == str(request_id)
     assert job.name == "home (manual)"
     assert isinstance(job.trigger, DateTrigger)
-    assert job.args[:4] == (backup, "manual", config.backups, request_id)
+    assert job.args[:4] == (backup, "manual", config.backups_by_name, request_id)
     assert isinstance(job.args[4], queue.Queue)
     assert hasattr(job.args[5], "acquire")
+
+
+def test_scheduler_accepts_previous_backup_and_schedule_names():
+    schedule = Schedule("manual", OnDemandSchedule(), previous_names=("old-manual",))
+    backup = Backup(
+        "home",
+        mock.Mock(),
+        mock.Mock(),
+        schedules=(schedule,),
+        previous_names=("old-home",),
+    )
+    config = Config({}, {"home": backup})
+    scheduler = Scheduler(config)
+
+    request_id = scheduler.enqueue_backup("old-home", "old-manual")
+
+    job = scheduler._scheduler.get_job(str(request_id))
+    assert job is not None
+    assert job.args[:4] == (backup, "manual", config.backups_by_name, request_id)
 
 
 def test_scheduler_cleans_up_request_when_queueing_fails(monkeypatch):
@@ -131,7 +150,7 @@ def test_scheduler_selects_on_demand_schedule():
 
     job = scheduler._scheduler.get_job(str(request_id))
     assert job is not None
-    assert job.args[:4] == (backup, "manual", config.backups, request_id)
+    assert job.args[:4] == (backup, "manual", config.backups_by_name, request_id)
 
 
 def test_scheduler_requires_on_demand_schedule():
@@ -216,7 +235,7 @@ def test_scheduler_enqueues_from_replaced_config():
 
     job = scheduler._scheduler.get_job(str(request_id))
     assert job is not None
-    assert job.args[:4] == (second_backup, "manual", second.backups, request_id)
+    assert job.args[:4] == (second_backup, "manual", second.backups_by_name, request_id)
 
 
 def test_scheduler_reload_preserves_queued_backup():

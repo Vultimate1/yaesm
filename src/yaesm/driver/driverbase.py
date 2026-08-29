@@ -169,16 +169,16 @@ class DriverBase(abc.ABC):
         )
 
     @ty.final
-    def check_artifacts(self, backup_name: str) -> Check:
+    def check_artifacts(self, backup: bckp.Backup) -> Check:
         """Return a check that stored artifacts exist for a backup."""
-        description = f"stored artifacts exist for backup {backup_name!r}"
+        description = f"stored artifacts exist for backup {backup.name!r}"
 
         def run() -> CheckResult:
             try:
-                artifacts = self.cap_list(backup_name)
+                artifacts = backup.artifacts()
             except YaesmError as error:
                 return CheckResult(description, error.format())
-            failure = None if artifacts else f"no stored artifacts found for backup {backup_name!r}"
+            failure = None if artifacts else f"no stored artifacts found for backup {backup.name!r}"
             return CheckResult(description, failure)
 
         return Check(description, run, self._check_target())
@@ -189,7 +189,7 @@ class DriverBase(abc.ABC):
 
     def artifact_id(self, artifact: bckp.BackupArtifact) -> str:
         """Return the driver's stable identifier for an artifact."""
-        return artifact.name
+        return artifact.stored_name
 
     def source_artifact_id(self, artifact: bckp.BackupArtifact) -> str | None:
         """Return the identifier of the artifact from which this artifact was copied."""
@@ -273,7 +273,7 @@ class DriverBase(abc.ABC):
         self,
         backup_name: str,
     ) -> ty.Sequence[bckp.BackupArtifact[Representation]]:
-        """Return stored artifacts for a backup, newest first."""
+        """Return artifacts owned by this driver for a backup, newest first."""
         raise NotImplementedError(f"{self.name()} driver does not provide the list capability")
 
     @capability("delete", pipeline=False)

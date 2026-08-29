@@ -55,7 +55,7 @@ class Scheduler:
                         self._add_job(
                             backup,
                             schedule.name,
-                            config.backups,
+                            config.backups_by_name,
                             trigger=trigger,
                             job_id=job_id,
                         )
@@ -65,7 +65,7 @@ class Scheduler:
         """Queue a configured backup for immediate execution."""
         with self._lock:
             config = self._config
-            backup = config.backups.get(backup_name)
+            backup = config.backups_by_name.get(backup_name)
             if backup is None:
                 raise SchedulerError(f"unknown backup: {backup_name!r}")
 
@@ -80,12 +80,20 @@ class Scheduler:
                 if len(schedules) > 1:
                     raise SchedulerError(f"backup {backup_name!r} has multiple on-demand schedules")
                 schedule_name = schedules[0].name
-            elif not any(schedule.name == schedule_name for schedule in backup.schedules):
-                raise SchedulerError(f"backup {backup_name!r} has no schedule {schedule_name!r}")
-            elif not any(schedule.name == schedule_name for schedule in schedules):
-                raise SchedulerError(
-                    f"schedule {schedule_name!r} for backup {backup_name!r} is not on-demand"
+            else:
+                schedule = next(
+                    (schedule for schedule in backup.schedules if schedule_name in schedule.names),
+                    None,
                 )
+                if schedule is None:
+                    raise SchedulerError(
+                        f"backup {backup_name!r} has no schedule {schedule_name!r}"
+                    )
+                if schedule not in schedules:
+                    raise SchedulerError(
+                        f"schedule {schedule_name!r} for backup {backup_name!r} is not on-demand"
+                    )
+                schedule_name = schedule.name
 
             request_id = uuid4()
             self._request_messages[request_id] = queue.Queue()
@@ -93,7 +101,7 @@ class Scheduler:
                 self._add_job(
                     backup,
                     schedule_name,
-                    config.backups,
+                    config.backups_by_name,
                     request_id=request_id,
                     job_id=str(request_id),
                 )

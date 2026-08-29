@@ -1,5 +1,6 @@
 """Tests for yaesm.driver.rsyncdriver."""
 
+import hashlib
 import shlex
 import shutil
 from datetime import datetime, timedelta
@@ -26,6 +27,12 @@ _RSYNC_OPTIONS = (
     "--delete",
     "--protect-args",
 )
+_MARKER_PREFIX = ".yaesm-rsync-artifact-"
+
+
+def marker(path: ty.Path) -> ty.Path:
+    digest = hashlib.sha256(path.name.encode()).hexdigest()
+    return path.with_name(f"{_MARKER_PREFIX}{digest}")
 
 
 class RecordingRunner(CommandRunner):
@@ -293,11 +300,12 @@ def test_cap_store_local(tmp_path):
     destination = destination_dir / operation().artifact_name
     assert artifact == BackupArtifact(operation(), RsyncTree(destination))
     assert runner.commands == [
-        (*_RSYNC_OPTIONS, "--checksum", f"{source.path}/", f"{destination}/")
+        (*_RSYNC_OPTIONS, "--checksum", f"{source.path}/", f"{destination}/"),
+        ("touch", str(marker(destination))),
     ]
 
 
-def test_cap_store_does_not_write_replication_metadata(tmp_path):
+def test_cap_store_marks_replicated_artifact(tmp_path):
     runner = RecordingRunner()
     source = PathTree(tmp_path / "source")
     destination_dir = tmp_path / "destination"
@@ -309,6 +317,7 @@ def test_cap_store_does_not_write_replication_metadata(tmp_path):
     assert artifact == BackupArtifact(operation_, RsyncTree(destination))
     assert runner.commands == [
         (*_RSYNC_OPTIONS, f"{source.path}/", f"{destination}/"),
+        ("touch", str(marker(destination))),
     ]
 
 
@@ -354,7 +363,8 @@ def test_cap_store_local_to_remote(tmp_path):
             f"--rsh={shlex.join(('ssh', *target.openssh_options()))}",
             f"{source.path}/",
             f"user@host:{destination}/",
-        )
+        ),
+        target.openssh_command(("touch", marker(destination))),
     ]
 
 
@@ -373,7 +383,8 @@ def test_cap_store_remote_to_local(tmp_path):
             f"--rsh={shlex.join(('ssh', *target.openssh_options()))}",
             f"user@host:{source.path}/",
             f"{destination}/",
-        )
+        ),
+        ("touch", str(marker(destination))),
     ]
 
 
@@ -401,7 +412,8 @@ def test_cap_store_on_same_remote_endpoint(tmp_path):
 
     destination = destination_dir / operation().artifact_name
     assert runner.commands == [
-        destination_target.openssh_command((*_RSYNC_OPTIONS, f"{source.path}/", f"{destination}/"))
+        destination_target.openssh_command((*_RSYNC_OPTIONS, f"{source.path}/", f"{destination}/")),
+        destination_target.openssh_command(("touch", marker(destination))),
     ]
 
 
@@ -428,7 +440,29 @@ def test_cap_store_cleans_up_failure(tmp_path):
         with_runner(RsyncDriver(destination_dir), runner).cap_store(source, operation())
 
     destination = destination_dir / operation().artifact_name
-    assert runner.commands[-1] == ("rm", "-rf", str(destination))
+    assert runner.commands[-1] == (
+        "rm",
+        "-rf",
+        str(destination),
+        str(marker(destination)),
+    )
+
+
+def test_cap_store_cleans_up_marker_failure(tmp_path):
+    runner = RecordingRunner((None, RuntimeError("marker failed"), None))
+    source = PathTree(tmp_path / "source")
+    destination_dir = tmp_path / "destination"
+
+    with pytest.raises(RuntimeError, match="marker failed"):
+        with_runner(RsyncDriver(destination_dir), runner).cap_store(source, operation())
+
+    destination = destination_dir / operation().artifact_name
+    assert runner.commands[-1] == (
+        "rm",
+        "-rf",
+        str(destination),
+        str(marker(destination)),
+    )
 
 
 def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
@@ -439,6 +473,7 @@ def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
         "manual",
         datetime(2026, 8, 27, 12, 31),
     )
+    unmarked = operation(2)
     runner = RecordingRunner(
         stdouts=(
             "\n".join(
@@ -447,6 +482,10 @@ def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
                     str(destination / "unrelated"),
                     str(destination / "yaesm-other-manual.2026_08_27_12:32"),
                     str(destination / newer.artifact_name),
+                    str(destination / unmarked.artifact_name),
+                    str(marker(destination / older.artifact_name)),
+                    str(marker(destination / newer.artifact_name)),
+                    str(marker(destination / "missing")),
                 )
             ),
         )
@@ -466,8 +505,15 @@ def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
             "-path",
             str(destination),
             "-prune",
+            "(",
             "-type",
             "d",
+            "-o",
+            "-type",
+            "f",
+            "-name",
+            f"{_MARKER_PREFIX}*",
+            ")",
             "-print",
         ),
     ]
@@ -488,11 +534,18 @@ def test_cap_list_remote(tmp_path):
                 "-path",
                 destination,
                 "-prune",
+                "(",
                 "-type",
                 "d",
+                "-o",
+                "-type",
+                "f",
+                "-name",
+                f"{_MARKER_PREFIX}*",
+                ")",
                 "-print",
             )
-        )
+        ),
     ]
 
 
@@ -517,7 +570,16 @@ def test_cap_delete_batches_artifacts(tmp_path):
 
     with_runner(RsyncDriver(tmp_path), runner).cap_delete(artifacts)
 
-    assert runner.commands == [("rm", "-rf", str(tmp_path / "one"), str(tmp_path / "two"))]
+    assert runner.commands == [
+        (
+            "rm",
+            "-rf",
+            str(tmp_path / "one"),
+            str(marker(tmp_path / "one")),
+            str(tmp_path / "two"),
+            str(marker(tmp_path / "two")),
+        )
+    ]
 
 
 def test_cap_delete_batches_remote_artifacts(tmp_path):
@@ -531,7 +593,16 @@ def test_cap_delete_batches_remote_artifacts(tmp_path):
     with_runner(RsyncDriver(tmp_path, target), runner).cap_delete(artifacts)
 
     assert runner.commands == [
-        target.openssh_command(("rm", "-rf", tmp_path / "one", tmp_path / "two"))
+        target.openssh_command(
+            (
+                "rm",
+                "-rf",
+                tmp_path / "one",
+                marker(tmp_path / "one"),
+                tmp_path / "two",
+                marker(tmp_path / "two"),
+            )
+        )
     ]
 
 
@@ -606,3 +677,4 @@ def test_rsync_integration(tmp_path):
     driver.cap_delete((first, second))
     assert not first.representation.path.exists()
     assert not second.representation.path.exists()
+    assert not any(destination.iterdir())
