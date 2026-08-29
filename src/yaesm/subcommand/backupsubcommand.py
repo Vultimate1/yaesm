@@ -26,8 +26,9 @@ class BackupSubcommand(SubcommandBase):
                     print(response.get("message", ""), file=sys.stderr)
                 case "result":
                     if response.get("ok") is True:
-                        print(f"backup completed: {arguments.backup}")
                         return 0
+                    if response.get("error_logged") is True:
+                        return 1
                     raise ControlError(str(response.get("error", "backup request failed")))
         raise ControlError("backup request returned no result")
 

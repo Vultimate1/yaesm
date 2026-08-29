@@ -1,5 +1,6 @@
 """Scheduling of configured backups."""
 
+import contextlib
 import logging
 import queue
 import time
@@ -97,7 +98,10 @@ class Scheduler:
                 schedule_name = schedule.name
 
             request_id = uuid4()
-            self._request_messages[request_id] = queue.Queue()
+            messages: queue.Queue[ControlMessage] = queue.Queue()
+            self._request_messages[request_id] = messages
+            with _stream_request_logs(request_id, messages):
+                logger.info("backup %r (%s) queued", backup.name, schedule_name)
             try:
                 self._add_job(
                     backup,
@@ -168,49 +172,69 @@ def _execute_backup(
     messages: queue.Queue[ControlMessage] | None,
     backup_lock: LockType,
 ) -> None:
-    handler = None
-    token = None
     serialized_request_id = None if backup_request_id is None else str(backup_request_id)
-    if backup_request_id is not None and messages is not None:
-        handler = _ControlLogHandler(messages)
-        handler.addFilter(RequestFilter(backup_request_id))
-        logging.getLogger().addHandler(handler)
-        token = request_id.set(backup_request_id)
-
-    backup_token = current_backup.set(f"backup {backup.name!r} ({schedule_name})")
-    try:
-        with backup_lock:
-            logger.info("backup %r (%s) started", backup.name, schedule_name)
-            started = time.monotonic()
-            artifact = backup.execute(schedule_name, datetime.now(), backups)
-            logger.info(
-                "backup %r (%s) completed in %s: %s",
-                backup.name,
-                schedule_name,
-                format_duration(time.monotonic() - started),
-                backup.destination.format_locator(artifact),
+    with _stream_request_logs(backup_request_id, messages):
+        backup_token = current_backup.set(f"backup {backup.name!r} ({schedule_name})")
+        started = None
+        try:
+            if not backup_lock.acquire(blocking=False):
+                logger.info(
+                    "backup %r (%s) waiting for another execution",
+                    backup.name,
+                    schedule_name,
+                )
+                backup_lock.acquire()
+            try:
+                logger.info("backup %r (%s) started", backup.name, schedule_name)
+                started = time.monotonic()
+                artifact = backup.execute(schedule_name, datetime.now(), backups)
+                logger.info(
+                    "backup %r (%s) completed in %s: %s",
+                    backup.name,
+                    schedule_name,
+                    format_duration(time.monotonic() - started),
+                    backup.destination.format_locator(artifact),
+                )
+            finally:
+                backup_lock.release()
+        except BaseException as error:
+            elapsed = (
+                "" if started is None else f" after {format_duration(time.monotonic() - started)}"
             )
-    except BaseException as error:
-        if messages is not None:
-            message = error.format() if isinstance(error, YaesmError) else "internal backup error"
-            messages.put(
-                {
-                    "type": "result",
-                    "ok": False,
-                    "error": message,
-                    "request_id": serialized_request_id,
-                }
-            )
-        raise
-    else:
-        if messages is not None:
-            messages.put({"type": "result", "ok": True, "request_id": serialized_request_id})
-    finally:
-        current_backup.reset(backup_token)
-        if token is not None:
-            request_id.reset(token)
-        if handler is not None:
-            logging.getLogger().removeHandler(handler)
+            if isinstance(error, YaesmError):
+                logger.error(
+                    "backup %r (%s) failed%s: %s",
+                    backup.name,
+                    schedule_name,
+                    elapsed,
+                    error.format(),
+                )
+            else:
+                logger.exception(
+                    "backup %r (%s) failed%s: unexpected error",
+                    backup.name,
+                    schedule_name,
+                    elapsed,
+                )
+            if messages is not None:
+                message = (
+                    error.format() if isinstance(error, YaesmError) else "internal backup error"
+                )
+                messages.put(
+                    {
+                        "type": "result",
+                        "ok": False,
+                        "error": message,
+                        "error_logged": logger.isEnabledFor(logging.ERROR),
+                        "request_id": serialized_request_id,
+                    }
+                )
+            raise
+        else:
+            if messages is not None:
+                messages.put({"type": "result", "ok": True, "request_id": serialized_request_id})
+        finally:
+            current_backup.reset(backup_token)
 
 
 class _ControlLogHandler(logging.Handler):
@@ -221,4 +245,26 @@ class _ControlLogHandler(logging.Handler):
         self.messages = messages
 
     def emit(self, record: logging.LogRecord) -> None:
-        self.messages.put({"type": "log", "message": self.format(record)})
+        self.messages.put({"type": "log", "message": record.getMessage()})
+
+
+@contextlib.contextmanager
+def _stream_request_logs(
+    backup_request_id: UUID | None,
+    messages: queue.Queue[ControlMessage] | None,
+) -> ty.Iterator[None]:
+    """Stream log messages for one control request."""
+    if backup_request_id is None or messages is None:
+        yield
+        return
+
+    handler = _ControlLogHandler(messages)
+    handler.addFilter(RequestFilter(backup_request_id))
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+    token = request_id.set(backup_request_id)
+    try:
+        yield
+    finally:
+        request_id.reset(token)
+        root_logger.removeHandler(handler)

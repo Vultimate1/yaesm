@@ -16,10 +16,35 @@ from yaesm.errors import YaesmError
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONTROL_SOCKET = Path("/run/yaesm/control.sock")
-ControlMessage: ty.TypeAlias = dict[str, object]
-ControlHandler: ty.TypeAlias = ty.Callable[
-    [ty.Mapping[str, object]], ty.Iterable[ty.Mapping[str, object]]
-]
+
+
+class ControlLog(ty.TypedDict):
+    """One streamed log message."""
+
+    type: ty.Literal["log"]
+    message: str
+
+
+class ControlSuccess(ty.TypedDict):
+    """A successful control result."""
+
+    type: ty.Literal["result"]
+    ok: ty.Literal[True]
+    request_id: str | None
+
+
+class ControlFailure(ty.TypedDict):
+    """A failed control result."""
+
+    type: ty.Literal["result"]
+    ok: ty.Literal[False]
+    error: str
+    error_logged: bool
+    request_id: str | None
+
+
+ControlMessage: ty.TypeAlias = ControlLog | ControlSuccess | ControlFailure
+ControlHandler: ty.TypeAlias = ty.Callable[[ty.Mapping[str, object]], ty.Iterable[ControlMessage]]
 
 
 class ControlError(YaesmError):
@@ -44,7 +69,7 @@ def send_request(
                     response = json.loads(data)
                     if not isinstance(response, dict):
                         raise ControlError("control response must be an object")
-                    yield response
+                    yield ty.cast(ControlMessage, response)
                     if response.get("type") == "result":
                         return
     except (OSError, json.JSONDecodeError, UnicodeDecodeError) as error:
@@ -53,7 +78,7 @@ def send_request(
 
 
 class _RequestHandler(socketserver.StreamRequestHandler):
-    def _send(self, message: ty.Mapping[str, object]) -> bool:
+    def _send(self, message: ControlMessage) -> bool:
         try:
             self.wfile.write((json.dumps(message) + "\n").encode())
             self.wfile.flush()
@@ -75,10 +100,26 @@ class _RequestHandler(socketserver.StreamRequestHandler):
                 if not self._send(message) or message.get("type") == "result":
                     return
         except YaesmError as error:
-            self._send({"type": "result", "ok": False, "error": error.format()})
+            self._send(
+                {
+                    "type": "result",
+                    "ok": False,
+                    "error": error.format(),
+                    "error_logged": False,
+                    "request_id": None,
+                }
+            )
         except Exception:
             logger.exception("control request failed")
-            self._send({"type": "result", "ok": False, "error": "internal control error"})
+            self._send(
+                {
+                    "type": "result",
+                    "ok": False,
+                    "error": "internal control error",
+                    "error_logged": False,
+                    "request_id": None,
+                }
+            )
 
 
 class ControlServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):

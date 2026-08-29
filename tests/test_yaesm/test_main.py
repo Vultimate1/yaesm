@@ -12,6 +12,7 @@ from yaesm.config import Config, ConfigError
 from yaesm.errors import YaesmError
 from yaesm.subcommand.backupsubcommand import BackupSubcommand
 from yaesm.subcommand.checksubcommand import CheckSubcommand
+from yaesm.subcommand.runsubcommand import RunSubcommand
 from yaesm.subcommand.subcommandbase import SubcommandBase
 
 
@@ -81,7 +82,12 @@ def test_main_loads_config_and_dispatches(tmp_path, monkeypatch):
     assert configured == [
         (
             ("DEBUG",),
-            {"stderr": False, "logfile": None, "syslog_address": None},
+            {
+                "stderr": False,
+                "message_only_stderr": True,
+                "logfile": None,
+                "syslog_address": None,
+            },
         )
     ]
     assert received["path"] == path
@@ -114,11 +120,24 @@ def test_main_configures_logging_destinations(monkeypatch):
             ("INFO",),
             {
                 "stderr": True,
+                "message_only_stderr": True,
                 "logfile": Path("/tmp/yaesm.log"),
                 "syslog_address": "/var/run/log",
             },
         )
     ]
+
+
+def test_main_keeps_log_metadata_for_daemon(monkeypatch):
+    configured = []
+    monkeypatch.setattr(main_module, "parse_config", lambda _path: Config({}, {}))
+    monkeypatch.setattr(
+        main_module, "configure_logging", lambda *args, **kwargs: configured.append((args, kwargs))
+    )
+    monkeypatch.setattr(RunSubcommand, "main", lambda *_arguments: 0)
+
+    assert main_module.main(["run"]) == 0
+    assert configured[0][1]["message_only_stderr"] is False
 
 
 def test_main_uses_default_config_path(monkeypatch):

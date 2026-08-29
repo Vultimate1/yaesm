@@ -71,6 +71,13 @@ def test_run_captures_output():
     assert result.returncodes == (0,)
 
 
+def test_run_discards_uncaptured_output(capfd):
+    result = CommandRunner().run([sys.executable, "-c", "print('unmanaged output')"])
+
+    assert result.stdout is None
+    assert capfd.readouterr().out == ""
+
+
 def test_pipeline_streams_between_commands():
     result = CommandRunner().pipeline(
         [

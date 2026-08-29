@@ -42,6 +42,7 @@ def configure(
     level: int | str = logging.INFO,
     *,
     stderr: bool = False,
+    message_only_stderr: bool = False,
     logfile: Path | str | None = None,
     syslog_address: str | None = None,
 ) -> None:
@@ -50,7 +51,10 @@ def configure(
         stderr = True
     handlers: list[logging.Handler] = []
     if stderr:
-        handlers.append(logging.StreamHandler())
+        handler = logging.StreamHandler()
+        if message_only_stderr:
+            handler.setFormatter(logging.Formatter("%(message)s"))
+        handlers.append(handler)
     if logfile:
         handlers.append(logging.FileHandler(logfile, encoding="utf-8"))
     if syslog_address:

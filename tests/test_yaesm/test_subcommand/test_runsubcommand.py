@@ -121,7 +121,7 @@ def test_control_request_reloads_config(monkeypatch):
     messages = RunSubcommand._control_request(scheduler, path, {"command": "reload-config"})
 
     reload_config.assert_called_once_with(scheduler, path)
-    assert messages == ({"type": "result", "ok": True},)
+    assert messages == ({"type": "result", "ok": True, "request_id": None},)
 
 
 def test_control_request_reports_reload_error(monkeypatch):

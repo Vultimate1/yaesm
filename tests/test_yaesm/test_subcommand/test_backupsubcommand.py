@@ -58,18 +58,50 @@ def test_backup_sends_request(monkeypatch, capsys):
         DEFAULT_CONTROL_SOCKET,
         {"command": "backup", "backup": "home", "schedule": "manual"},
     )
-    assert capsys.readouterr() == ("backup completed: home\n", "starting\n")
+    assert capsys.readouterr() == ("", "starting\n")
 
 
 def test_backup_reports_failure(monkeypatch):
     monkeypatch.setattr(
         backup_module,
         "send_request",
-        lambda _path, _request: iter(({"type": "result", "ok": False, "error": "backup failed"},)),
+        lambda _path, _request: iter(
+            (
+                {
+                    "type": "result",
+                    "ok": False,
+                    "error": "backup failed",
+                    "error_logged": False,
+                    "request_id": None,
+                },
+            )
+        ),
     )
 
     with pytest.raises(ControlError, match="backup failed"):
         BackupSubcommand().main(Config({}, {}), arguments("home"))
+
+
+def test_backup_does_not_repeat_streamed_failure(monkeypatch, capsys):
+    monkeypatch.setattr(
+        backup_module,
+        "send_request",
+        lambda _path, _request: iter(
+            (
+                {"type": "log", "message": "backup failed after 5s: copy failed"},
+                {
+                    "type": "result",
+                    "ok": False,
+                    "error": "copy failed",
+                    "error_logged": True,
+                    "request_id": str(_REQUEST_ID),
+                },
+            )
+        ),
+    )
+
+    assert BackupSubcommand().main(Config({}, {}), arguments("home")) == 1
+    assert capsys.readouterr() == ("", "backup failed after 5s: copy failed\n")
 
 
 def test_backup_requires_result(monkeypatch):

@@ -94,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(
         arguments.log_level,
         stderr=arguments.log_stderr,
+        message_only_stderr=arguments.subcommand != "run",
         logfile=arguments.log_file,
         syslog_address=arguments.log_syslog,
     )

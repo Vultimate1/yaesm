@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaesm.ty as ty
 from yaesm.config import Config, ConfigError, parse_config
-from yaesm.control import DEFAULT_CONTROL_SOCKET, ControlError, ControlServer
+from yaesm.control import DEFAULT_CONTROL_SOCKET, ControlError, ControlMessage, ControlServer
 from yaesm.errors import YaesmError
 from yaesm.scheduler import Scheduler
 from yaesm.subcommand.subcommandbase import SubcommandBase
@@ -28,7 +28,7 @@ class RunSubcommand(SubcommandBase):
         scheduler: Scheduler,
         config_path: Path,
         request: ty.Mapping[str, object],
-    ) -> ty.Iterable[ty.Mapping[str, object]]:
+    ) -> ty.Iterable[ControlMessage]:
         command = request.get("command")
         match command:
             case "backup":
@@ -48,7 +48,8 @@ class RunSubcommand(SubcommandBase):
         if command == "reload-config":
             if error := RunSubcommand._reload_config(scheduler, config_path):
                 raise ControlError(error)
-            return ({"type": "result", "ok": True},)
+            result: ControlMessage = {"type": "result", "ok": True, "request_id": None}
+            return (result,)
 
         backup_name = request.get("backup")
         if not isinstance(backup_name, str) or not backup_name:

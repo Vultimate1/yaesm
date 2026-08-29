@@ -44,7 +44,7 @@ def test_control_server_streams_messages(tmp_path, caplog):
         requests.append(request)
         return (
             {"type": "log", "message": "starting backup"},
-            {"type": "result", "ok": True},
+            {"type": "result", "ok": True, "request_id": None},
         )
 
     with running_server(path, handler):
@@ -54,7 +54,7 @@ def test_control_server_streams_messages(tmp_path, caplog):
     assert requests == [{"command": "backup"}]
     assert responses == [
         {"type": "log", "message": "starting backup"},
-        {"type": "result", "ok": True},
+        {"type": "result", "ok": True, "request_id": None},
     ]
     assert f"control socket listening at {path}" in caplog.messages
     assert not path.exists()
@@ -68,7 +68,15 @@ def test_control_server_reports_handler_error(tmp_path):
     with running_server(path, handler):
         responses = list(send_request(path, {}))
 
-    assert responses == [{"type": "result", "ok": False, "error": "request failed"}]
+    assert responses == [
+        {
+            "type": "result",
+            "ok": False,
+            "error": "request failed",
+            "error_logged": False,
+            "request_id": None,
+        }
+    ]
 
 
 def test_control_server_hides_unexpected_handler_error(tmp_path, caplog):
@@ -79,7 +87,15 @@ def test_control_server_hides_unexpected_handler_error(tmp_path, caplog):
     with running_server(path, handler):
         responses = list(send_request(path, {}))
 
-    assert responses == [{"type": "result", "ok": False, "error": "internal control error"}]
+    assert responses == [
+        {
+            "type": "result",
+            "ok": False,
+            "error": "internal control error",
+            "error_logged": False,
+            "request_id": None,
+        }
+    ]
     assert "control request failed" in caplog.messages
 
 

@@ -116,7 +116,7 @@ class CommandRunner:
                         stdout=(
                             subprocess.PIPE
                             if index < len(normalized) - 1 or capture_output
-                            else None
+                            else subprocess.DEVNULL
                         ),
                         stderr=stderr_files[index],
                     )
