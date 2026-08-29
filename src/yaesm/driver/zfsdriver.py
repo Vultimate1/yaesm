@@ -392,7 +392,7 @@ class ZFSDriver(DriverBase):
 
     def artifact_id(self, artifact: bckp.BackupArtifact) -> str:
         snapshot = ty.cast(ZFSSnapshot, artifact.representation)
-        return str(snapshot.guid) if snapshot.guid is not None else super().artifact_id(artifact)
+        return str(self._snapshot_guid(snapshot))
 
     def _record_artifact(
         self,

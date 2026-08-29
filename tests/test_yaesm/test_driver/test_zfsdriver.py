@@ -843,6 +843,20 @@ def test_cap_list_returns_matching_artifacts_newest_first():
     assert runner.checks == [True]
 
 
+def test_artifact_id_is_stable_before_and_after_listing():
+    runner = RecordingRunner(stdouts=("42\n",))
+    snapshot = ZFSSnapshot("backup/home", operation().artifact_name)
+    driver = with_runner(ZFSDriver("backup/home"), runner)
+
+    assert driver.artifact_id(BackupArtifact(operation(), snapshot)) == "42"
+    assert driver.artifact_id(
+        BackupArtifact(operation(), dataclasses.replace(snapshot, guid=42))
+    ) == "42"
+    assert runner.commands == [
+        ("zfs", "get", "-H", "-o", "value", "guid", snapshot.name),
+    ]
+
+
 def test_cap_list_propagates_command_failure():
     runner = RecordingRunner((1,))
 
