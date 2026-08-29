@@ -170,7 +170,7 @@ class Backup:
         base = None
         if artifacts:
             newest = artifacts[0]
-            if source_driver is not None:
+            if source_artifact is not None:
                 source_base_id = self.destination.source_artifact_id(newest)
                 source_base = next(
                     (
