@@ -189,14 +189,14 @@ def configured_backup(
 def test_backup_has_composable_settings():
     source = SourceDriver()
     destination = DestinationDriver()
-    drivers = (ArtifactDriver(),)
+    transforms = (ArtifactDriver(),)
     schedules = (Schedule("hourly", CronSchedule("0 * * * *")),)
     retention_policies = (KeepLast(1),)
     backup = bckp.Backup(
         "home",
         source,
         destination,
-        drivers,
+        transforms,
         schedules,
         retention_policies,
     )
@@ -205,7 +205,7 @@ def test_backup_has_composable_settings():
         "name": "home",
         "source": source,
         "destination": destination,
-        "drivers": drivers,
+        "transforms": transforms,
         "schedules": schedules,
         "retention_policies": retention_policies,
         "previous_names": (),
@@ -454,7 +454,7 @@ def test_backup_artifacts_normalizes_previous_backup_and_schedule_names():
     assert tuple(item.stored_name for item in artifacts) == tuple(item.name for item in stored)
 
 
-def test_backup_artifact_history_is_independent_of_configured_drivers():
+def test_backup_artifact_history_is_independent_of_configured_transforms():
     stored = artifact("hourly", 12)
     destination = DestinationDriver((stored,))
 
@@ -463,7 +463,7 @@ def test_backup_artifact_history_is_independent_of_configured_drivers():
         "home",
         SourceDriver(),
         destination,
-        drivers=(ArtifactDriver(),),
+        transforms=(ArtifactDriver(),),
     )
 
     assert before.artifacts() == (stored,)

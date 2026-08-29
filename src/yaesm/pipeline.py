@@ -45,7 +45,7 @@ class IncrementalBase:
 
 @dataclasses.dataclass(frozen=True, init=False)
 class Pipeline:
-    """A resolved sequence using every configured driver in order."""
+    """A resolved sequence using every configured transform in order."""
 
     source_driver: DriverBase
     destination: DriverBase
@@ -56,11 +56,11 @@ class Pipeline:
         self,
         source_driver: DriverBase,
         destination: DriverBase,
-        drivers: ty.Sequence[DriverBase] = (),
+        transforms: ty.Sequence[DriverBase] = (),
         *,
         source_artifact: BackupArtifact | None = None,
     ) -> None:
-        steps = _resolve(source_driver, destination, drivers, source_artifact)
+        steps = _resolve(source_driver, destination, transforms, source_artifact)
         for step in steps:
             if (
                 step.driver.capability_metadata(step.capability).temporary
@@ -157,7 +157,7 @@ class Pipeline:
 def _resolve(
     source_driver: DriverBase,
     destination: DriverBase,
-    drivers: ty.Sequence[DriverBase],
+    transforms: ty.Sequence[DriverBase],
     source_artifact: BackupArtifact | None,
 ) -> tuple[PipelineStep, ...]:
     storage_steps = _storage_steps(destination)
@@ -186,8 +186,8 @@ def _resolve(
         steps = ()
         used = frozenset()
 
-    available = (source_driver, *drivers, destination)
-    configured_indexes = {id(driver): index for index, driver in enumerate(drivers)}
+    available = (source_driver, *transforms, destination)
+    transform_indexes = {id(transform): index for index, transform in enumerate(transforms)}
 
     queue: collections.deque[
         tuple[
@@ -220,7 +220,7 @@ def _resolve(
     ) = None
 
     while queue:
-        current_type, properties, steps, used, driver_index = queue.popleft()
+        current_type, properties, steps, used, transform_index = queue.popleft()
         for driver in available:
             for capability in sorted(driver.pipeline_capabilities() - {"source"}):
                 step = PipelineStep(driver, capability)
@@ -229,11 +229,17 @@ def _resolve(
                 if step_id in used or not issubclass(current_type, _input_type(step)):
                     continue
 
-                configured_index = configured_indexes.get(id(driver))
-                if configured_index not in (None, driver_index - 1, driver_index):
+                configured_transform_index = transform_indexes.get(id(driver))
+                if configured_transform_index not in (
+                    None,
+                    transform_index - 1,
+                    transform_index,
+                ):
                     continue
-                next_driver_index = (
-                    driver_index + 1 if configured_index == driver_index else driver_index
+                next_transform_index = (
+                    transform_index + 1
+                    if configured_transform_index == transform_index
+                    else transform_index
                 )
 
                 output_type = _output_type(step)
@@ -243,12 +249,12 @@ def _resolve(
                     missing = (metadata.requires - properties) | (
                         required_properties - next_properties
                     )
-                    if not missing and next_driver_index == len(drivers):
+                    if not missing and next_transform_index == len(transforms):
                         return next_steps
-                    rejected = (next_driver_index, missing, next_steps)
-                    if rejected_route is None or len(drivers) - next_driver_index + len(
+                    rejected = (next_transform_index, missing, next_steps)
+                    if rejected_route is None or len(transforms) - next_transform_index + len(
                         missing
-                    ) < len(drivers) - rejected_route[0] + len(rejected_route[1]):
+                    ) < len(transforms) - rejected_route[0] + len(rejected_route[1]):
                         rejected_route = rejected
                     continue
                 if not metadata.requires <= properties:
@@ -260,15 +266,15 @@ def _resolve(
                             next_properties,
                             next_steps,
                             used | {step_id},
-                            next_driver_index,
+                            next_transform_index,
                         )
                     )
-                    if next_driver_index == len(drivers) and complete_route is None:
+                    if next_transform_index == len(transforms) and complete_route is None:
                         complete_route = (output_type, next_properties, next_steps)
                     if len(next_steps) > len(furthest[2]):
                         furthest = (output_type, next_properties, next_steps)
 
-    if rejected_route is not None and rejected_route[0] == len(drivers):
+    if rejected_route is not None and rejected_route[0] == len(transforms):
         _, missing, steps = rejected_route
         raise PipelineError(
             "cannot build backup pipeline:\n"
@@ -278,12 +284,12 @@ def _resolve(
     if complete_route is not None:
         raise _incompatible_pipeline_error(complete_route, storage_steps)
     if rejected_route is not None:
-        next_driver_index, _, steps = rejected_route
+        next_transform_index, _, steps = rejected_route
         raise PipelineError(
             "cannot build backup pipeline:\n"
             f"  compatible route: {_format_steps(steps)}\n"
-            f"  next configured driver cannot be used: "
-            f"{drivers[next_driver_index].name()}"
+            f"  next configured transform cannot be used: "
+            f"{transforms[next_transform_index].name()}"
         )
 
     raise _incompatible_pipeline_error(furthest, storage_steps)

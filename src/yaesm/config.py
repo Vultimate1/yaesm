@@ -143,7 +143,7 @@ def _parse_backup(
 
     messages = []
     required = {"source", "destination", "schedules"}
-    allowed = required | {"drivers", "previous_names", "ssh"}
+    allowed = required | {"previous_names", "ssh", "transforms"}
     if missing := sorted(required - value.keys()):
         messages.append(f"missing required settings: {', '.join(missing)}")
     if unknown := sorted(value.keys() - allowed, key=str):
@@ -188,10 +188,10 @@ def _parse_backup(
             _collect_messages(messages, error)
 
     try:
-        drivers = _parse_drivers(value.get("drivers", []), global_settings, ssh)
+        transforms = _parse_transforms(value.get("transforms", []), global_settings, ssh)
     except YaesmError as error:
         _collect_messages(messages, error)
-        drivers = ()
+        transforms = ()
 
     schedules = ()
     retention = ()
@@ -208,14 +208,14 @@ def _parse_backup(
         name,
         source,
         destination,
-        drivers,
+        transforms,
         schedules,
         retention,
         previous_names=previous_names,
     )
 
     if isinstance(source, DriverBase):
-        Pipeline(source, destination, drivers)
+        Pipeline(source, destination, transforms)
     return backup
 
 
@@ -232,23 +232,23 @@ def _parse_source(
     return _parse_driver(value, "source", global_settings, ssh)
 
 
-def _parse_drivers(
+def _parse_transforms(
     value: object,
     global_settings: GlobalSettings,
     ssh: SSHTarget | None,
 ) -> tuple[DriverBase, ...]:
     if not isinstance(value, list):
-        raise ConfigError("drivers must be a list")
-    drivers = []
+        raise ConfigError("transforms must be a list")
+    transforms = []
     messages = []
     for index, definition in enumerate(value, start=1):
         try:
-            drivers.append(_parse_driver(definition, f"driver {index}", global_settings, ssh))
+            transforms.append(_parse_driver(definition, f"transform {index}", global_settings, ssh))
         except YaesmError as error:
             _collect_messages(messages, error)
     if messages:
         raise ConfigError(messages)
-    return tuple(drivers)
+    return tuple(transforms)
 
 
 def _parse_driver(
@@ -320,7 +320,7 @@ def _validate_backup_sources(
                 backup_ssh = next(
                     (
                         driver.ssh
-                        for driver in (backups[name].destination, *backups[name].drivers)
+                        for driver in (backups[name].destination, *backups[name].transforms)
                         if driver.ssh is not None
                     ),
                     None,

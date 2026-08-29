@@ -95,7 +95,11 @@ class CheckSubcommand(SubcommandBase):
             )
         return (
             *source_checks,
-            *(check for driver in backup.drivers for check in driver.check(CheckRole.TRANSFORM)),
+            *(
+                check
+                for transform in backup.transforms
+                for check in transform.check(CheckRole.TRANSFORM)
+            ),
             *backup.destination.check(CheckRole.DESTINATION),
         )
 

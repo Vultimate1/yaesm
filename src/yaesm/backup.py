@@ -107,7 +107,7 @@ class Backup:
     name: str
     source: DriverBase | BackupSource
     destination: DriverBase
-    drivers: tuple[DriverBase, ...] = ()
+    transforms: tuple[DriverBase, ...] = ()
     schedules: tuple[Schedule, ...] = ()
     retention_policies: tuple[RetentionPolicyBase, ...] = ()
     previous_names: tuple[str, ...] = ()
@@ -118,10 +118,14 @@ class Backup:
         if not backup_name_valid(self.name):
             raise YaesmValueError(f"invalid backup name: {self.name!r}")
 
-        drivers = (self.destination, *self.drivers)
+        configured_drivers = (self.destination, *self.transforms)
         if not isinstance(self.source, BackupSource):
-            drivers = (self.source, *drivers)
-        ssh = {driver.ssh for driver in drivers if isinstance(driver, DriverBase) and driver.ssh}
+            configured_drivers = (self.source, *configured_drivers)
+        ssh = {
+            driver.ssh
+            for driver in configured_drivers
+            if isinstance(driver, DriverBase) and driver.ssh
+        }
         if len(ssh) > 1:
             raise YaesmValueError(f"backup {self.name!r} uses more than one SSH configuration")
 
@@ -225,7 +229,7 @@ class Backup:
         pipeline = Pipeline(
             source_driver,
             self.destination,
-            self.drivers,
+            self.transforms,
             source_artifact=source_artifact,
         )
         try:

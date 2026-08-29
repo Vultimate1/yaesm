@@ -98,18 +98,18 @@ _TRANSFORMS = st.lists(
 
 @st.composite
 def valid_backup_definitions(draw):
-    drivers = draw(_TRANSFORMS)
-    backend = draw(st.sampled_from(("btrfs", "rsync") if drivers else ("btrfs", "rsync", "zfs")))
+    transforms = draw(_TRANSFORMS)
+    backend = draw(st.sampled_from(("btrfs", "rsync") if transforms else ("btrfs", "rsync", "zfs")))
     if backend == "zfs":
         source = {"zfs": "source/data"}
         destination = {"zfs": "destination/backups"}
     else:
         source = {backend: {"location": "/source"}}
-        destination = {"tar" if drivers else backend: {"location": "/destination"}}
+        destination = {"tar" if transforms else backend: {"location": "/destination"}}
     return backup_config(
         source=source,
         destination=destination,
-        drivers=drivers,
+        transforms=transforms,
         schedules=draw(_SCHEDULES),
     )
 
@@ -134,7 +134,7 @@ _INVALID_MUTATIONS = st.sampled_from(
         "missing-source",
         "unknown-source",
         "unknown-destination",
-        "invalid-drivers",
+        "invalid-transforms",
         "invalid-schedules",
         "unknown-setting",
     )
@@ -152,9 +152,9 @@ def invalidate_backup(config, mutation):
         case "unknown-destination":
             config["destination"] = {"unknown": {}}
             return "destination uses unknown driver 'unknown'"
-        case "invalid-drivers":
-            config["drivers"] = {}
-            return "drivers must be a list"
+        case "invalid-transforms":
+            config["transforms"] = {}
+            return "transforms must be a list"
         case "invalid-schedules":
             config["schedules"] = []
             return "schedules must be a mapping"
@@ -228,7 +228,7 @@ def test_parse_config_builds_complete_backup():
                     "remote": True,
                 }
             },
-            drivers=[
+            transforms=[
                 {"zstd": {"level": 7, "remote": True}},
                 {
                     "gpg": {
@@ -258,12 +258,12 @@ def test_parse_config_builds_complete_backup():
     assert isinstance(backup.destination, TarDriver)
     assert backup.destination.location == Path("/backups")
     assert backup.destination.ssh is backup.source.ssh
-    assert isinstance(backup.drivers[0], ZstdDriver)
-    assert backup.drivers[0].level == 7
-    assert backup.drivers[0].ssh is backup.source.ssh
-    assert isinstance(backup.drivers[1], GPGDriver)
-    assert backup.drivers[1].public_key == Path("/root/backup-key.asc")
-    assert backup.drivers[1].ssh is backup.source.ssh
+    assert isinstance(backup.transforms[0], ZstdDriver)
+    assert backup.transforms[0].level == 7
+    assert backup.transforms[0].ssh is backup.source.ssh
+    assert isinstance(backup.transforms[1], GPGDriver)
+    assert backup.transforms[1].public_key == Path("/root/backup-key.asc")
+    assert backup.transforms[1].ssh is backup.source.ssh
     assert backup.schedules == (Schedule("daily", CronSchedule("30 4 * * *")),)
     assert backup.retention_policies == (KeepLast(7, "daily"),)
 
@@ -425,7 +425,7 @@ def test_parse_config_builds_encrypted_tar_archive_pipeline():
                         "one_file_system": False,
                     }
                 },
-                drivers=[{"gpg": "/public-key.asc"}],
+                transforms=[{"gpg": "/public-key.asc"}],
             )
         }
     ).backups["home"]
@@ -436,7 +436,7 @@ def test_parse_config_builds_encrypted_tar_archive_pipeline():
     assert not backup.destination.one_file_system
     assert tuple(
         (step.driver.name(), step.capability)
-        for step in Pipeline(backup.source, backup.destination, backup.drivers).steps
+        for step in Pipeline(backup.source, backup.destination, backup.transforms).steps
     ) == (
         ("rsync", "source"),
         ("tar", "export"),
@@ -478,7 +478,7 @@ def test_parse_config_accepts_global_settings():
         },
         "home": backup_config(
             destination={"tar": {"location": "/destination"}},
-            drivers=[{"zstd": {}}],
+            transforms=[{"zstd": {}}],
         ),
     }
 
@@ -490,7 +490,7 @@ def test_parse_config_accepts_global_settings():
     assert tuple(config.backups) == ("home",)
     assert backup.source.global_settings is config.global_settings
     assert backup.destination.global_settings is config.global_settings
-    assert backup.drivers[0].global_settings is config.global_settings
+    assert backup.transforms[0].global_settings is config.global_settings
 
 
 def test_parse_config_rejects_nonmapping_global_settings():
@@ -517,7 +517,7 @@ def test_parse_config_collects_independent_errors():
         ),
         "second": backup_config(
             destination={"unknown": {}},
-            drivers={},
+            transforms={},
         ),
     }
 
@@ -529,7 +529,7 @@ def test_parse_config_collects_independent_errors():
         "backup 'first': unknown settings: unexpected",
         "backup 'first': source uses unknown driver 'unknown'",
         "backup 'second': destination uses unknown driver 'unknown'",
-        "backup 'second': drivers must be a list",
+        "backup 'second': transforms must be a list",
     )
     assert error.value.format() == (
         "configuration errors:\n"
@@ -537,7 +537,7 @@ def test_parse_config_collects_independent_errors():
         "  - backup 'first': unknown settings: unexpected\n"
         "  - backup 'first': source uses unknown driver 'unknown'\n"
         "  - backup 'second': destination uses unknown driver 'unknown'\n"
-        "  - backup 'second': drivers must be a list"
+        "  - backup 'second': transforms must be a list"
     )
 
 
@@ -605,11 +605,11 @@ def test_parse_config_rejects_unknown_setting(setting):
         ),
         ("source", {"unknown": {}}, "source uses unknown driver 'unknown'"),
         ("destination", [], "destination must select one driver"),
-        ("drivers", {}, "drivers must be a list"),
+        ("transforms", {}, "transforms must be a list"),
         (
-            "drivers",
+            "transforms",
             [{"zstd": {"level": 20}}],
-            "driver 1 has invalid zstd configuration",
+            "transform 1 has invalid zstd configuration",
         ),
     ],
 )
@@ -655,7 +655,7 @@ def test_parse_config_rejects_invalid_ssh_target(ssh):
     [
         ("source", {"btrfs": {"location": "/source", "remote": True}}),
         ("destination", {"btrfs": {"location": "/destination", "remote": True}}),
-        ("drivers", [{"zstd": {"remote": True}}]),
+        ("transforms", [{"zstd": {"remote": True}}]),
     ],
 )
 def test_parse_config_rejects_remote_driver_without_ssh(setting, value):
@@ -817,6 +817,11 @@ def test_parse_config_rejects_requirements_setting():
         parse_config({"home": backup_config(requirements=["encrypted"])})
 
 
+def test_parse_config_rejects_drivers_setting():
+    with pytest.raises(ConfigError, match="unknown settings: drivers"):
+        parse_config({"home": backup_config(drivers=[])})
+
+
 def test_parse_config_rejects_incompatible_pipeline():
     with pytest.raises(ConfigError, match="cannot build backup pipeline"):
         parse_config(
@@ -844,7 +849,7 @@ def test_parse_config_rejects_driver_without_destination_capabilities():
 
 def test_parse_config_rejects_driver_incompatible_with_destination():
     with pytest.raises(ConfigError, match="last usable route:.*gpg.encrypt"):
-        parse_config({"home": backup_config(drivers=[{"gpg": "/key.asc"}])})
+        parse_config({"home": backup_config(transforms=[{"gpg": "/key.asc"}])})
 
 
 def test_parse_config_reads_yaml_file(tmp_path):

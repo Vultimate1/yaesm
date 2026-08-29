@@ -406,7 +406,7 @@ def test_configured_remote_pipeline_uses_one_ssh_command():
                     "identity_file": "/key",
                 },
                 "source": {"btrfs": {"location": "/source", "remote": True}},
-                "drivers": [
+                "transforms": [
                     {"zstd": {"remote": True}},
                     {"gpg": {"public_key": "/public-key.asc", "remote": True}},
                 ],
@@ -423,8 +423,8 @@ def test_configured_remote_pipeline_uses_one_ssh_command():
     backup = config.backups["home"]
     assert isinstance(backup.source, BtrfsDriver)
     assert isinstance(backup.destination, TarDriver)
-    assert isinstance(backup.drivers[0], ZstdDriver)
-    assert isinstance(backup.drivers[1], GPGDriver)
+    assert isinstance(backup.transforms[0], ZstdDriver)
+    assert isinstance(backup.transforms[1], GPGDriver)
     ssh = backup.source.ssh
     assert ssh is not None
 
@@ -448,7 +448,7 @@ def test_configured_remote_pipeline_uses_one_ssh_command():
     backup.destination.runner.pipeline.side_effect = pipeline
     backup.destination.runner.run.return_value = CommandResult(None, "", (0,))
 
-    Pipeline(backup.source, backup.destination, backup.drivers).execute(
+    Pipeline(backup.source, backup.destination, backup.transforms).execute(
         BackupOperation("home", "manual", datetime(2026, 8, 29, 12))
     )
 
@@ -642,7 +642,7 @@ def test_pipeline_rejects_unused_driver():
     assert str(error.value) == (
         "cannot build backup pipeline:\n"
         "  compatible route: source.source -> export.export -> destination.import\n"
-        "  next configured driver cannot be used: empty"
+        "  next configured transform cannot be used: empty"
     )
 
 
@@ -713,5 +713,5 @@ def test_pipeline_rejects_incompatible_configured_driver_order():
     assert str(error.value) == (
         "cannot build backup pipeline:\n"
         "  compatible route: source.source -> export.export -> destination.import\n"
-        "  next configured driver cannot be used: encryption"
+        "  next configured transform cannot be used: encryption"
     )

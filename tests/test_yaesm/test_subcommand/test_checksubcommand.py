@@ -24,9 +24,9 @@ def configured_backup(
     name: str,
     source,
     destination,
-    drivers=(),
+    transforms=(),
 ) -> Backup:
-    return Backup(name, source, destination, drivers)
+    return Backup(name, source, destination, transforms)
 
 
 def deferred_result(
