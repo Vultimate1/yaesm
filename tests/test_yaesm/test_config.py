@@ -93,14 +93,7 @@ _PATHS = st.sampled_from(("/source", "/home", "/srv/data", "/srv/backup data"))
 _DATASETS = st.sampled_from(("tank/source", "tank/home", "backup/archive"))
 _BTRFS_CONFIGS = st.one_of(
     _PATHS,
-    st.builds(
-        lambda location, refresh: {
-            "location": location,
-            "bootstrap_refresh_days": refresh,
-        },
-        _PATHS,
-        st.integers(min_value=0, max_value=90),
-    ),
+    st.builds(lambda location: {"location": location}, _PATHS),
 )
 _RSYNC_CONFIGS = st.one_of(
     _PATHS,

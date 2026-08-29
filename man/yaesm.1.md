@@ -421,12 +421,6 @@ The **btrfs** backend accepts the shared path settings above. The source and
 destination must be on btrfs filesystems, and the `btrfs` command must be
 available wherever yaesm operates on them.
 
-**btrfs_bootstrap_refresh**
-
-Optional positive integer specifying the maximum age, in days, of the
-bootstrap snapshot used for incremental transfers. A stale bootstrap is
-recreated without removing existing backups.
-
 ## rsync
 
 The **rsync** backend accepts the shared path settings above. The `rsync`

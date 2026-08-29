@@ -52,17 +52,11 @@ class BtrfsDriver(DriverBase):
         self,
         location: ty.Path,
         ssh: SSHTarget | None = None,
-        bootstrap_refresh_days: int = 21,
         *,
         global_settings: GlobalSettings | None = None,
     ) -> None:
         super().__init__(global_settings, ssh=ssh)
-        if bootstrap_refresh_days < 0:
-            raise YaesmValueError(
-                f"bootstrap_refresh_days must be at least 0, got {bootstrap_refresh_days}"
-            )
         self.location = Path(location)
-        self.bootstrap_refresh_days = bootstrap_refresh_days or None
 
     @classmethod
     def name(cls) -> str:
@@ -78,19 +72,7 @@ class BtrfsDriver(DriverBase):
                 raise vlp.Invalid("location must be an absolute path")
             return path
 
-        def refresh_days(value: object) -> int:
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise vlp.Invalid("bootstrap_refresh_days must be an integer")
-            if value < 0:
-                raise vlp.Invalid("bootstrap_refresh_days must be at least 0")
-            return value
-
-        mapping = vlp.Schema(
-            {
-                vlp.Required("location"): absolute_path,
-                vlp.Optional("bootstrap_refresh_days", default=21): refresh_days,
-            }
-        )
+        mapping = vlp.Schema({vlp.Required("location"): absolute_path})
         return vlp.Schema(
             lambda value: mapping({"location": value} if isinstance(value, str | Path) else value)
         )
@@ -169,10 +151,19 @@ class BtrfsDriver(DriverBase):
         return BtrfsSubvolume(self.location, self.ssh)
 
     def cap_snapshot(self, source: BtrfsSubvolume) -> BtrfsSnapshot:
-        snapshot = BtrfsSubvolume(
-            source.path / f".yaesm-btrfs-staging-{uuid4().hex}",
-            source.ssh,
+        return self._snapshot(
+            source,
+            BtrfsSubvolume(
+                source.path / f".yaesm-btrfs-staging-{uuid4().hex}",
+                source.ssh,
+            ),
         )
+
+    def _snapshot(
+        self,
+        source: BtrfsSubvolume,
+        snapshot: BtrfsSubvolume,
+    ) -> BtrfsSnapshot:
         self.runner.run(
             command_for_ssh(
                 source.ssh,
@@ -219,17 +210,28 @@ class BtrfsDriver(DriverBase):
         if isinstance(source, BtrfsSnapshot):
             return self.cap_import(self.cap_export(source, base), operation)
 
-        if base is None:
-            base = self._bootstrap(
+        rolling = base is None
+        if rolling:
+            base = self._rolling_base(source, operation)
+            snapshot = self._snapshot(
                 source,
-                operation.backup_name,
-                operation.previous_backup_names,
+                BtrfsSubvolume(
+                    source.path / self._pending_name(operation.backup_name),
+                    source.ssh,
+                ),
             )
-        snapshot = self.cap_snapshot(source)
+        else:
+            snapshot = self.cap_snapshot(source)
+        promoted = False
         try:
-            return self.cap_import(self.cap_export(snapshot, base), operation)
+            artifact = self.cap_import(self.cap_export(snapshot, base), operation)
+            if rolling:
+                self._promote_base(snapshot, source, operation)
+                promoted = True
+            return artifact
         finally:
-            self.cap_cleanup(snapshot)
+            if not promoted:
+                self.cap_cleanup(snapshot)
 
     def cap_export(self, source: BtrfsSnapshot, base: BtrfsSnapshot | None = None) -> BtrfsStream:
         if base is not None and not same_endpoint(source.ssh, base.ssh):
@@ -368,96 +370,83 @@ class BtrfsDriver(DriverBase):
             source_uuid=source_uuid,
         )
 
-    def _bootstrap(
+    @staticmethod
+    def _base_name(backup_name: str) -> str:
+        return f".yaesm-btrfs-base-{backup_name}"
+
+    @staticmethod
+    def _pending_name(backup_name: str) -> str:
+        return f".yaesm-btrfs-pending-{backup_name}"
+
+    def _rolling_base(
         self,
         source: BtrfsSubvolume,
-        backup_name: str,
-        previous_backup_names: ty.Sequence[str],
-    ) -> BtrfsSnapshot:
-        name = f".yaesm-btrfs-bootstrap-{backup_name}"
-        source_path = BtrfsSubvolume(source.path / name, source.ssh)
-        destination_path = BtrfsSubvolume(self.location / name, self.ssh)
-        source_bootstrap = self._find_snapshot(source_path)
-        destination_bootstrap = self._find_snapshot(destination_path)
+        operation: bckp.BackupOperation,
+    ) -> BtrfsSnapshot | None:
+        names = (operation.backup_name, *operation.previous_backup_names)
+        pending = self._named_snapshots(source, names, self._pending_name)
+        bases = self._named_snapshots(source, names, self._base_name)
+        candidates = (*pending, *bases)
+        if not candidates:
+            return None
 
-        if source_bootstrap is None and destination_bootstrap is None:
-            for previous_name in previous_backup_names:
-                name = f".yaesm-btrfs-bootstrap-{previous_name}"
-                previous_source = BtrfsSubvolume(source.path / name, source.ssh)
-                previous_destination = BtrfsSubvolume(self.location / name, self.ssh)
-                previous_source_bootstrap = self._find_snapshot(previous_source)
-                previous_destination_bootstrap = self._find_snapshot(previous_destination)
-                if (
-                    previous_source_bootstrap is not None
-                    or previous_destination_bootstrap is not None
-                ):
-                    source_path, destination_path = previous_source, previous_destination
-                    source_bootstrap = previous_source_bootstrap
-                    destination_bootstrap = previous_destination_bootstrap
-                    break
+        source_uuids = {
+            artifact.representation.source_uuid
+            for name in names
+            for artifact in self.cap_list(name)
+        }
+        if recovered := next(
+            (snapshot for snapshot in pending if snapshot.uuid in source_uuids),
+            None,
+        ):
+            self._promote_base(recovered, source, operation)
+            return dataclasses.replace(
+                recovered,
+                path=source.path / self._base_name(operation.backup_name),
+            )
 
-        if source_bootstrap is not None and self._stale(source_bootstrap):
-            self._delete((source_bootstrap,))
-            if destination_bootstrap is not None:
-                self._delete((destination_bootstrap,))
-            source_bootstrap = destination_bootstrap = None
+        self._delete(pending)
+        base = next((snapshot for snapshot in bases if snapshot.uuid in source_uuids), None)
+        self._delete(tuple(snapshot for snapshot in bases if snapshot is not base))
+        return base
 
-        if source_bootstrap is None:
-            if destination_bootstrap is not None:
-                self._delete((destination_bootstrap,))
-                destination_bootstrap = None
-            self.runner.run(
-                command_for_ssh(
-                    source.ssh,
-                    (
-                        "btrfs",
-                        "subvolume",
-                        "snapshot",
-                        "-r",
-                        source.path,
-                        source_path.path,
-                    ),
+    def _promote_base(
+        self,
+        snapshot: BtrfsSnapshot,
+        source: BtrfsSubvolume,
+        operation: bckp.BackupOperation,
+    ) -> None:
+        names = (operation.backup_name, *operation.previous_backup_names)
+        self._delete(self._named_snapshots(source, names, self._base_name))
+        self.runner.run(
+            command_for_ssh(
+                source.ssh,
+                (
+                    "mv",
+                    "-T",
+                    "--",
+                    snapshot.path,
+                    source.path / self._base_name(operation.backup_name),
+                ),
+            )
+        )
+
+    def _named_snapshots(
+        self,
+        source: BtrfsSubvolume,
+        names: ty.Sequence[str],
+        name: ty.Callable[[str], str],
+    ) -> tuple[BtrfsSnapshot, ...]:
+        return tuple(
+            snapshot
+            for backup_name in names
+            if (
+                snapshot := self._find_snapshot(
+                    BtrfsSubvolume(source.path / name(backup_name), source.ssh)
                 )
             )
-            try:
-                source_bootstrap = self._read_snapshot(source_path)
-            except BaseException:
-                self._delete((source_path,), check=False)
-                raise
-
-        if destination_bootstrap is None:
-            stream = self.cap_export(source_bootstrap)
-            try:
-                self.runner.pipeline(
-                    (
-                        *stream.stages,
-                        CommandStage(("btrfs", "receive", self.location), self.ssh),
-                    )
-                )
-            except BaseException:
-                self._delete((destination_path,), check=False)
-                raise
-
-        return source_bootstrap
-
-    def _stale(self, snapshot: BtrfsSnapshot) -> bool:
-        if self.bootstrap_refresh_days is None:
-            return False
-        result = self.runner.run(
-            command_for_ssh(
-                snapshot.ssh,
-                (
-                    "find",
-                    snapshot.path,
-                    "-prune",
-                    "-mtime",
-                    f"+{self.bootstrap_refresh_days - 1}",
-                    "-print",
-                ),
-            ),
-            capture_output=True,
+            is not None
         )
-        return bool(result.stdout)
 
     def _read_snapshot(self, snapshot: BtrfsSubvolume) -> BtrfsSnapshot:
         result = self.runner.run(
