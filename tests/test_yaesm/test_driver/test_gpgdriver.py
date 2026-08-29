@@ -11,7 +11,7 @@ import voluptuous as vlp
 
 import yaesm.command as command_module
 import yaesm.ty as ty
-from yaesm.backup import BackupArtifact, BackupOperation, DriverSource
+from yaesm.backup import BackupArtifact, BackupOperation
 from yaesm.check import CheckResult, CheckRole
 from yaesm.command import Command, CommandError, CommandResult, CommandRunner
 from yaesm.driver.btrfsdriver import BtrfsDriver
@@ -306,10 +306,9 @@ def test_gpg_encrypts_and_restores_btrfs_pipeline(
         (source / "content").write_text("encrypted backup content")
         operation = BackupOperation("example", "manual", datetime(2026, 8, 27, 12, 30))
         artifact = Pipeline(
-            DriverSource(BtrfsDriver(source)),
+            BtrfsDriver(source),
             _FileDestination(tmp_path),
             (GPGDriver(public_key),),
-            requirements=(DataProperty.ENCRYPTED,),
         ).execute(operation)
         encrypted_backup = artifact.representation.path
 

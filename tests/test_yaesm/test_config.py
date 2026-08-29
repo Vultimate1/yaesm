@@ -17,7 +17,7 @@ from yaesm.driver.rsyncdriver import RsyncDriver
 from yaesm.driver.tardriver import TarDriver
 from yaesm.driver.zfsdriver import ZFSDriver
 from yaesm.driver.zstddriver import ZstdDriver
-from yaesm.representation import DataProperty
+from yaesm.pipeline import Pipeline
 from yaesm.retention import KeepFor, KeepLast
 from yaesm.schedule import CronSchedule, OnDemandSchedule, Schedule, ScheduleBase
 from yaesm.ssh import SSHTarget
@@ -98,17 +98,18 @@ _TRANSFORMS = st.lists(
 
 @st.composite
 def valid_backup_definitions(draw):
-    backend = draw(st.sampled_from(("btrfs", "rsync", "zfs")))
+    drivers = draw(_TRANSFORMS)
+    backend = draw(st.sampled_from(("btrfs", "rsync") if drivers else ("btrfs", "rsync", "zfs")))
     if backend == "zfs":
         source = {"zfs": "source/data"}
         destination = {"zfs": "destination/backups"}
     else:
         source = {backend: {"location": "/source"}}
-        destination = {backend: {"location": "/destination"}}
+        destination = {"tar" if drivers else backend: {"location": "/destination"}}
     return backup_config(
         source=source,
         destination=destination,
-        drivers=draw(_TRANSFORMS),
+        drivers=drivers,
         schedules=draw(_SCHEDULES),
     )
 
@@ -134,7 +135,6 @@ _INVALID_MUTATIONS = st.sampled_from(
         "unknown-source",
         "unknown-destination",
         "invalid-drivers",
-        "invalid-requirements",
         "invalid-schedules",
         "unknown-setting",
     )
@@ -155,9 +155,6 @@ def invalidate_backup(config, mutation):
         case "invalid-drivers":
             config["drivers"] = {}
             return "drivers must be a list"
-        case "invalid-requirements":
-            config["requirements"] = "snapshot"
-            return "requirements must be a list"
         case "invalid-schedules":
             config["schedules"] = []
             return "schedules must be a mapping"
@@ -199,8 +196,7 @@ def test_config_types_are_discovered_from_subclasses():
         }
     ).backups["home"]
 
-    assert isinstance(backup.source, bckp.DriverSource)
-    assert isinstance(backup.source.driver, AutomaticallyDiscoveredDriver)
+    assert isinstance(backup.source, AutomaticallyDiscoveredDriver)
     assert isinstance(backup.destination, AutomaticallyDiscoveredDriver)
     assert isinstance(backup.schedules[0].implementation, AutomaticallyDiscoveredSchedule)
     assert backup.retention_policies == (AutomaticallyDiscoveredRetention(2, "automatic"),)
@@ -225,7 +221,7 @@ def test_parse_config_builds_complete_backup():
                 }
             },
             destination={
-                "btrfs": {
+                "tar": {
                     "location": "/backups",
                     "target": {
                         "spec": "ssh://backup",
@@ -238,7 +234,6 @@ def test_parse_config_builds_complete_backup():
                 {"zstd": {"level": 7}},
                 {"gpg": "/root/backup-key.asc"},
             ],
-            requirements=["snapshot"],
         )
     }
 
@@ -249,14 +244,13 @@ def test_parse_config_builds_complete_backup():
     assert tuple(backups) == ("home",)
     backup = backups["home"]
     assert backup.name == "home"
-    assert isinstance(backup.source, bckp.DriverSource)
-    assert isinstance(backup.source.driver, BtrfsDriver)
-    assert backup.source.driver.location == Path("/home")
-    assert backup.source.driver.target == SSHTarget(
+    assert isinstance(backup.source, BtrfsDriver)
+    assert backup.source.location == Path("/home")
+    assert backup.source.target == SSHTarget(
         "ssh://source",
         Path("/root/.ssh/source-key"),
     )
-    assert isinstance(backup.destination, BtrfsDriver)
+    assert isinstance(backup.destination, TarDriver)
     assert backup.destination.location == Path("/backups")
     assert backup.destination.target == SSHTarget(
         "ssh://backup",
@@ -267,7 +261,6 @@ def test_parse_config_builds_complete_backup():
     assert backup.drivers[0].level == 7
     assert isinstance(backup.drivers[1], GPGDriver)
     assert backup.drivers[1].public_key == Path("/root/backup-key.asc")
-    assert backup.requirements == {DataProperty.SNAPSHOT}
     assert backup.schedules == (Schedule("daily", CronSchedule("30 4 * * *")),)
     assert backup.retention_policies == (KeepLast(7, "daily"),)
 
@@ -285,8 +278,7 @@ def test_parse_config_constructs_source_and_destination_drivers(driver, driver_t
         "home"
     ]
 
-    assert isinstance(backup.source, bckp.DriverSource)
-    assert isinstance(backup.source.driver, driver_type)
+    assert isinstance(backup.source, driver_type)
     assert isinstance(backup.destination, driver_type)
 
 
@@ -302,14 +294,23 @@ def test_parse_config_builds_encrypted_tar_archive_pipeline():
                     }
                 },
                 drivers=[{"gpg": "/public-key.asc"}],
-                requirements=["encrypted"],
             )
         }
     ).backups["home"]
 
+    assert isinstance(backup.source, RsyncDriver)
     assert isinstance(backup.destination, TarDriver)
     assert backup.destination.location == Path("/archives")
     assert not backup.destination.one_file_system
+    assert tuple(
+        (step.driver.name(), step.capability)
+        for step in Pipeline(backup.source, backup.destination, backup.drivers).steps
+    ) == (
+        ("rsync", "source"),
+        ("tar", "export"),
+        ("gpg", "encrypt"),
+        ("tar", "import"),
+    )
 
 
 def test_parse_config_accepts_forward_backup_source_reference():
@@ -343,16 +344,19 @@ def test_parse_config_accepts_global_settings():
             "max_concurrent_backups": 15,
             "timezone": "America/New_York",
         },
-        "home": backup_config(drivers=[{"zstd": {}}]),
+        "home": backup_config(
+            destination={"tar": {"location": "/destination"}},
+            drivers=[{"zstd": {}}],
+        ),
     }
 
     config = parse_config(value)
     backup = config.backups["home"]
-    assert isinstance(backup.source, bckp.DriverSource)
+    assert isinstance(backup.source, BtrfsDriver)
 
     assert config.global_settings == value["global_settings"]
     assert tuple(config.backups) == ("home",)
-    assert backup.source.driver.global_settings is config.global_settings
+    assert backup.source.global_settings is config.global_settings
     assert backup.destination.global_settings is config.global_settings
     assert backup.drivers[0].global_settings is config.global_settings
 
@@ -377,7 +381,7 @@ def test_parse_config_collects_independent_errors():
         "global_settings": [],
         "first": backup_config(
             source={"unknown": {}},
-            requirements="snapshot",
+            unexpected=True,
         ),
         "second": backup_config(
             destination={"unknown": {}},
@@ -390,16 +394,16 @@ def test_parse_config_collects_independent_errors():
 
     assert error.value.messages == (
         "global_settings must be a mapping",
+        "backup 'first': unknown settings: unexpected",
         "backup 'first': source uses unknown driver 'unknown'",
-        "backup 'first': requirements must be a list",
         "backup 'second': destination uses unknown driver 'unknown'",
         "backup 'second': drivers must be a list",
     )
     assert error.value.format() == (
         "configuration errors:\n"
         "  - global_settings must be a mapping\n"
+        "  - backup 'first': unknown settings: unexpected\n"
         "  - backup 'first': source uses unknown driver 'unknown'\n"
-        "  - backup 'first': requirements must be a list\n"
         "  - backup 'second': destination uses unknown driver 'unknown'\n"
         "  - backup 'second': drivers must be a list"
     )
@@ -570,23 +574,9 @@ def test_parse_config_rejects_self_as_backup_source():
         parse_config({"home": backup_config(source={"backup": "home"})})
 
 
-def test_parse_config_rejects_nonlist_requirements():
-    with pytest.raises(ConfigError, match="requirements must be a list"):
-        parse_config({"home": backup_config(requirements="snapshot")})
-
-
-@pytest.mark.parametrize("requirement", ["unknown", None, 1])
-def test_parse_config_rejects_unknown_requirement(requirement):
-    with pytest.raises(ConfigError, match="unknown data requirement"):
-        parse_config({"home": backup_config(requirements=[requirement])})
-
-
-def test_parse_config_removes_duplicate_requirements():
-    backup = parse_config({"home": backup_config(requirements=["snapshot", "snapshot"])}).backups[
-        "home"
-    ]
-
-    assert backup.requirements == {DataProperty.SNAPSHOT}
+def test_parse_config_rejects_requirements_setting():
+    with pytest.raises(ConfigError, match="unknown settings: requirements"):
+        parse_config({"home": backup_config(requirements=["encrypted"])})
 
 
 def test_parse_config_rejects_incompatible_pipeline():
@@ -614,9 +604,9 @@ def test_parse_config_rejects_driver_without_destination_capabilities():
         )
 
 
-def test_parse_config_rejects_unsatisfied_requirement():
-    with pytest.raises(ConfigError, match="missing required properties: encrypted"):
-        parse_config({"home": backup_config(requirements=["encrypted"])})
+def test_parse_config_rejects_driver_incompatible_with_destination():
+    with pytest.raises(ConfigError, match="last usable route:.*gpg.encrypt"):
+        parse_config({"home": backup_config(drivers=[{"gpg": "/key.asc"}])})
 
 
 def test_parse_config_reads_yaml_file(tmp_path):
@@ -643,7 +633,7 @@ home:
 
     assert config.global_settings == {}
     assert tuple(backups) == ("home",)
-    assert isinstance(backups["home"].source, bckp.DriverSource)
+    assert isinstance(backups["home"].source, BtrfsDriver)
 
 
 def test_parse_config_rejects_missing_file(tmp_path):

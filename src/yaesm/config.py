@@ -13,7 +13,6 @@ from yaesm.driver import load_drivers
 from yaesm.driver.driverbase import DriverBase, GlobalSettings
 from yaesm.errors import YaesmError
 from yaesm.pipeline import Pipeline
-from yaesm.representation import DataProperty
 from yaesm.retention import RetentionPolicyBase
 from yaesm.schedule import Schedule, ScheduleBase, schedule_name_valid
 from yaesm.ssh import SSHTarget, SSHTargetError
@@ -120,7 +119,7 @@ def _parse_backup(
 
     messages = []
     required = {"source", "destination", "schedules"}
-    allowed = required | {"drivers", "requirements"}
+    allowed = required | {"drivers"}
     if missing := sorted(required - value.keys()):
         messages.append(f"missing required settings: {', '.join(missing)}")
     if unknown := sorted(value.keys() - allowed, key=str):
@@ -147,12 +146,6 @@ def _parse_backup(
         _collect_messages(messages, error)
         drivers = ()
 
-    try:
-        requirements = _parse_requirements(value.get("requirements", []))
-    except YaesmError as error:
-        _collect_messages(messages, error)
-        requirements = frozenset()
-
     schedules = ()
     retention = ()
     if "schedules" in value:
@@ -169,26 +162,25 @@ def _parse_backup(
         source,
         destination,
         drivers,
-        requirements,
         schedules,
         retention,
     )
 
-    if isinstance(source, bckp.DriverSource):
-        Pipeline(source, destination, drivers, requirements)
+    if isinstance(source, DriverBase):
+        Pipeline(source, destination, drivers)
     return backup
 
 
 def _parse_source(
     value: object,
     global_settings: GlobalSettings,
-) -> bckp.DriverSource | bckp.BackupSource:
+) -> DriverBase | bckp.BackupSource:
     if isinstance(value, dict) and set(value) == {"backup"}:
         backup_name = value["backup"]
         if not isinstance(backup_name, str) or not backup_name:
             raise ConfigError("source backup name must be a nonempty string")
         return bckp.BackupSource(backup_name)
-    return bckp.DriverSource(_parse_driver(value, "source", global_settings))
+    return _parse_driver(value, "source", global_settings)
 
 
 def _parse_drivers(
@@ -241,15 +233,6 @@ def _validate_destination(driver: DriverBase) -> None:
         )
     if not {"store", "import"} & driver.pipeline_capabilities():
         raise ConfigError(f"destination driver {driver.name()} cannot store backup artifacts")
-
-
-def _parse_requirements(value: object) -> frozenset[DataProperty]:
-    if not isinstance(value, list):
-        raise ConfigError("requirements must be a list")
-    try:
-        return frozenset(DataProperty(requirement) for requirement in value)
-    except (TypeError, ValueError) as error:
-        raise ConfigError(f"unknown data requirement: {error}") from error
 
 
 def _validate_backup_sources(

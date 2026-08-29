@@ -11,7 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
 import yaesm.scheduler as scheduler_module
-from yaesm.backup import Backup, BackupError, DriverSource
+from yaesm.backup import Backup, BackupError
 from yaesm.config import Config
 from yaesm.schedule import CronSchedule, OnDemandSchedule, Schedule
 from yaesm.scheduler import Scheduler, SchedulerError
@@ -26,7 +26,7 @@ def configured_backup(
     schedule = schedule or Schedule("hourly", CronSchedule("0 * * * *"))
     backup = Backup(
         name,
-        DriverSource(mock.Mock()),
+        mock.Mock(),
         mock.Mock(),
         schedules=(schedule,),
     )
@@ -59,7 +59,7 @@ def test_scheduler_ignores_on_demand_schedules():
 def test_scheduler_jobs_for_same_backup_share_lock():
     backup = Backup(
         "home",
-        DriverSource(mock.Mock()),
+        mock.Mock(),
         mock.Mock(),
         schedules=(
             Schedule("hourly", CronSchedule("0 * * * *")),
@@ -153,7 +153,7 @@ def test_scheduler_rejects_timer_schedule():
 def test_scheduler_requires_explicit_name_for_multiple_on_demand_schedules():
     backup = Backup(
         "home",
-        DriverSource(mock.Mock()),
+        mock.Mock(),
         mock.Mock(),
         schedules=(
             Schedule("first", OnDemandSchedule()),

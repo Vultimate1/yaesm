@@ -177,7 +177,7 @@ class ZFSDriver(DriverBase):
         self.runner.run(command_for_target(source.target, ("zfs", "snapshot", snapshot.name)))
         return snapshot
 
-    @capability("store", base="destination")
+    @capability("store", adds=(DataProperty.SNAPSHOT,), base="destination")
     def cap_store(
         self,
         source: ZFSDataset,

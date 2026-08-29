@@ -7,7 +7,7 @@ import re
 
 import yaesm.ty as ty
 from yaesm.errors import YaesmError, YaesmValueError
-from yaesm.representation import DataProperty, Representation
+from yaesm.representation import Representation
 from yaesm.schedule import schedule_name_valid
 
 _RepresentationT = ty.TypeVar("_RepresentationT", bound=Representation, covariant=True)
@@ -20,13 +20,6 @@ if ty.TYPE_CHECKING:
 
 class BackupError(YaesmError):
     """Raised when a backup cannot be prepared or executed."""
-
-
-@dataclasses.dataclass(frozen=True)
-class DriverSource:
-    """Live data provided by a driver."""
-
-    driver: DriverBase
 
 
 @dataclasses.dataclass(frozen=True)
@@ -95,10 +88,9 @@ class Backup:
     """A named backup definition used to create operations."""
 
     name: str
-    source: DriverSource | BackupSource
+    source: DriverBase | BackupSource
     destination: DriverBase
     drivers: tuple[DriverBase, ...] = ()
-    requirements: frozenset[DataProperty] = frozenset()
     schedules: tuple[Schedule, ...] = ()
     retention_policies: tuple[RetentionPolicyBase, ...] = ()
 
@@ -117,10 +109,9 @@ class Backup:
         """Execute one backup operation and apply retention."""
         from yaesm.pipeline import IncrementalBase, Pipeline
 
-        pipeline_drivers = self.drivers
         operation_created_at = created_at
         source_artifact_id = None
-        source_driver = None
+        source_artifact = None
         source_artifacts: tuple[BackupArtifact, ...] = ()
         if isinstance(self.source, BackupSource):
             source_backup = None if backups is None else backups.get(self.source.backup_name)
@@ -142,12 +133,11 @@ class Backup:
                     f"{source_backup.name!r} has no artifacts"
                 )
             source_driver = source_backup.destination
-            pipeline_source = source_artifacts[0]
-            pipeline_drivers = (source_driver, *pipeline_drivers)
-            operation_created_at = pipeline_source.operation.created_at
-            source_artifact_id = source_driver.artifact_id(pipeline_source)
+            source_artifact = source_artifacts[0]
+            operation_created_at = source_artifact.operation.created_at
+            source_artifact_id = source_driver.artifact_id(source_artifact)
         else:
-            pipeline_source = self.source
+            source_driver = self.source
 
         operation = BackupOperation(
             self.name,
@@ -156,10 +146,10 @@ class Backup:
             source_artifact_id,
         )
         pipeline = Pipeline(
-            pipeline_source,
+            source_driver,
             self.destination,
-            pipeline_drivers,
-            self.requirements,
+            self.drivers,
+            source_artifact=source_artifact,
         )
         try:
             artifacts = tuple(self.destination.cap_list(self.name))

@@ -137,14 +137,14 @@ def configured_backup(
 ) -> bckp.Backup:
     return bckp.Backup(
         "home",
-        bckp.DriverSource(SourceDriver()),
+        SourceDriver(),
         destination,
         retention_policies=retention_policies,
     )
 
 
 def test_backup_has_composable_settings():
-    source = bckp.DriverSource(SourceDriver())
+    source = SourceDriver()
     destination = DestinationDriver()
     drivers = (ArtifactDriver(),)
     schedules = (Schedule("hourly", CronSchedule("0 * * * *")),)
@@ -154,7 +154,6 @@ def test_backup_has_composable_settings():
         source,
         destination,
         drivers,
-        frozenset(),
         schedules,
         retention_policies,
     )
@@ -164,16 +163,9 @@ def test_backup_has_composable_settings():
         "source": source,
         "destination": destination,
         "drivers": drivers,
-        "requirements": frozenset(),
         "schedules": schedules,
         "retention_policies": retention_policies,
     }
-
-
-def test_driver_source_identifies_live_driver():
-    driver = SourceDriver()
-
-    assert bckp.DriverSource(driver).driver is driver
 
 
 def test_backup_source_identifies_configured_backup():
@@ -291,7 +283,7 @@ def test_backup_artifact():
     ],
 )
 def test_backup_accepts_valid_name(name):
-    assert bckp.Backup(name, bckp.DriverSource(SourceDriver()), DestinationDriver()).name == name
+    assert bckp.Backup(name, SourceDriver(), DestinationDriver()).name == name
 
 
 @pytest.mark.parametrize(
@@ -318,7 +310,7 @@ def test_backup_accepts_valid_name(name):
 )
 def test_backup_rejects_invalid_name(name):
     with pytest.raises(YaesmValueError, match="invalid backup name"):
-        bckp.Backup(name, bckp.DriverSource(SourceDriver()), DestinationDriver())
+        bckp.Backup(name, SourceDriver(), DestinationDriver())
 
 
 def test_backup_execute_uses_newest_artifact_as_base_and_applies_retention():
@@ -384,7 +376,7 @@ def test_backup_execute_replicates_newest_artifact_with_matching_bases():
     source_driver = ArtifactDriver((current_source, previous_source))
     source_backup = bckp.Backup(
         "local",
-        bckp.DriverSource(SourceDriver()),
+        SourceDriver(),
         source_driver,
     )
     previous_destination = bckp.BackupArtifact(
@@ -427,7 +419,7 @@ def test_backup_execute_does_not_replicate_same_artifact_twice():
     source_driver = ArtifactDriver((source_artifact,))
     source_backup = bckp.Backup(
         "local",
-        bckp.DriverSource(SourceDriver()),
+        SourceDriver(),
         source_driver,
     )
     existing = artifact("daily", 12, "offsite", ByteStream())
@@ -452,7 +444,7 @@ def test_backup_execute_uses_exact_replication_base():
     source_driver = IdentifiedArtifactDriver((current, same_time, wanted))
     source_backup = bckp.Backup(
         "local",
-        bckp.DriverSource(SourceDriver()),
+        SourceDriver(),
         source_driver,
     )
     previous_operation = bckp.BackupOperation(
@@ -476,7 +468,7 @@ def test_backup_execute_uses_full_replication_when_base_is_missing():
     source_driver = ArtifactDriver((current,))
     source_backup = bckp.Backup(
         "local",
-        bckp.DriverSource(SourceDriver()),
+        SourceDriver(),
         source_driver,
     )
     previous_operation = bckp.BackupOperation(
@@ -501,7 +493,7 @@ def test_backup_execute_reuses_destination_only_base_without_source_metadata():
     source_driver = ArtifactDriver((current,))
     source_backup = bckp.Backup(
         "local",
-        bckp.DriverSource(SourceDriver()),
+        SourceDriver(),
         source_driver,
     )
     previous = artifact("daily", 11, "offsite")
@@ -531,7 +523,7 @@ def test_backup_execute_rejects_unknown_source_backup():
 def test_backup_execute_rejects_source_backup_without_artifacts():
     source_backup = bckp.Backup(
         "local",
-        bckp.DriverSource(SourceDriver()),
+        SourceDriver(),
         ArtifactDriver(),
     )
     backup = bckp.Backup(
@@ -550,7 +542,7 @@ def test_backup_execute_rejects_source_backup_without_artifacts():
 def test_backup_execute_formats_source_listing_failure():
     source_backup = bckp.Backup(
         "local",
-        bckp.DriverSource(SourceDriver()),
+        SourceDriver(),
         DestinationDriver(failure="list"),
     )
     backup = bckp.Backup(

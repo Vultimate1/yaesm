@@ -7,7 +7,7 @@ import logging
 import typing
 
 import yaesm.ty as ty
-from yaesm.backup import BackupArtifact, BackupError, BackupOperation, DriverSource
+from yaesm.backup import BackupArtifact, BackupError, BackupOperation
 from yaesm.driver.driverbase import DriverBase
 from yaesm.errors import YaesmError
 from yaesm.representation import DataProperty, Representation
@@ -45,22 +45,22 @@ class IncrementalBase:
 
 @dataclasses.dataclass(frozen=True, init=False)
 class Pipeline:
-    """An ordered sequence of driver capability invocations."""
+    """A resolved sequence using every configured driver."""
 
-    source: DriverSource | BackupArtifact
+    source_driver: DriverBase
     destination: DriverBase
+    source_artifact: BackupArtifact | None
     steps: tuple[PipelineStep, ...]
-    requirements: frozenset[DataProperty]
 
     def __init__(
         self,
-        source: DriverSource | BackupArtifact,
+        source_driver: DriverBase,
         destination: DriverBase,
         drivers: ty.Sequence[DriverBase] = (),
-        requirements: ty.Iterable[DataProperty] = (),
+        *,
+        source_artifact: BackupArtifact | None = None,
     ) -> None:
-        required = frozenset(requirements)
-        steps = _resolve(source, destination, drivers, required)
+        steps = _resolve(source_driver, destination, drivers, source_artifact)
         for step in steps:
             if (
                 step.driver.capability_metadata(step.capability).temporary
@@ -70,10 +70,10 @@ class Pipeline:
                     f"{step.driver.name()}.{step.capability} produces a temporary "
                     "representation but the driver provides no cleanup capability"
                 )
-        object.__setattr__(self, "source", source)
+        object.__setattr__(self, "source_driver", source_driver)
         object.__setattr__(self, "destination", destination)
+        object.__setattr__(self, "source_artifact", source_artifact)
         object.__setattr__(self, "steps", steps)
-        object.__setattr__(self, "requirements", required)
 
     def execute(
         self,
@@ -82,7 +82,7 @@ class Pipeline:
     ) -> BackupArtifact:
         """Execute the resolved capabilities for one backup operation."""
         value: object | None = (
-            None if isinstance(self.source, DriverSource) else self.source.representation
+            None if self.source_artifact is None else self.source_artifact.representation
         )
         artifact: BackupArtifact | None = None
         temporaries: list[tuple[PipelineStep, Representation]] = []
@@ -142,10 +142,10 @@ class Pipeline:
 
 
 def _resolve(
-    source: DriverSource | BackupArtifact,
+    source_driver: DriverBase,
     destination: DriverBase,
     drivers: ty.Sequence[DriverBase],
-    requirements: frozenset[DataProperty],
+    source_artifact: BackupArtifact | None,
 ) -> tuple[PipelineStep, ...]:
     storage_steps = _storage_steps(destination)
     if not storage_steps:
@@ -154,31 +154,35 @@ def _resolve(
             f"  destination driver {destination.name()} provides no storage capability"
         )
 
-    if isinstance(source, DriverSource):
-        driver = source.driver
-        if "source" not in driver.pipeline_capabilities():
-            raise PipelineError(f"{driver.name()} driver cannot provide a backup source")
-        first = PipelineStep(driver, "source")
+    required_properties: frozenset[DataProperty] = frozenset()
+    if source_artifact is None:
+        if "source" not in source_driver.pipeline_capabilities():
+            raise PipelineError(f"{source_driver.name()} driver cannot provide a backup source")
+        first = PipelineStep(source_driver, "source")
         source_type = _output_type(first)
         if not issubclass(source_type, Representation):
             raise PipelineError("source capability does not produce a representation")
-        properties = driver.capability_metadata("source").adds
+        properties = source_driver.capability_metadata("source").adds
+        if "snapshot" in source_driver.pipeline_capabilities():
+            required_properties = frozenset({DataProperty.SNAPSHOT})
         steps = (first,)
-        used = frozenset({(id(driver), "source")})
-        available = (driver, *drivers, destination)
+        used = frozenset({(id(source_driver), "source")})
     else:
-        source_type = type(source.representation)
+        source_type = type(source_artifact.representation)
         properties = frozenset()
         steps = ()
         used = frozenset()
-        available = (*drivers, destination)
 
+    available = (source_driver, *drivers, destination)
+
+    required_drivers = frozenset(id(driver) for driver in drivers)
     queue: collections.deque[
         tuple[
             type[Representation],
             frozenset[DataProperty],
             tuple[PipelineStep, ...],
             frozenset[tuple[int, str]],
+            frozenset[int],
         ]
     ] = collections.deque(
         [
@@ -187,16 +191,23 @@ def _resolve(
                 properties,
                 steps,
                 used,
+                required_drivers,
             )
         ]
     )
     furthest = (source_type, properties, steps)
-    missing_route: tuple[frozenset[DataProperty], tuple[PipelineStep, ...]] | None = None
-    required_route: _Route | None = None
+    complete_route: _Route | None = None
+    rejected_route: (
+        tuple[
+            frozenset[int],
+            frozenset[DataProperty],
+            tuple[PipelineStep, ...],
+        ]
+        | None
+    ) = None
 
     while queue:
-        current_type, properties, steps, used = queue.popleft()
-        advanced = False
+        current_type, properties, steps, used, remaining = queue.popleft()
         for driver in available:
             for capability in sorted(driver.pipeline_capabilities() - {"source"}):
                 step = PipelineStep(driver, capability)
@@ -208,42 +219,52 @@ def _resolve(
                 output_type = _output_type(step)
                 next_properties = properties | metadata.adds
                 next_steps = (*steps, step)
+                next_remaining = remaining - {id(driver)}
                 if driver is destination and issubclass(output_type, BackupArtifact):
-                    missing = (metadata.requires - properties) | (requirements - next_properties)
-                    if not missing:
+                    missing = (metadata.requires - properties) | (
+                        required_properties - next_properties
+                    )
+                    if not missing and not next_remaining:
                         return next_steps
-                    if missing_route is None or len(missing) < len(missing_route[0]):
-                        missing_route = (missing, next_steps)
+                    rejected = (next_remaining, missing, next_steps)
+                    if rejected_route is None or len(next_remaining) + len(missing) < len(
+                        rejected_route[0]
+                    ) + len(rejected_route[1]):
+                        rejected_route = rejected
                     continue
                 if not metadata.requires <= properties:
                     continue
                 if issubclass(output_type, Representation):
-                    queue.append((output_type, next_properties, next_steps, used | {step_id}))
-                    advanced = True
+                    queue.append(
+                        (
+                            output_type,
+                            next_properties,
+                            next_steps,
+                            used | {step_id},
+                            next_remaining,
+                        )
+                    )
+                    if not next_remaining and complete_route is None:
+                        complete_route = (output_type, next_properties, next_steps)
                     if len(next_steps) > len(furthest[2]):
                         furthest = (output_type, next_properties, next_steps)
-        if (
-            requirements
-            and requirements <= properties
-            and not advanced
-            and not any(issubclass(current_type, _input_type(step)) for step in storage_steps)
-            and required_route is None
-        ):
-            required_route = (current_type, properties, steps)
 
-    if required_route is not None:
-        raise _incompatible_pipeline_error(
-            required_route,
-            storage_steps,
-            requirements_met=True,
-        )
-
-    if missing_route is not None:
-        missing, steps = missing_route
+    if rejected_route is not None and not rejected_route[0]:
+        _, missing, steps = rejected_route
         raise PipelineError(
             "cannot build backup pipeline:\n"
             f"  compatible route: {_format_steps(steps)}\n"
             f"  missing required properties: {_format_properties(missing)}"
+        )
+    if complete_route is not None:
+        raise _incompatible_pipeline_error(complete_route, storage_steps)
+    if rejected_route is not None:
+        unused, _, steps = rejected_route
+        names = ", ".join(driver.name() for driver in drivers if id(driver) in unused)
+        raise PipelineError(
+            "cannot build backup pipeline:\n"
+            f"  compatible route: {_format_steps(steps)}\n"
+            f"  unused drivers: {names}"
         )
 
     raise _incompatible_pipeline_error(furthest, storage_steps)
@@ -252,18 +273,15 @@ def _resolve(
 def _incompatible_pipeline_error(
     route: _Route,
     storage_steps: ty.Sequence[PipelineStep],
-    *,
-    requirements_met: bool = False,
 ) -> PipelineError:
     representation, properties, steps = route
-    route_label = "route satisfying requirements" if requirements_met else "last usable route"
     accepted = ", ".join(
         f"{_input_type(step).__name__} via {step.driver.name()}.{step.capability}"
         for step in storage_steps
     )
     return PipelineError(
         "cannot build backup pipeline:\n"
-        f"  {route_label}: {_format_steps(steps) or 'existing artifact'}\n"
+        f"  last usable route: {_format_steps(steps) or 'existing artifact'}\n"
         f"  produced: {representation.__name__}\n"
         f"  available properties: {_format_properties(properties)}\n"
         f"  destination accepts: {accepted}"

@@ -6,7 +6,7 @@ from unittest import mock
 import pytest
 
 import yaesm.subcommand.checksubcommand as check_module
-from yaesm.backup import Backup, BackupSource, DriverSource
+from yaesm.backup import Backup, BackupSource
 from yaesm.check import Check, CheckResult, CheckRole
 from yaesm.config import Config
 from yaesm.errors import YaesmError
@@ -26,7 +26,7 @@ def configured_backup(
     destination,
     drivers=(),
 ) -> Backup:
-    return Backup(name, DriverSource(source), destination, drivers)
+    return Backup(name, source, destination, drivers)
 
 
 def deferred_result(

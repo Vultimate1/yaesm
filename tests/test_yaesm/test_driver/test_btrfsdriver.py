@@ -9,7 +9,7 @@ import voluptuous as vlp
 
 import yaesm.command as command_module
 import yaesm.ty as ty
-from yaesm.backup import Backup, BackupArtifact, BackupOperation, DriverSource
+from yaesm.backup import Backup, BackupArtifact, BackupOperation
 from yaesm.check import CheckRole
 from yaesm.command import Command, CommandResult, CommandRunner
 from yaesm.driver.btrfsdriver import (
@@ -20,7 +20,7 @@ from yaesm.driver.btrfsdriver import (
     BtrfsSubvolume,
 )
 from yaesm.errors import YaesmValueError
-from yaesm.representation import CommandStream, PathTree
+from yaesm.representation import CommandStream, DataProperty, PathTree
 from yaesm.ssh import SSHTarget, command_for_target
 
 _BTRFS_SEND = ("btrfs", "send", "--compressed-data")
@@ -201,6 +201,7 @@ def test_cap_source(tmp_path):
         "cleanup",
     }
     assert driver.capability_metadata("store").base == "source"
+    assert driver.capability_metadata("store").adds == {DataProperty.SNAPSHOT}
     assert driver.cap_source() == BtrfsSubvolume(tmp_path)
 
 
@@ -476,7 +477,7 @@ def test_backup_execute_uses_readonly_snapshot_with_incremental_send_fallback(tm
     runner = RecordingRunner((0, 1, 1, 1))
     backup = Backup(
         "example",
-        DriverSource(BtrfsDriver(source)),
+        BtrfsDriver(source),
         with_runner(BtrfsDriver(destination), runner),
     )
 

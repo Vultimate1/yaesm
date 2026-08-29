@@ -3,7 +3,7 @@
 import argparse
 
 import yaesm.ty as ty
-from yaesm.backup import Backup, DriverSource
+from yaesm.backup import Backup, BackupSource
 from yaesm.check import Check, CheckResult, CheckRole
 from yaesm.config import Config
 from yaesm.errors import YaesmError
@@ -82,8 +82,8 @@ class CheckSubcommand(SubcommandBase):
         backup: Backup,
         backups: ty.Mapping[str, Backup],
     ) -> tuple[Check, ...]:
-        if isinstance(backup.source, DriverSource):
-            source = backup.source.driver
+        if not isinstance(backup.source, BackupSource):
+            source = backup.source
             source_checks = source.check(CheckRole.SOURCE)
         else:
             source_backup = backups[backup.source.backup_name]

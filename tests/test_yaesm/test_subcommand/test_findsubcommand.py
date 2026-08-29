@@ -6,7 +6,7 @@ from unittest import mock
 
 import pytest
 
-from yaesm.backup import Backup, BackupArtifact, BackupOperation, DriverSource
+from yaesm.backup import Backup, BackupArtifact, BackupOperation
 from yaesm.config import Config
 from yaesm.errors import YaesmError, YaesmValueError
 from yaesm.representation import Representation
@@ -44,7 +44,7 @@ def configured_backup(name: str, artifacts: tuple[BackupArtifact, ...]) -> tuple
     destination = mock.Mock()
     destination.cap_list.return_value = artifacts
     destination.format_locator.side_effect = lambda item: f"locator:{item.name}"
-    backup = Backup(name, DriverSource(mock.Mock()), destination)
+    backup = Backup(name, mock.Mock(), destination)
     return backup, destination
 
 

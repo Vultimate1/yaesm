@@ -11,7 +11,7 @@ import yaesm.ty as ty
 from yaesm.check import Check, CheckRole
 from yaesm.driver.driverbase import DriverBase, DriverError, GlobalSettings, capability
 from yaesm.errors import YaesmValueError
-from yaesm.representation import CommandStream, PathTree
+from yaesm.representation import CommandStream, DataProperty, PathTree
 from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
 
 
@@ -163,7 +163,7 @@ class BtrfsDriver(DriverBase):
             self._delete((snapshot,), check=False)
             raise
 
-    @capability("store", base="source")
+    @capability("store", adds=(DataProperty.SNAPSHOT,), base="source")
     def cap_store(
         self,
         source: BtrfsSubvolume,

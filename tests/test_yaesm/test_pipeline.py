@@ -8,11 +8,12 @@ import pytest
 import voluptuous as vlp
 
 import yaesm.ty as ty
-from yaesm.backup import BackupArtifact, BackupOperation, DriverSource
+from yaesm.backup import BackupArtifact, BackupOperation
 from yaesm.command import CommandError
 from yaesm.driver.btrfsdriver import BtrfsDriver
 from yaesm.driver.driverbase import DriverBase, DriverError, capability
 from yaesm.driver.gpgdriver import GPGDriver
+from yaesm.driver.tardriver import TarDriver
 from yaesm.pipeline import IncrementalBase, Pipeline, PipelineError, PipelineStep
 from yaesm.representation import (
     ByteStream,
@@ -246,7 +247,7 @@ def test_pipeline_executes_resolved_capabilities():
     destination = DestinationDriver()
     operation = BackupOperation("home", "hourly", datetime(2026, 8, 27, 12, 30))
 
-    artifact = Pipeline(DriverSource(source), destination, (exporter,)).execute(operation)
+    artifact = Pipeline(source, destination, (exporter,)).execute(operation)
 
     assert exporter.call == (source.output, None)
     assert destination.call == (exporter.output, operation, None)
@@ -254,7 +255,7 @@ def test_pipeline_executes_resolved_capabilities():
 
 
 def test_pipeline_logs_capability_steps(caplog):
-    pipeline = Pipeline(DriverSource(SourceDriver()), DestinationDriver(), (ExportDriver(),))
+    pipeline = Pipeline(SourceDriver(), DestinationDriver(), (ExportDriver(),))
     operation = BackupOperation("home", "hourly", datetime(2026, 8, 27, 12, 30))
 
     with caplog.at_level(logging.INFO, logger="yaesm.pipeline"):
@@ -276,7 +277,7 @@ def test_pipeline_executes_from_existing_artifact():
     operation = BackupOperation("offsite", "daily", datetime(2026, 8, 27, 13))
     exporter = ExportDriver()
     destination = DestinationDriver()
-    pipeline = Pipeline(source, destination, (exporter,))
+    pipeline = Pipeline(exporter, destination, source_artifact=source)
 
     artifact = pipeline.execute(operation, base)
 
@@ -287,6 +288,28 @@ def test_pipeline_executes_from_existing_artifact():
     assert exporter.call == (source.representation, source_base)
     assert destination.call == (exporter.output, operation, destination_base)
     assert artifact == BackupArtifact(operation, exporter.output)
+
+
+def test_pipeline_uses_source_driver_only_when_needed_for_existing_artifact():
+    source = BackupArtifact(
+        BackupOperation("local", "hourly", datetime(2026, 8, 27, 12)),
+        ReadableTree(),
+    )
+    exporter = ExportDriver()
+    destination = DestinationDriver()
+
+    needed = Pipeline(exporter, destination, source_artifact=source)
+    skipped = Pipeline(
+        exporter,
+        destination,
+        source_artifact=BackupArtifact(source.operation, ByteStream()),
+    )
+
+    assert needed.steps == (
+        PipelineStep(exporter, "export"),
+        PipelineStep(destination, "import"),
+    )
+    assert skipped.steps == (PipelineStep(destination, "import"),)
 
 
 def test_pipeline_passes_each_side_of_incremental_base():
@@ -302,7 +325,7 @@ def test_pipeline_passes_each_side_of_incremental_base():
     )
     operation = BackupOperation("home", "hourly", datetime(2026, 8, 27, 13, 0))
 
-    Pipeline(DriverSource(source), destination, (exporter,)).execute(operation, base)
+    Pipeline(source, destination, (exporter,)).execute(operation, base)
 
     assert exporter.call == (source.output, source_base)
     assert destination.call == (exporter.output, operation, destination_base)
@@ -311,10 +334,9 @@ def test_pipeline_passes_each_side_of_incremental_base():
 def test_pipeline_executes_transform_capabilities():
     operation = BackupOperation("home", "hourly", datetime(2026, 8, 27, 13, 0))
     pipeline = Pipeline(
-        DriverSource(SourceDriver()),
+        SourceDriver(),
         DestinationDriver(),
         (ExportDriver(), CompressionDriver(), CompressedEncryptionDriver()),
-        requirements={DataProperty.ENCRYPTED},
     )
 
     artifact = pipeline.execute(operation)
@@ -323,7 +345,7 @@ def test_pipeline_executes_transform_capabilities():
 
 
 def test_pipeline_execution_error_names_backup_and_capability():
-    pipeline = Pipeline(DriverSource(SourceDriver()), BrokenDestinationDriver(), (ExportDriver(),))
+    pipeline = Pipeline(SourceDriver(), BrokenDestinationDriver(), (ExportDriver(),))
     operation = BackupOperation("home", "hourly", datetime(2026, 8, 27, 13, 0))
 
     with pytest.raises(PipelineError) as error:
@@ -335,7 +357,7 @@ def test_pipeline_execution_error_names_backup_and_capability():
 
 
 def test_pipeline_formats_capability_failure_with_context():
-    pipeline = Pipeline(DriverSource(SourceDriver()), DestinationDriver(), (FailingExportDriver(),))
+    pipeline = Pipeline(SourceDriver(), DestinationDriver(), (FailingExportDriver(),))
     operation = BackupOperation("home", "hourly", datetime(2026, 8, 27, 13, 0))
 
     with pytest.raises(PipelineError) as error:
@@ -349,10 +371,9 @@ def test_pipeline_formats_capability_failure_with_context():
 def test_pipeline_cleans_up_temporary_representations():
     snapshotter = SnapshotDriver()
     pipeline = Pipeline(
-        DriverSource(SourceDriver()),
+        SourceDriver(),
         DestinationDriver(),
         (snapshotter, ExportDriver()),
-        requirements={DataProperty.SNAPSHOT},
     )
 
     pipeline.execute(BackupOperation("home", "hourly", datetime(2026, 8, 27, 13, 0)))
@@ -363,10 +384,9 @@ def test_pipeline_cleans_up_temporary_representations():
 def test_pipeline_cleans_up_in_reverse_order_after_failure():
     cleanups: list[str] = []
     pipeline = Pipeline(
-        DriverSource(SourceDriver()),
+        SourceDriver(),
         FailingDestinationDriver(),
         (SnapshotDriver(cleanups), TemporaryExportDriver(cleanups)),
-        requirements={DataProperty.SNAPSHOT},
     )
 
     with pytest.raises(PipelineError, match="failed in destination.import"):
@@ -377,10 +397,9 @@ def test_pipeline_cleans_up_in_reverse_order_after_failure():
 
 def test_pipeline_formats_cleanup_failure_with_context():
     pipeline = Pipeline(
-        DriverSource(SourceDriver()),
+        SourceDriver(),
         DestinationDriver(),
         (FailingCleanupDriver(), ExportDriver()),
-        requirements={DataProperty.SNAPSHOT},
     )
 
     with pytest.raises(PipelineError) as error:
@@ -394,10 +413,9 @@ def test_pipeline_formats_cleanup_failure_with_context():
 def test_pipeline_rejects_temporary_capability_without_cleanup():
     with pytest.raises(PipelineError, match="driver provides no cleanup capability"):
         Pipeline(
-            DriverSource(SourceDriver()),
+            SourceDriver(),
             DestinationDriver(),
             (SnapshotWithoutCleanupDriver(), ExportDriver()),
-            requirements={DataProperty.SNAPSHOT},
         )
 
 
@@ -405,16 +423,28 @@ def test_pipeline_resolves_compatible_driver_capabilities():
     source = SourceDriver()
     exporter = ExportDriver()
     destination = DestinationDriver()
-    driver_source = DriverSource(source)
-    pipeline = Pipeline(driver_source, destination, (exporter,))
+    pipeline = Pipeline(source, destination, (exporter,))
 
     assert pipeline.steps == (
         PipelineStep(source, "source"),
         PipelineStep(exporter, "export"),
         PipelineStep(destination, "import"),
     )
-    assert pipeline.source is driver_source
+    assert pipeline.source_driver is source
+    assert pipeline.source_artifact is None
     assert pipeline.destination is destination
+
+
+def test_pipeline_automatically_snapshots_snapshot_capable_source():
+    source = BtrfsDriver(Path("/source"))
+    destination = TarDriver(Path("/destination"))
+
+    assert Pipeline(source, destination).steps == (
+        PipelineStep(source, "source"),
+        PipelineStep(source, "snapshot"),
+        PipelineStep(destination, "export"),
+        PipelineStep(destination, "import"),
+    )
 
 
 def test_pipeline_rejects_incompatible_drivers():
@@ -424,12 +454,12 @@ def test_pipeline_rejects_incompatible_drivers():
     with pytest.raises(
         PipelineError, match="destination driver empty provides no storage capability"
     ):
-        Pipeline(DriverSource(source), destination)
+        Pipeline(source, destination)
 
 
 def test_pipeline_explains_incompatible_representations():
     with pytest.raises(PipelineError) as error:
-        Pipeline(DriverSource(SourceDriver()), DestinationDriver())
+        Pipeline(SourceDriver(), DestinationDriver())
 
     assert str(error.value) == (
         "cannot build backup pipeline:\n"
@@ -447,7 +477,7 @@ def test_pipeline_explains_incompatible_existing_artifact():
     )
 
     with pytest.raises(PipelineError) as error:
-        Pipeline(source, DestinationDriver())
+        Pipeline(EmptyDriver(), DestinationDriver(), source_artifact=source)
 
     assert str(error.value) == (
         "cannot build backup pipeline:\n"
@@ -458,16 +488,15 @@ def test_pipeline_explains_incompatible_existing_artifact():
     )
 
 
-def test_pipeline_includes_required_capability():
+def test_pipeline_uses_every_configured_driver():
     source = SourceDriver()
     exporter = ExportDriver()
     encryption = EncryptionDriver()
     destination = DestinationDriver()
     pipeline = Pipeline(
-        DriverSource(source),
+        source,
         destination,
         (exporter, encryption),
-        requirements={DataProperty.ENCRYPTED},
     )
 
     assert pipeline.steps == (
@@ -476,37 +505,34 @@ def test_pipeline_includes_required_capability():
         PipelineStep(encryption, "encrypt"),
         PipelineStep(destination, "import"),
     )
-    assert pipeline.requirements == {DataProperty.ENCRYPTED}
 
 
-def test_pipeline_rejects_unsatisfied_requirement():
+def test_pipeline_rejects_unused_driver():
     with pytest.raises(PipelineError) as error:
         Pipeline(
-            DriverSource(SourceDriver()),
+            SourceDriver(),
             DestinationDriver(),
-            (ExportDriver(),),
-            requirements={DataProperty.ENCRYPTED},
+            (ExportDriver(), EmptyDriver()),
         )
 
     assert str(error.value) == (
         "cannot build backup pipeline:\n"
         "  compatible route: source.source -> export.export -> destination.import\n"
-        "  missing required properties: encrypted"
+        "  unused drivers: empty"
     )
 
 
 def test_pipeline_explains_when_required_representation_cannot_be_stored():
     with pytest.raises(PipelineError) as error:
         Pipeline(
-            DriverSource(BtrfsDriver(Path("/source"))),
+            BtrfsDriver(Path("/source")),
             BtrfsDriver(Path("/destination")),
             (GPGDriver(Path("/public-key.asc")),),
-            requirements={DataProperty.ENCRYPTED},
         )
 
     assert str(error.value) == (
         "cannot build backup pipeline:\n"
-        "  route satisfying requirements: btrfs.source -> btrfs.snapshot -> "
+        "  last usable route: btrfs.source -> btrfs.snapshot -> "
         "btrfs.export -> gpg.encrypt\n"
         "  produced: GPGStream\n"
         "  available properties: encrypted, snapshot\n"
@@ -518,10 +544,9 @@ def test_pipeline_explains_when_required_representation_cannot_be_stored():
 def test_pipeline_reports_the_storage_route_with_fewest_missing_properties():
     with pytest.raises(PipelineError) as error:
         Pipeline(
-            DriverSource(SourceDriver()),
+            SourceDriver(),
             CompressionRequiredDestinationDriver(),
             (ExportDriver(), EncryptionDriver()),
-            requirements={DataProperty.ENCRYPTED},
         )
 
     assert str(error.value) == (
@@ -539,10 +564,9 @@ def test_pipeline_honors_capability_requirements():
     encryption = CompressedEncryptionDriver()
     destination = DestinationDriver()
     pipeline = Pipeline(
-        DriverSource(source),
+        source,
         destination,
         (exporter, encryption, compression),
-        requirements={DataProperty.ENCRYPTED},
     )
 
     assert pipeline.steps == (

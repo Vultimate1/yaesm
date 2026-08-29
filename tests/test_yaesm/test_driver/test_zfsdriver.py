@@ -11,7 +11,7 @@ import voluptuous as vlp
 
 import yaesm.command as command_module
 import yaesm.ty as ty
-from yaesm.backup import Backup, BackupArtifact, BackupOperation, DriverSource
+from yaesm.backup import Backup, BackupArtifact, BackupOperation
 from yaesm.check import CheckRole
 from yaesm.command import Command, CommandError, CommandResult, CommandRunner
 from yaesm.driver.zfsdriver import (
@@ -171,7 +171,10 @@ def test_encryption_is_advertised_by_configured_driver():
     driver = ZFSDriver("tank/home", encryption=True)
 
     assert driver.capability_metadata("source").adds == {DataProperty.ENCRYPTED}
-    assert driver.capability_metadata("store").adds == {DataProperty.ENCRYPTED}
+    assert driver.capability_metadata("store").adds == {
+        DataProperty.ENCRYPTED,
+        DataProperty.SNAPSHOT,
+    }
     assert driver.capability_metadata("export").adds == {DataProperty.ENCRYPTED}
 
 
@@ -836,7 +839,7 @@ def test_backup_execute_uses_zfs_store_and_incremental_base():
     runner = RecordingRunner(stdouts=(f"backup/home@{old.artifact_name}\n",))
     backup = Backup(
         "example",
-        DriverSource(ZFSDriver("tank/home")),
+        ZFSDriver("tank/home"),
         with_runner(ZFSDriver("backup/home"), runner),
     )
 
@@ -856,15 +859,13 @@ def test_backup_execute_uses_zfs_store_and_incremental_base():
     )
 
 
-@pytest.mark.parametrize("requirements", [frozenset(), frozenset({DataProperty.ENCRYPTED})])
-def test_backup_execute_preserves_configured_native_encryption(requirements):
+def test_backup_execute_preserves_configured_native_encryption():
     source_runner = RecordingRunner(stdouts=("aes-256-gcm\n",))
     destination_runner = RecordingRunner()
     backup = Backup(
         "example",
-        DriverSource(with_runner(ZFSDriver("tank/home", encryption=True), source_runner)),
+        with_runner(ZFSDriver("tank/home", encryption=True), source_runner),
         with_runner(ZFSDriver("backup/home"), destination_runner),
-        requirements=requirements,
     )
 
     artifact = backup.execute("hourly", operation().created_at)
@@ -928,7 +929,7 @@ def test_zfs_full_incremental_and_lifecycle(
     destination_driver = ZFSDriver(destination_dataset)
     backup = Backup(
         "example",
-        DriverSource(source_driver),
+        source_driver,
         destination_driver,
     )
     created_at = datetime(2026, 8, 27, 12, 30)
@@ -994,9 +995,8 @@ def test_zfs_raw_encrypted_full_and_incremental(
 
     backup = Backup(
         "encrypted",
-        DriverSource(ZFSDriver(source_dataset, encryption=True)),
+        ZFSDriver(source_dataset, encryption=True),
         ZFSDriver(destination_dataset),
-        requirements=frozenset({DataProperty.ENCRYPTED}),
     )
     created_at = datetime(2026, 8, 27, 12, 30)
 
@@ -1035,7 +1035,7 @@ def test_zfs_preserves_native_compression_by_default(
 
     backup = Backup(
         "compressed",
-        DriverSource(ZFSDriver(source_dataset)),
+        ZFSDriver(source_dataset),
         ZFSDriver(destination_dataset),
     )
     created_at = datetime(2026, 8, 27, 12, 30)

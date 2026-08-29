@@ -11,7 +11,7 @@ import voluptuous as vlp
 import yaesm.command as command_module
 import yaesm.driver.tardriver as tar_module
 import yaesm.ty as ty
-from yaesm.backup import BackupArtifact, BackupOperation, DriverSource
+from yaesm.backup import BackupArtifact, BackupOperation
 from yaesm.check import CheckRole
 from yaesm.command import Command, CommandError, CommandResult, CommandRunner
 from yaesm.driver.gpgdriver import GPGDriver
@@ -481,10 +481,9 @@ def test_encrypted_tar_pipeline_uses_tar_as_destination(tmp_path):
     gpg = GPGDriver(tmp_path / "public-key.asc")
 
     pipeline = Pipeline(
-        DriverSource(source),
+        source,
         tar,
         (gpg,),
-        requirements={DataProperty.ENCRYPTED},
     )
 
     assert pipeline.steps == (
