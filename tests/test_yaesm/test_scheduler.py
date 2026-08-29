@@ -13,6 +13,7 @@ from apscheduler.triggers.date import DateTrigger
 import yaesm.scheduler as scheduler_module
 from yaesm.backup import Backup, BackupError
 from yaesm.config import Config
+from yaesm.logging import current_backup
 from yaesm.schedule import CronSchedule, OnDemandSchedule, Schedule
 from yaesm.scheduler import Scheduler, SchedulerError
 
@@ -24,10 +25,12 @@ def configured_backup(
     schedule: Schedule | None = None,
 ) -> tuple[Config, Backup]:
     schedule = schedule or Schedule("hourly", CronSchedule("0 * * * *"))
+    destination = mock.Mock()
+    destination.format_locator.return_value = "/backups/home"
     backup = Backup(
         name,
         mock.Mock(),
-        mock.Mock(),
+        destination,
         schedules=(schedule,),
     )
     return Config({}, {name: backup}), backup
@@ -293,6 +296,7 @@ def test_requested_job_streams_logs_and_result(monkeypatch, caplog):
         side_effect=lambda *_args: logging.getLogger("yaesm.test").info("copying data")
     )
     monkeypatch.setattr(Backup, "execute", execute)
+    monkeypatch.setattr(scheduler_module.time, "monotonic", mock.Mock(side_effect=(10, 75)))
 
     with caplog.at_level(logging.INFO):
         scheduler_module._execute_backup(
@@ -308,14 +312,41 @@ def test_requested_job_streams_logs_and_result(monkeypatch, caplog):
     assert streamed == [
         {"type": "log", "message": "backup 'home' (hourly) started"},
         {"type": "log", "message": "copying data"},
-        {"type": "log", "message": "backup 'home' (hourly) completed"},
+        {
+            "type": "log",
+            "message": "backup 'home' (hourly) completed in 1m 5s: /backups/home",
+        },
         {"type": "result", "ok": True, "request_id": str(_REQUEST_ID)},
     ]
     assert caplog.messages == [
         "backup 'home' (hourly) started",
         "copying data",
-        "backup 'home' (hourly) completed",
+        "backup 'home' (hourly) completed in 1m 5s: /backups/home",
     ]
+
+
+def test_job_exposes_and_restores_backup_context(monkeypatch):
+    config, backup = configured_backup()
+    observed = None
+
+    def execute(*_args):
+        nonlocal observed
+        observed = current_backup.get()
+        return mock.Mock()
+
+    monkeypatch.setattr(Backup, "execute", execute)
+
+    scheduler_module._execute_backup(
+        backup,
+        "hourly",
+        config.backups,
+        None,
+        None,
+        mock.MagicMock(),
+    )
+
+    assert observed == "backup 'home' (hourly)"
+    assert current_backup.get() is None
 
 
 def test_requested_job_streams_expected_failure(monkeypatch):
@@ -339,6 +370,7 @@ def test_requested_job_streams_expected_failure(monkeypatch):
         "error": "copy failed",
         "request_id": str(_REQUEST_ID),
     }
+    assert current_backup.get() is None
 
 
 def test_requested_job_hides_unexpected_failure(monkeypatch):

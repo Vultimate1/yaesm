@@ -13,6 +13,17 @@ from uuid import UUID
 request_id: contextvars.ContextVar[UUID | None] = contextvars.ContextVar(
     "yaesm_request_id", default=None
 )
+current_backup: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "yaesm_current_backup", default=None
+)
+
+
+def format_duration(seconds: float) -> str:
+    """Format elapsed seconds for user-facing log messages."""
+    minutes, seconds = divmod(round(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    parts = ([f"{hours}h"] if hours else []) + ([f"{minutes}m"] if minutes else [])
+    return " ".join((*parts, f"{seconds}s"))
 
 
 class RequestFilter(logging.Filter):

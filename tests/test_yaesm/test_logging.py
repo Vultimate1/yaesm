@@ -5,7 +5,13 @@ import logging.handlers
 from unittest import mock
 from uuid import UUID
 
-from yaesm.logging import RequestFilter, configure, request_id
+from yaesm.logging import RequestFilter, configure, format_duration, request_id
+
+
+def test_format_duration():
+    assert format_duration(0) == "0s"
+    assert format_duration(65) == "1m 5s"
+    assert format_duration(3661) == "1h 1m 1s"
 
 
 def test_configure_uses_uniform_format():

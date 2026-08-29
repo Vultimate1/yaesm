@@ -10,6 +10,7 @@ import pytest
 
 import yaesm.command as command_module
 from yaesm.command import CommandError, CommandRunner, CommandStage
+from yaesm.logging import current_backup
 from yaesm.ssh import SSHTarget
 
 
@@ -38,6 +39,24 @@ def test_pipeline_logs_commands(caplog):
         CommandRunner().pipeline(commands)
 
     assert caplog.messages == ["exec: " + " | ".join(shlex.join(command) for command in commands)]
+
+
+def test_pipeline_logs_status_while_running(monkeypatch, caplog):
+    monkeypatch.setattr(command_module, "_STATUS_LOG_INTERVAL_SECONDS", 0.01)
+    token = current_backup.set("backup 'home' (manual)")
+
+    try:
+        with caplog.at_level(logging.INFO, logger="yaesm.command"):
+            CommandRunner().pipeline([[sys.executable, "-c", "import time; time.sleep(0.04)"]])
+    finally:
+        current_backup.reset(token)
+
+    assert caplog.messages
+    assert all(
+        message.startswith("backup 'home' (manual): command pipeline still running (")
+        and message.endswith(" elapsed)")
+        for message in caplog.messages
+    )
 
 
 def test_run_captures_output():

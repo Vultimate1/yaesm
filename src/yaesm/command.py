@@ -8,15 +8,18 @@ import logging
 import shlex
 import subprocess
 import tempfile
+import time
 
 import yaesm.ty as ty
 from yaesm.errors import YaesmError
+from yaesm.logging import current_backup, format_duration
 
 if ty.TYPE_CHECKING:
     from yaesm.ssh import SSHTarget
 
 Command: ty.TypeAlias = ty.Sequence[str | ty.Path]
 logger = logging.getLogger(__name__)
+_STATUS_LOG_INTERVAL_SECONDS = 30
 
 
 @dataclasses.dataclass(frozen=True, init=False)
@@ -122,7 +125,20 @@ class CommandRunner:
                     previous_stdout = process.stdout
                     processes.append(process)
 
-                output, _stderr = processes[-1].communicate()
+                started = time.monotonic()
+                backup = current_backup.get()
+                while True:
+                    try:
+                        output, _stderr = processes[-1].communicate(
+                            timeout=_STATUS_LOG_INTERVAL_SECONDS if backup else None
+                        )
+                        break
+                    except subprocess.TimeoutExpired:
+                        logger.info(
+                            "%s: command pipeline still running (%s elapsed)",
+                            backup,
+                            format_duration(time.monotonic() - started),
+                        )
                 for process in processes[:-1]:
                     process.wait()
             except OSError as error:

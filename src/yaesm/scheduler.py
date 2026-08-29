@@ -2,6 +2,7 @@
 
 import logging
 import queue
+import time
 from _thread import LockType
 from datetime import datetime
 from threading import Lock
@@ -16,7 +17,7 @@ from yaesm.backup import Backup
 from yaesm.config import Config
 from yaesm.control import ControlMessage
 from yaesm.errors import YaesmError
-from yaesm.logging import RequestFilter, request_id
+from yaesm.logging import RequestFilter, current_backup, format_duration, request_id
 from yaesm.schedule import OnDemandSchedule
 
 logger = logging.getLogger(__name__)
@@ -176,11 +177,19 @@ def _execute_backup(
         logging.getLogger().addHandler(handler)
         token = request_id.set(backup_request_id)
 
+    backup_token = current_backup.set(f"backup {backup.name!r} ({schedule_name})")
     try:
         with backup_lock:
             logger.info("backup %r (%s) started", backup.name, schedule_name)
-            backup.execute(schedule_name, datetime.now(), backups)
-            logger.info("backup %r (%s) completed", backup.name, schedule_name)
+            started = time.monotonic()
+            artifact = backup.execute(schedule_name, datetime.now(), backups)
+            logger.info(
+                "backup %r (%s) completed in %s: %s",
+                backup.name,
+                schedule_name,
+                format_duration(time.monotonic() - started),
+                backup.destination.format_locator(artifact),
+            )
     except BaseException as error:
         if messages is not None:
             message = error.format() if isinstance(error, YaesmError) else "internal backup error"
@@ -197,6 +206,7 @@ def _execute_backup(
         if messages is not None:
             messages.put({"type": "result", "ok": True, "request_id": serialized_request_id})
     finally:
+        current_backup.reset(backup_token)
         if token is not None:
             request_id.reset(token)
         if handler is not None:
