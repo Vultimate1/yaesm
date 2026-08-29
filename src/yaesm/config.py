@@ -13,8 +13,8 @@ from yaesm.driver import load_drivers
 from yaesm.driver.driverbase import DriverBase, GlobalSettings
 from yaesm.errors import YaesmError
 from yaesm.pipeline import Pipeline
-from yaesm.retention import RetentionPolicyBase
-from yaesm.schedule import Schedule, ScheduleBase, schedule_name_valid
+from yaesm.retention import KeepLast, RetentionPolicyBase
+from yaesm.schedule import OnDemandSchedule, Schedule, ScheduleBase, schedule_name_valid
 from yaesm.ssh import SSHTarget, SSHTargetError
 
 
@@ -358,6 +358,10 @@ def parse_schedules(
             if not schedule_name_valid(schedule_name):
                 raise ConfigError(f"invalid schedule name: {schedule_name!r}")
             schedule, retention = _parse_schedule(schedule_name, definition)
+            if schedule_name == "manual" and not isinstance(
+                schedule.implementation, OnDemandSchedule
+            ):
+                raise ConfigError("schedule 'manual' must be on-demand")
             schedules.append(schedule)
             policies.extend(retention)
         except YaesmError as error:
@@ -365,6 +369,9 @@ def parse_schedules(
 
     if messages:
         raise ConfigError(messages)
+    if not any(isinstance(schedule.implementation, OnDemandSchedule) for schedule in schedules):
+        schedules.append(Schedule("manual", OnDemandSchedule()))
+        policies.append(KeepLast(1, "manual"))
     return tuple(schedules), tuple(policies)
 
 

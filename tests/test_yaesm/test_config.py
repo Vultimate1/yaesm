@@ -199,7 +199,11 @@ def test_config_types_are_discovered_from_subclasses():
     assert isinstance(backup.source, AutomaticallyDiscoveredDriver)
     assert isinstance(backup.destination, AutomaticallyDiscoveredDriver)
     assert isinstance(backup.schedules[0].implementation, AutomaticallyDiscoveredSchedule)
-    assert backup.retention_policies == (AutomaticallyDiscoveredRetention(2, "automatic"),)
+    assert backup.schedules[1] == Schedule("manual", OnDemandSchedule())
+    assert backup.retention_policies == (
+        AutomaticallyDiscoveredRetention(2, "automatic"),
+        KeepLast(1, "manual"),
+    )
 
 
 def test_config_has_no_hardcoded_type_registries():
@@ -264,8 +268,11 @@ def test_parse_config_builds_complete_backup():
     assert isinstance(backup.transforms[1], GPGDriver)
     assert backup.transforms[1].public_key == Path("/root/backup-key.asc")
     assert backup.transforms[1].ssh is backup.source.ssh
-    assert backup.schedules == (Schedule("daily", CronSchedule("30 4 * * *")),)
-    assert backup.retention_policies == (KeepLast(7, "daily"),)
+    assert backup.schedules == (
+        Schedule("daily", CronSchedule("30 4 * * *")),
+        Schedule("manual", OnDemandSchedule()),
+    )
+    assert backup.retention_policies == (KeepLast(7, "daily"), KeepLast(1, "manual"))
 
 
 def test_parse_config_builds_previous_name_lookup():
@@ -292,6 +299,7 @@ def test_parse_config_builds_previous_name_lookup():
             CronSchedule("30 4 * * *"),
             previous_names=("daily", "old-daily"),
         ),
+        Schedule("manual", OnDemandSchedule()),
     )
     assert config.backups_by_name == {
         "laptop-home": backup,
@@ -926,6 +934,49 @@ def test_parse_schedules():
         KeepLast(3, "daily"),
         KeepLast(2, "manual"),
     )
+
+
+def test_parse_schedules_adds_implicit_manual_schedule():
+    schedules, retention = parse_schedules(
+        {
+            "daily": {
+                "cron": "30 4 * * *",
+                "retention": {"keep-last": 7},
+            }
+        }
+    )
+
+    assert schedules == (
+        Schedule("daily", CronSchedule("30 4 * * *")),
+        Schedule("manual", OnDemandSchedule()),
+    )
+    assert retention == (KeepLast(7, "daily"), KeepLast(1, "manual"))
+
+
+def test_parse_schedules_preserves_explicit_on_demand_schedule():
+    schedules, retention = parse_schedules(
+        {
+            "adhoc": {
+                "on-demand": {},
+                "retention": {"keep-last": 4},
+            }
+        }
+    )
+
+    assert schedules == (Schedule("adhoc", OnDemandSchedule()),)
+    assert retention == (KeepLast(4, "adhoc"),)
+
+
+def test_parse_schedules_reserves_manual_for_on_demand():
+    with pytest.raises(ConfigError, match="schedule 'manual' must be on-demand"):
+        parse_schedules(
+            {
+                "manual": {
+                    "cron": "30 4 * * *",
+                    "retention": {"keep-last": 1},
+                }
+            }
+        )
 
 
 @pytest.mark.parametrize(
