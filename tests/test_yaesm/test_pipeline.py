@@ -518,7 +518,7 @@ def test_pipeline_rejects_unused_driver():
     assert str(error.value) == (
         "cannot build backup pipeline:\n"
         "  compatible route: source.source -> export.export -> destination.import\n"
-        "  unused drivers: empty"
+        "  next configured driver cannot be used: empty"
     )
 
 
@@ -557,11 +557,11 @@ def test_pipeline_reports_the_storage_route_with_fewest_missing_properties():
     )
 
 
-def test_pipeline_honors_capability_requirements():
+def test_pipeline_preserves_configured_driver_order():
     source = SourceDriver()
     exporter = ExportDriver()
     compression = CompressionDriver()
-    encryption = CompressedEncryptionDriver()
+    encryption = EncryptionDriver()
     destination = DestinationDriver()
     pipeline = Pipeline(
         source,
@@ -572,7 +572,22 @@ def test_pipeline_honors_capability_requirements():
     assert pipeline.steps == (
         PipelineStep(source, "source"),
         PipelineStep(exporter, "export"),
-        PipelineStep(compression, "compress"),
         PipelineStep(encryption, "encrypt"),
+        PipelineStep(compression, "compress"),
         PipelineStep(destination, "import"),
+    )
+
+
+def test_pipeline_rejects_incompatible_configured_driver_order():
+    with pytest.raises(PipelineError) as error:
+        Pipeline(
+            SourceDriver(),
+            DestinationDriver(),
+            (ExportDriver(), CompressedEncryptionDriver(), CompressionDriver()),
+        )
+
+    assert str(error.value) == (
+        "cannot build backup pipeline:\n"
+        "  compatible route: source.source -> export.export -> destination.import\n"
+        "  next configured driver cannot be used: encryption"
     )

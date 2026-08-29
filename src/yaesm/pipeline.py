@@ -45,7 +45,7 @@ class IncrementalBase:
 
 @dataclasses.dataclass(frozen=True, init=False)
 class Pipeline:
-    """A resolved sequence using every configured driver."""
+    """A resolved sequence using every configured driver in order."""
 
     source_driver: DriverBase
     destination: DriverBase
@@ -174,15 +174,15 @@ def _resolve(
         used = frozenset()
 
     available = (source_driver, *drivers, destination)
+    configured_indexes = {id(driver): index for index, driver in enumerate(drivers)}
 
-    required_drivers = frozenset(id(driver) for driver in drivers)
     queue: collections.deque[
         tuple[
             type[Representation],
             frozenset[DataProperty],
             tuple[PipelineStep, ...],
             frozenset[tuple[int, str]],
-            frozenset[int],
+            int,
         ]
     ] = collections.deque(
         [
@@ -191,7 +191,7 @@ def _resolve(
                 properties,
                 steps,
                 used,
-                required_drivers,
+                0,
             )
         ]
     )
@@ -199,7 +199,7 @@ def _resolve(
     complete_route: _Route | None = None
     rejected_route: (
         tuple[
-            frozenset[int],
+            int,
             frozenset[DataProperty],
             tuple[PipelineStep, ...],
         ]
@@ -207,7 +207,7 @@ def _resolve(
     ) = None
 
     while queue:
-        current_type, properties, steps, used, remaining = queue.popleft()
+        current_type, properties, steps, used, driver_index = queue.popleft()
         for driver in available:
             for capability in sorted(driver.pipeline_capabilities() - {"source"}):
                 step = PipelineStep(driver, capability)
@@ -216,20 +216,26 @@ def _resolve(
                 if step_id in used or not issubclass(current_type, _input_type(step)):
                     continue
 
+                configured_index = configured_indexes.get(id(driver))
+                if configured_index not in (None, driver_index - 1, driver_index):
+                    continue
+                next_driver_index = (
+                    driver_index + 1 if configured_index == driver_index else driver_index
+                )
+
                 output_type = _output_type(step)
                 next_properties = properties | metadata.adds
                 next_steps = (*steps, step)
-                next_remaining = remaining - {id(driver)}
                 if driver is destination and issubclass(output_type, BackupArtifact):
                     missing = (metadata.requires - properties) | (
                         required_properties - next_properties
                     )
-                    if not missing and not next_remaining:
+                    if not missing and next_driver_index == len(drivers):
                         return next_steps
-                    rejected = (next_remaining, missing, next_steps)
-                    if rejected_route is None or len(next_remaining) + len(missing) < len(
-                        rejected_route[0]
-                    ) + len(rejected_route[1]):
+                    rejected = (next_driver_index, missing, next_steps)
+                    if rejected_route is None or len(drivers) - next_driver_index + len(
+                        missing
+                    ) < len(drivers) - rejected_route[0] + len(rejected_route[1]):
                         rejected_route = rejected
                     continue
                 if not metadata.requires <= properties:
@@ -241,15 +247,15 @@ def _resolve(
                             next_properties,
                             next_steps,
                             used | {step_id},
-                            next_remaining,
+                            next_driver_index,
                         )
                     )
-                    if not next_remaining and complete_route is None:
+                    if next_driver_index == len(drivers) and complete_route is None:
                         complete_route = (output_type, next_properties, next_steps)
                     if len(next_steps) > len(furthest[2]):
                         furthest = (output_type, next_properties, next_steps)
 
-    if rejected_route is not None and not rejected_route[0]:
+    if rejected_route is not None and rejected_route[0] == len(drivers):
         _, missing, steps = rejected_route
         raise PipelineError(
             "cannot build backup pipeline:\n"
@@ -259,12 +265,12 @@ def _resolve(
     if complete_route is not None:
         raise _incompatible_pipeline_error(complete_route, storage_steps)
     if rejected_route is not None:
-        unused, _, steps = rejected_route
-        names = ", ".join(driver.name() for driver in drivers if id(driver) in unused)
+        next_driver_index, _, steps = rejected_route
         raise PipelineError(
             "cannot build backup pipeline:\n"
             f"  compatible route: {_format_steps(steps)}\n"
-            f"  unused drivers: {names}"
+            f"  next configured driver cannot be used: "
+            f"{drivers[next_driver_index].name()}"
         )
 
     raise _incompatible_pipeline_error(furthest, storage_steps)
