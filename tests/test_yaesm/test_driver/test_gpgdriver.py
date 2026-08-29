@@ -26,6 +26,7 @@ from yaesm.representation import (
     EncryptedStream,
     Representation,
 )
+from yaesm.ssh import SSHTarget
 
 
 class RecordingRunner(CommandRunner):
@@ -64,6 +65,16 @@ def test_config_schema_accepts_mapping(tmp_path):
     assert GPGDriver.config_schema()({"public_key": str(public_key)}) == {"public_key": public_key}
 
 
+def test_config_schema_accepts_ssh(tmp_path):
+    public_key = tmp_path / "backup-key.asc"
+    ssh = SSHTarget("ssh://host", tmp_path / "identity")
+
+    assert GPGDriver.config_schema()({"public_key": public_key, "ssh": ssh}) == {
+        "public_key": public_key,
+        "ssh": ssh,
+    }
+
+
 @pytest.mark.parametrize("value", [None, 1, [], {}])
 def test_config_schema_rejects_invalid_public_key_type(value):
     with pytest.raises(vlp.Invalid, match="public_key must be a path"):
@@ -75,6 +86,11 @@ def test_config_schema_rejects_relative_public_key():
         GPGDriver.config_schema()("backup-key.asc")
 
 
+def test_config_schema_rejects_invalid_ssh(tmp_path):
+    with pytest.raises(vlp.Invalid, match="ssh must be an SSHTarget"):
+        GPGDriver.config_schema()({"public_key": tmp_path / "key", "ssh": "ssh://host"})
+
+
 @pytest.mark.parametrize("config", [{}, {"public_key": "/key", "unknown": True}])
 def test_config_schema_rejects_invalid_mapping(config):
     with pytest.raises(vlp.Invalid):
@@ -82,9 +98,11 @@ def test_config_schema_rejects_invalid_mapping(config):
 
 
 def test_config_schema_output_constructs_driver(tmp_path):
-    config = GPGDriver.config_schema()(tmp_path / "backup-key.asc")
+    ssh = SSHTarget("ssh://host", tmp_path / "identity")
+    config = GPGDriver.config_schema()({"public_key": tmp_path / "backup-key.asc", "ssh": ssh})
 
     assert GPGDriver(**config).public_key == tmp_path / "backup-key.asc"
+    assert GPGDriver(**config).ssh is ssh
 
 
 def test_constructor_rejects_invalid_public_key_type():
@@ -156,6 +174,47 @@ def test_key_check_reports_command_failure(tmp_path, monkeypatch):
     assert result.stderr == "invalid public key"
 
 
+def test_checks_run_where_the_public_key_is_stored(tmp_path, monkeypatch):
+    public_key = tmp_path / "backup-key.asc"
+    ssh = SSHTarget("ssh://host", tmp_path / "identity")
+    runner = RecordingRunner(
+        CommandResult("gpg 2.4\n", "", (0,)),
+        CommandResult(None, "", (0,)),
+    )
+    monkeypatch.setattr(command_module, "run", runner.run)
+
+    results = tuple(check.run() for check in GPGDriver(public_key, ssh).check(CheckRole.TRANSFORM))
+
+    assert all(result.passed for result in results)
+    assert tuple(result.description for result in results) == (
+        f"gpg is installed on {ssh}",
+        f"public key can encrypt data: {public_key} on {ssh}",
+    )
+    assert runner.calls == [
+        (ssh.openssh_command(("gpg", "--version")), True, False),
+        (
+            ssh.openssh_command(
+                (
+                    "gpg",
+                    "--batch",
+                    "--no-tty",
+                    "--no-keyring",
+                    "--compress-algo",
+                    "none",
+                    "--recipient-file",
+                    str(public_key),
+                    "--output",
+                    os.devnull,
+                    "--encrypt",
+                    str(public_key),
+                )
+            ),
+            True,
+            False,
+        ),
+    ]
+
+
 def test_key_check_reports_start_failure(tmp_path, monkeypatch):
     public_key = tmp_path / "bad-key.asc"
     error = CommandError(("gpg", "--encrypt"), None, "Permission denied")
@@ -216,6 +275,28 @@ def test_cap_encrypt_appends_noninteractive_gpg_filter(tmp_path, suffixes):
             ),
         ),
         suffixes=(*suffixes, ".gpg"),
+    )
+
+
+def test_cap_encrypt_runs_gpg_where_the_public_key_is_stored(tmp_path):
+    public_key = tmp_path / "backup-key.asc"
+    ssh = SSHTarget("ssh://host", tmp_path / "identity")
+    source = CommandStream((("produce", "data"),))
+
+    stream = GPGDriver(public_key, ssh).cap_encrypt(source)
+
+    assert stream.commands[-1] == ssh.openssh_command(
+        (
+            "gpg",
+            "--batch",
+            "--no-tty",
+            "--no-keyring",
+            "--compress-algo",
+            "none",
+            "--recipient-file",
+            str(public_key),
+            "--encrypt",
+        )
     )
 
 

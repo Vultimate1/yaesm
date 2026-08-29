@@ -232,7 +232,15 @@ def test_parse_config_builds_complete_backup():
             },
             drivers=[
                 {"zstd": {"level": 7}},
-                {"gpg": "/root/backup-key.asc"},
+                {
+                    "gpg": {
+                        "public_key": "/root/backup-key.asc",
+                        "ssh": {
+                            "endpoint": "ssh://key-host",
+                            "identity_file": "/root/.ssh/key-host",
+                        },
+                    }
+                },
             ],
         )
     }
@@ -261,6 +269,10 @@ def test_parse_config_builds_complete_backup():
     assert backup.drivers[0].level == 7
     assert isinstance(backup.drivers[1], GPGDriver)
     assert backup.drivers[1].public_key == Path("/root/backup-key.asc")
+    assert backup.drivers[1].ssh == SSHTarget(
+        "ssh://key-host",
+        Path("/root/.ssh/key-host"),
+    )
     assert backup.schedules == (Schedule("daily", CronSchedule("30 4 * * *")),)
     assert backup.retention_policies == (KeepLast(7, "daily"),)
 
