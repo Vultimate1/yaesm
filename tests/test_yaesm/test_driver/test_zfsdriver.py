@@ -748,6 +748,17 @@ def test_cap_list_propagates_command_failure():
         with_runner(ZFSDriver("backup/home"), runner).cap_list("example")
 
 
+def test_cap_list_returns_empty_when_destination_does_not_exist():
+    error = CommandError(
+        ("zfs", "list"),
+        1,
+        "cannot open 'backup/home': dataset does not exist",
+    )
+    runner = RecordingRunner(run_failures=(error,))
+
+    assert with_runner(ZFSDriver("backup/home"), runner).cap_list("example") == ()
+
+
 def test_cap_list_remote(tmp_path):
     runner = RecordingRunner()
     target = SSHTarget("ssh://host", tmp_path / "key")

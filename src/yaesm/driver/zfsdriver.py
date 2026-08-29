@@ -8,7 +8,7 @@ import voluptuous as vlp
 import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.check import Check, CheckRole
-from yaesm.command import CommandResult
+from yaesm.command import CommandError, CommandResult
 from yaesm.driver.driverbase import (
     CapabilityMetadata,
     DriverBase,
@@ -298,24 +298,29 @@ class ZFSDriver(DriverBase):
         return self._record_artifact(bckp.BackupArtifact(operation, destination))
 
     def cap_list(self, backup_name: str) -> tuple[bckp.BackupArtifact[ZFSSnapshot], ...]:
-        result = self.runner.run(
-            command_for_target(
-                self.target,
-                (
-                    "zfs",
-                    "list",
-                    "-H",
-                    "-t",
-                    "snapshot",
-                    "-o",
-                    f"name,{_SOURCE_ARTIFACT_PROPERTY}",
-                    "-d",
-                    "1",
-                    self.dataset,
+        try:
+            result = self.runner.run(
+                command_for_target(
+                    self.target,
+                    (
+                        "zfs",
+                        "list",
+                        "-H",
+                        "-t",
+                        "snapshot",
+                        "-o",
+                        f"name,{_SOURCE_ARTIFACT_PROPERTY}",
+                        "-d",
+                        "1",
+                        self.dataset,
+                    ),
                 ),
-            ),
-            capture_output=True,
-        )
+                capture_output=True,
+            )
+        except CommandError as error:
+            if "dataset does not exist" in error.stderr:
+                return ()
+            raise
 
         prefix = f"{self.dataset}@"
         artifacts = []
