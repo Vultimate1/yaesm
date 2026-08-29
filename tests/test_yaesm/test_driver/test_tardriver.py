@@ -13,7 +13,14 @@ import yaesm.driver.tardriver as tar_module
 import yaesm.ty as ty
 from yaesm.backup import BackupArtifact, BackupOperation
 from yaesm.check import CheckRole
-from yaesm.command import Command, CommandError, CommandResult, CommandRunner
+from yaesm.command import (
+    Command,
+    CommandError,
+    CommandResult,
+    CommandRunner,
+    CommandStage,
+    PipelineCommand,
+)
 from yaesm.driver.gpgdriver import GPGDriver
 from yaesm.driver.rsyncdriver import RsyncDriver
 from yaesm.driver.tardriver import TarArchive, TarDriver, TarDriverError, TarStream
@@ -27,7 +34,7 @@ from yaesm.representation import (
     Representation,
     UncompressedStream,
 )
-from yaesm.ssh import SSHTarget, command_for_ssh
+from yaesm.ssh import SSHTarget
 
 _TAR_COMMAND = (
     "tar",
@@ -77,12 +84,17 @@ class RecordingRunner(CommandRunner):
 
     def pipeline(
         self,
-        commands: ty.Sequence[Command],
+        commands: ty.Sequence[PipelineCommand],
         *,
         capture_output: bool = False,
         check: bool = True,
     ) -> CommandResult:
-        normalized = tuple(tuple(str(argument) for argument in command) for command in commands)
+        normalized = tuple(
+            command.execution_command()
+            if isinstance(command, CommandStage)
+            else tuple(str(argument) for argument in command)
+            for command in commands
+        )
         self.pipeline_calls.append((normalized, capture_output, check))
         if self.pipeline_failure is not None:
             raise self.pipeline_failure
@@ -111,15 +123,6 @@ def test_config_schema(tmp_path):
 
 def test_config_schema_accepts_path_location(tmp_path):
     assert TarDriver.config_schema()({"location": tmp_path}) == {"location": tmp_path}
-
-
-def test_config_schema_accepts_ssh_target(tmp_path):
-    target = SSHTarget("ssh://host", tmp_path / "key")
-
-    assert TarDriver.config_schema()({"location": tmp_path, "ssh": target}) == {
-        "location": tmp_path,
-        "ssh": target,
-    }
 
 
 def test_config_schema_accepts_one_file_system(tmp_path):
@@ -154,13 +157,12 @@ def test_config_schema_rejects_invalid_configuration(config):
 
 
 def test_config_schema_output_constructs_driver(tmp_path):
-    target = SSHTarget("ssh://host", tmp_path / "key")
-    config = TarDriver.config_schema()({"location": tmp_path, "ssh": target})
+    config = TarDriver.config_schema()({"location": tmp_path})
 
     driver = TarDriver(**config)
 
     assert driver.location == tmp_path
-    assert driver.ssh is target
+    assert driver.ssh is None
 
 
 def test_constructor_rejects_invalid_one_file_system(tmp_path):
@@ -225,14 +227,14 @@ def test_non_destination_checks_only_require_tar(role, tmp_path):
 def test_cap_export_creates_complete_portable_archive(tmp_path):
     stream = TarDriver(tmp_path).cap_export(PathTree(Path("/source")))
 
-    assert stream == TarStream((_TAR_COMMAND,), suffixes=(".tar",))
+    assert stream == TarStream((CommandStage(_TAR_COMMAND),), suffixes=(".tar",))
 
 
 def test_cap_export_can_cross_filesystem_boundaries(tmp_path):
     stream = TarDriver(tmp_path, one_file_system=False).cap_export(PathTree(Path("/source")))
 
-    assert stream.commands == (
-        tuple(option for option in _TAR_COMMAND if option != "--one-file-system"),
+    assert stream.stages == (
+        CommandStage(tuple(option for option in _TAR_COMMAND if option != "--one-file-system")),
     )
 
 
@@ -242,17 +244,19 @@ def test_cap_export_runs_tar_on_source_target(tmp_path):
 
     stream = TarDriver(tmp_path).cap_export(source)
 
-    assert stream.commands == (command_for_ssh(target, _TAR_COMMAND),)
+    assert stream.stages == (CommandStage(_TAR_COMMAND, target),)
 
 
 def test_cap_export_excludes_destination_inside_source():
     stream = TarDriver(Path("/source/archives")).cap_export(PathTree(Path("/source")))
 
-    assert stream.commands == (
-        (
-            *_TAR_COMMAND[:-3],
-            "--exclude=./archives",
-            *_TAR_COMMAND[-3:],
+    assert stream.stages == (
+        CommandStage(
+            (
+                *_TAR_COMMAND[:-3],
+                "--exclude=./archives",
+                *_TAR_COMMAND[-3:],
+            )
         ),
     )
 
@@ -269,7 +273,7 @@ def test_cap_export_excludes_remote_destination_on_same_endpoint(tmp_path):
         "--exclude=./archives",
         *_TAR_COMMAND[-3:],
     )
-    assert stream.commands == (command_for_ssh(source_target, expected),)
+    assert stream.stages == (CommandStage(expected, source_target),)
 
 
 def test_cap_export_does_not_exclude_destination_on_different_endpoint(tmp_path):
@@ -279,7 +283,7 @@ def test_cap_export_does_not_exclude_destination_on_different_endpoint(tmp_path)
 
     stream = driver.cap_export(PathTree(Path("/source"), source_target))
 
-    assert stream.commands == (command_for_ssh(source_target, _TAR_COMMAND),)
+    assert stream.stages == (CommandStage(_TAR_COMMAND, source_target),)
 
 
 def test_cap_export_rejects_destination_equal_to_source(tmp_path):
@@ -312,7 +316,7 @@ def test_cap_import_stores_stream_atomically(tmp_path, monkeypatch):
     driver = TarDriver(tmp_path)
     driver.runner = runner
     source = CommandStream(
-        (("produce", "archive"),),
+        (CommandStage(("produce", "archive")),),
         suffixes=(".tar", ".zst", ".gpg"),
     )
 
@@ -343,7 +347,7 @@ def test_cap_import_writes_on_remote_target(tmp_path, monkeypatch):
     runner = RecordingRunner()
     driver = TarDriver(Path("/archives"), target)
     driver.runner = runner
-    source = CommandStream((("produce", "archive"),))
+    source = CommandStream((CommandStage(("produce", "archive")),))
 
     result = driver.cap_import(source, operation())
 
@@ -365,7 +369,7 @@ def test_cap_import_removes_temporary_after_pipeline_failure(tmp_path, monkeypat
     driver.runner = runner
 
     with pytest.raises(CommandError) as raised:
-        driver.cap_import(CommandStream((("produce",),)), operation())
+        driver.cap_import(CommandStream((CommandStage(("produce",)),)), operation())
 
     assert raised.value is error
     temporary = tmp_path / f".{operation().artifact_name}.tmp-{UUID(int=1).hex}"
@@ -382,7 +386,7 @@ def test_cap_import_removes_temporary_after_rename_failure(tmp_path, monkeypatch
     driver.runner = runner
 
     with pytest.raises(CommandError) as raised:
-        driver.cap_import(CommandStream((("produce",),)), operation())
+        driver.cap_import(CommandStream((CommandStage(("produce",)),)), operation())
 
     assert raised.value is error
     assert runner.run_calls[-1][0][0:2] == ("rm", "-f")
@@ -569,7 +573,7 @@ def test_tar_options_work_with_gnu_tar_and_bsdtar(tmp_path, executable):
     (source / "content").write_text("backup content")
     (destination / "excluded").write_text("must not be archived")
     (decoy / "included").write_text("must be archived")
-    command = TarDriver(destination).cap_export(PathTree(source)).commands[0]
+    command = TarDriver(destination).cap_export(PathTree(source)).stages[0].command
     archive = tmp_path / f"{executable}.tar"
 
     CommandRunner().pipeline(

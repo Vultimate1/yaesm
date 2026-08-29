@@ -37,13 +37,12 @@ class RsyncDriver(DriverBase):
         *,
         global_settings: GlobalSettings | None = None,
     ) -> None:
-        super().__init__(global_settings)
+        super().__init__(global_settings, ssh=ssh)
         if isinstance(extra_options, str) or any(
             not isinstance(option, str) or not option for option in extra_options
         ):
             raise YaesmValueError("extra_options must contain nonempty strings")
         self.location = Path(location)
-        self.ssh = ssh
         self.extra_options = tuple(extra_options)
 
     @classmethod
@@ -69,11 +68,6 @@ class RsyncDriver(DriverBase):
                 raise vlp.Invalid("location must be an absolute path")
             return path
 
-        def ssh(value: object) -> SSHTarget:
-            if not isinstance(value, SSHTarget):
-                raise vlp.Invalid("ssh must be an SSHTarget")
-            return value
-
         def extra_options(value: object) -> tuple[str, ...]:
             if isinstance(value, str):
                 values = (value,)
@@ -94,7 +88,6 @@ class RsyncDriver(DriverBase):
         return vlp.Schema(
             {
                 vlp.Required("location"): absolute_path,
-                vlp.Optional("ssh"): ssh,
                 vlp.Optional("extra_options", default=()): extra_options,
             }
         )
@@ -123,9 +116,6 @@ class RsyncDriver(DriverBase):
             )
             for description, command in requirements
         )
-
-    def _check_ssh(self) -> SSHTarget | None:
-        return self.ssh
 
     def _base_compatible(
         self,

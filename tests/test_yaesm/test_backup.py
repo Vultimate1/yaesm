@@ -12,6 +12,7 @@ from yaesm.errors import YaesmValueError
 from yaesm.representation import ByteStream, CommandStream, Representation
 from yaesm.retention import KeepLast
 from yaesm.schedule import CronSchedule, Schedule
+from yaesm.ssh import SSHTarget
 
 
 class SourceDriver(DriverBase):
@@ -209,6 +210,14 @@ def test_backup_has_composable_settings():
         "retention_policies": retention_policies,
         "previous_names": (),
     }
+
+
+def test_backup_rejects_multiple_ssh_configurations(tmp_path):
+    source = SourceDriver(ssh=SSHTarget("ssh://first", tmp_path / "first-key"))
+    driver = SourceDriver(ssh=SSHTarget("ssh://second", tmp_path / "second-key"))
+
+    with pytest.raises(YaesmValueError, match="uses more than one SSH configuration"):
+        bckp.Backup("home", source, DestinationDriver(), (driver,))
 
 
 def test_backup_source_identifies_configured_backup():

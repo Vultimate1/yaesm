@@ -12,7 +12,7 @@ import yaesm.command as command_module
 import yaesm.ty as ty
 from yaesm.backup import Backup, BackupArtifact, BackupOperation
 from yaesm.check import CheckRole
-from yaesm.command import Command, CommandResult, CommandRunner
+from yaesm.command import Command, CommandResult, CommandRunner, CommandStage, PipelineCommand
 from yaesm.driver.btrfsdriver import (
     BtrfsDriver,
     BtrfsDriverError,
@@ -83,12 +83,17 @@ class RecordingRunner(CommandRunner):
 
     def pipeline(
         self,
-        commands: ty.Sequence[Command],
+        commands: ty.Sequence[PipelineCommand],
         *,
         capture_output: bool = False,
         check: bool = True,
     ) -> CommandResult:
-        pipeline = tuple(tuple(str(argument) for argument in command) for command in commands)
+        pipeline = tuple(
+            command.execution_command()
+            if isinstance(command, CommandStage)
+            else tuple(str(argument) for argument in command)
+            for command in commands
+        )
         self.pipelines.append(pipeline)
         if self.pipeline_failures:
             failure = self.pipeline_failures.pop(0)
@@ -126,16 +131,6 @@ def test_config_schema_accepts_path_location(tmp_path):
     assert BtrfsDriver.config_schema()({"location": tmp_path})["location"] == tmp_path
 
 
-def test_config_schema_accepts_ssh_target(tmp_path):
-    target = SSHTarget("ssh://host", tmp_path / "key")
-
-    assert BtrfsDriver.config_schema()({"location": str(tmp_path), "ssh": target}) == {
-        "location": tmp_path,
-        "ssh": target,
-        "bootstrap_refresh_days": 21,
-    }
-
-
 @pytest.mark.parametrize("refresh_days", [0, 1, 21])
 def test_config_schema_accepts_bootstrap_refresh(tmp_path, refresh_days):
     assert BtrfsDriver.config_schema()(
@@ -162,11 +157,6 @@ def test_config_schema_rejects_boolean_bootstrap_refresh(refresh_days):
 def test_config_schema_rejects_invalid_bootstrap_refresh_type(refresh_days):
     with pytest.raises(vlp.Invalid, match="must be an integer"):
         BtrfsDriver.config_schema()({"location": "/tmp", "bootstrap_refresh_days": refresh_days})
-
-
-def test_config_schema_rejects_explicit_none_target():
-    with pytest.raises(vlp.Invalid, match="ssh must be an SSHTarget"):
-        BtrfsDriver.config_schema()({"location": "/tmp", "ssh": None})
 
 
 def test_config_schema_output_constructs_driver(tmp_path):
@@ -796,7 +786,7 @@ def test_cap_export_full(tmp_path):
 
     stream = BtrfsDriver(tmp_path).cap_export(snapshot)
 
-    assert stream.commands == ((*_BTRFS_SEND, str(snapshot.path)),)
+    assert stream.stages == (CommandStage((*_BTRFS_SEND, snapshot.path)),)
     assert stream.subvolume_name == "snapshot"
     assert stream.base_uuid is None
     assert stream.suffixes == (".btrfs",)
@@ -808,7 +798,7 @@ def test_cap_export_incremental(tmp_path):
 
     stream = BtrfsDriver(tmp_path).cap_export(snapshot, base)
 
-    assert stream.commands == ((*_BTRFS_SEND, "-p", str(base.path), str(snapshot.path)),)
+    assert stream.stages == (CommandStage((*_BTRFS_SEND, "-p", base.path, snapshot.path)),)
     assert stream.base_uuid == base.uuid
 
 
@@ -818,7 +808,7 @@ def test_cap_export_remote(tmp_path):
 
     stream = BtrfsDriver(tmp_path).cap_export(snapshot)
 
-    assert stream.commands == (target.openssh_command((*_BTRFS_SEND, snapshot.path)),)
+    assert stream.stages == (CommandStage((*_BTRFS_SEND, snapshot.path), target),)
 
 
 def test_cap_export_rejects_base_on_different_endpoint(tmp_path):
@@ -894,7 +884,7 @@ def test_cap_import_rejects_base_on_different_endpoint(tmp_path):
     destination_target = SSHTarget("ssh://destination", tmp_path / "key")
     base_target = SSHTarget("ssh://base", tmp_path / "key")
     stream = BtrfsStream(
-        (("btrfs", "send", str(tmp_path / "snapshot")),),
+        (CommandStage(("btrfs", "send", tmp_path / "snapshot")),),
         subvolume_name="snapshot",
     )
     base = _snapshot(tmp_path / "base", base_target)
@@ -908,7 +898,7 @@ def test_cap_import_cleans_up_failed_receive(tmp_path):
         pipeline_failures=(RuntimeError("receive failed"),),
     )
     stream = BtrfsStream(
-        (("btrfs", "send", str(tmp_path / "snapshot")),),
+        (CommandStage(("btrfs", "send", tmp_path / "snapshot")),),
         subvolume_name="snapshot",
     )
 
@@ -924,7 +914,7 @@ def test_cap_import_reads_received_snapshot_uuid(tmp_path):
         stdouts=(None, _snapshot_output(received_uuid=received_uuid)),
     )
     stream = BtrfsStream(
-        (("btrfs", "send", str(tmp_path / "snapshot")),),
+        (CommandStage(("btrfs", "send", tmp_path / "snapshot")),),
         subvolume_name="snapshot",
     )
 

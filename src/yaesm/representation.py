@@ -4,6 +4,7 @@ import dataclasses
 import enum
 
 import yaesm.ty as ty
+from yaesm.command import CommandStage
 from yaesm.ssh import SSHTarget
 
 
@@ -46,7 +47,7 @@ class ByteStream(Representation):
 class CommandStream(ByteStream):
     """A byte stream produced by a pipeline of external commands."""
 
-    commands: tuple[tuple[str, ...], ...] = ()
+    stages: tuple[CommandStage, ...] = ()
     suffixes: tuple[str, ...] = dataclasses.field(default=(), kw_only=True)
 
 

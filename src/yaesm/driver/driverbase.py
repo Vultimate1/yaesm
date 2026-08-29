@@ -91,8 +91,14 @@ class DriverBase(abc.ABC):
     - ``cap_cleanup``: remove a temporary representation.
     """
 
-    def __init__(self, global_settings: GlobalSettings | None = None) -> None:
+    def __init__(
+        self,
+        global_settings: GlobalSettings | None = None,
+        *,
+        ssh: SSHTarget | None = None,
+    ) -> None:
         self.global_settings = {} if global_settings is None else global_settings
+        self.ssh = ssh
         self.runner = CommandRunner()
 
     @classmethod
@@ -227,7 +233,7 @@ class DriverBase(abc.ABC):
 
     def _check_ssh(self) -> SSHTarget | None:
         """Return the SSH connection on which this driver's checks run."""
-        return None
+        return self.ssh
 
     def _command_check(
         self,

@@ -1,6 +1,7 @@
 """Tests for yaesm.ssh."""
 
 import shlex
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -152,6 +153,69 @@ def test_ssh_target_quotes_remote_command():
     assert command[0] == "ssh"
     assert command[-2] == "user@host"
     assert shlex.split(command[-1]) == [str(arg) for arg in remote]
+
+
+def test_single_command_ssh_pipeline_uses_a_regular_ssh_command():
+    target = SSHTarget("ssh://host", Path("/key"))
+
+    assert target.openssh_pipeline((("command", "argument"),)) == target.openssh_command(
+        ("command", "argument")
+    )
+
+
+def test_ssh_target_builds_working_remote_pipeline():
+    target = SSHTarget("ssh://host", Path("/key"))
+    command = target.openssh_pipeline(
+        (
+            ("printf", "%s", "hello; not shell syntax"),
+            ("tr", "a-z", "A-Z"),
+        )
+    )
+
+    result = subprocess.run(("sh", "-c", command[-1]), capture_output=True, text=True)
+
+    assert result.returncode == 0
+    assert result.stdout == "HELLO; NOT SHELL SYNTAX"
+
+
+def test_ssh_pipeline_streams_standard_input_and_output():
+    target = SSHTarget("ssh://host", Path("/key"))
+    remote_script = target.openssh_pipeline((("cat",), ("tr", "a-z", "A-Z")))[-1]
+
+    result = subprocess.run(
+        ("sh", "-c", remote_script),
+        input="streamed input",
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "STREAMED INPUT"
+
+
+@pytest.mark.parametrize(
+    ("commands", "status"),
+    [
+        ((("sh", "-c", "exit 7"), ("cat",)), 7),
+        ((("printf", "input"), ("sh", "-c", "cat >/dev/null; exit 8")), 8),
+        ((("sh", "-c", "exit 7"), ("sh", "-c", "cat >/dev/null; exit 8")), 8),
+    ],
+)
+def test_ssh_pipeline_reports_every_stage_failure(commands, status):
+    target = SSHTarget("ssh://host", Path("/key"))
+    remote_script = target.openssh_pipeline(commands)[-1]
+
+    result = subprocess.run(("sh", "-c", remote_script))
+
+    assert result.returncode == status
+
+
+@pytest.mark.parametrize("commands", [(), (("command",), ())])
+def test_ssh_target_rejects_invalid_pipeline(commands):
+    target = SSHTarget("ssh://host", Path("/key"))
+
+    with pytest.raises(ValueError, match="SSH pipeline"):
+        target.openssh_pipeline(commands)
 
 
 def test_ssh_target_formats_remote_location():

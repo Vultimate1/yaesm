@@ -3,17 +3,21 @@
 import logging
 from datetime import datetime
 from pathlib import Path
+from unittest import mock
 
 import pytest
 import voluptuous as vlp
 
+import yaesm.command as command_module
 import yaesm.ty as ty
 from yaesm.backup import BackupArtifact, BackupOperation
-from yaesm.command import CommandError
+from yaesm.command import CommandError, CommandResult, CommandStage
+from yaesm.config import parse_config
 from yaesm.driver.btrfsdriver import BtrfsDriver
 from yaesm.driver.driverbase import DriverBase, DriverError, capability
 from yaesm.driver.gpgdriver import GPGDriver
 from yaesm.driver.tardriver import TarDriver
+from yaesm.driver.zstddriver import ZstdDriver
 from yaesm.pipeline import IncrementalBase, Pipeline, PipelineError, PipelineStep
 from yaesm.representation import (
     ByteStream,
@@ -391,6 +395,77 @@ def test_pipeline_executes_transform_capabilities():
     artifact = pipeline.execute(operation)
 
     assert isinstance(artifact.representation, EncryptedStream)
+
+
+def test_configured_remote_pipeline_uses_one_ssh_command():
+    config = parse_config(
+        {
+            "home": {
+                "ssh": {
+                    "endpoint": "ssh://server",
+                    "identity_file": "/key",
+                },
+                "source": {"btrfs": {"location": "/source", "remote": True}},
+                "drivers": [
+                    {"zstd": {"remote": True}},
+                    {"gpg": {"public_key": "/public-key.asc", "remote": True}},
+                ],
+                "destination": {"tar": {"location": "/backups", "remote": True}},
+                "schedules": {
+                    "manual": {
+                        "on-demand": {},
+                        "retention": {"keep-last": 1},
+                    }
+                },
+            }
+        }
+    )
+    backup = config.backups["home"]
+    assert isinstance(backup.source, BtrfsDriver)
+    assert isinstance(backup.destination, TarDriver)
+    assert isinstance(backup.drivers[0], ZstdDriver)
+    assert isinstance(backup.drivers[1], GPGDriver)
+    ssh = backup.source.ssh
+    assert ssh is not None
+
+    backup.source.runner = mock.Mock()
+    backup.source.runner.run.side_effect = lambda _command, **options: CommandResult(
+        (
+            "UUID: 11111111-1111-1111-1111-111111111111\nParent UUID: -\nReceived UUID: -\n"
+            if options.get("capture_output")
+            else None
+        ),
+        "",
+        (0,),
+    )
+    submitted = []
+
+    def pipeline(commands, **_options):
+        submitted.append(tuple(commands))
+        return CommandResult(None, "", (0,))
+
+    backup.destination.runner = mock.Mock()
+    backup.destination.runner.pipeline.side_effect = pipeline
+    backup.destination.runner.run.return_value = CommandResult(None, "", (0,))
+
+    Pipeline(backup.source, backup.destination, backup.drivers).execute(
+        BackupOperation("home", "manual", datetime(2026, 8, 29, 12))
+    )
+
+    assert len(submitted) == 1
+    stages = submitted[0]
+    assert all(isinstance(stage, CommandStage) and stage.ssh is ssh for stage in stages)
+    assert tuple(stage.command[0] for stage in stages if isinstance(stage, CommandStage)) == (
+        "tar",
+        "zstd",
+        "gpg",
+        "dd",
+    )
+    assert command_module._execution_commands(stages) == (
+        ssh.openssh_pipeline(
+            tuple(stage.command for stage in stages if isinstance(stage, CommandStage))
+        ),
+    )
 
 
 def test_pipeline_execution_error_names_backup_and_capability():

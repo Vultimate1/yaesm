@@ -98,16 +98,6 @@ def test_config_schema_accepts_path_location(tmp_path):
     assert RsyncDriver.config_schema()({"location": tmp_path})["location"] == tmp_path
 
 
-def test_config_schema_accepts_ssh_target(tmp_path):
-    target = SSHTarget("ssh://host", tmp_path / "key")
-
-    assert RsyncDriver.config_schema()({"location": tmp_path, "ssh": target}) == {
-        "location": tmp_path,
-        "ssh": target,
-        "extra_options": (),
-    }
-
-
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
@@ -155,11 +145,9 @@ def test_config_schema_rejects_malformed_extra_options(tmp_path):
 
 
 def test_config_schema_output_constructs_driver(tmp_path):
-    target = SSHTarget("ssh://host", tmp_path / "key")
     config = RsyncDriver.config_schema()(
         {
             "location": tmp_path,
-            "ssh": target,
             "extra_options": ["--checksum"],
         }
     )
@@ -167,7 +155,7 @@ def test_config_schema_output_constructs_driver(tmp_path):
     driver = RsyncDriver(**config)
 
     assert driver.location == tmp_path
-    assert driver.ssh is target
+    assert driver.ssh is None
     assert driver.extra_options == ("--checksum",)
 
 

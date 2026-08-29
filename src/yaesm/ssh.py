@@ -124,8 +124,20 @@ class SSHTarget:
 
     def openssh_command(self, command: Command) -> tuple[str, ...]:
         """Return an OpenSSH command that safely quotes a remote command."""
+        return self._openssh_command(shlex.join(str(arg) for arg in command))
+
+    def openssh_pipeline(self, commands: ty.Sequence[Command]) -> tuple[str, ...]:
+        """Return an OpenSSH command that safely runs a remote command pipeline."""
+        if not commands:
+            raise ValueError("an SSH pipeline cannot be empty")
+        if any(not command for command in commands):
+            raise ValueError("an SSH pipeline command cannot be empty")
+        if len(commands) == 1:
+            return self.openssh_command(commands[0])
+        return self._openssh_command(_pipeline_script(commands))
+
+    def _openssh_command(self, remote_command: str) -> tuple[str, ...]:
         destination = self.host if self.user is None else f"{self.user}@{self.host}"
-        remote_command = shlex.join(str(arg) for arg in command)
         return ("ssh", *self.openssh_options(), destination, remote_command)
 
     def format_location(self, location: str | ty.Path) -> str:
@@ -207,3 +219,28 @@ def _parse_endpoint(endpoint: object) -> tuple[str | None, str, int | None]:
     ):
         raise SSHTargetError(f"invalid SSH endpoint: {endpoint!r}")
     return user, host, port
+
+
+def _pipeline_script(commands: ty.Sequence[Command]) -> str:
+    last = len(commands) - 1
+    pipes = tuple(f'"$_yaesm_pipeline/{index}"' for index in range(last))
+    stages = []
+    for index, command in enumerate(commands):
+        rendered = shlex.join(str(argument) for argument in command)
+        input_ = " <&9" if index == 0 else f" <{pipes[index - 1]}"
+        if index == last:
+            stages.append(f"{rendered}{input_}; _yaesm_result=$?; ")
+        else:
+            stages.append(f'{rendered}{input_} >{pipes[index]} & _yaesm_pids="$! $_yaesm_pids"; ')
+    return (
+        'umask 077; exec 9<&0; _yaesm_pipeline="/tmp/.yaesm-pipeline.$$"; _yaesm_pids=; '
+        'mkdir "$_yaesm_pipeline" || exit 125; '
+        "trap 'rm -rf \"$_yaesm_pipeline\"' 0; "
+        "trap 'for _yaesm_pid in $_yaesm_pids; do "
+        'kill "$_yaesm_pid" 2>/dev/null; done; exit 125\' 1 2 3 15; '
+        f"mkfifo {' '.join(pipes)} || exit 125; "
+        + "".join(stages)
+        + 'for _yaesm_pid in $_yaesm_pids; do wait "$_yaesm_pid"; _yaesm_code=$?; '
+        'if [ "$_yaesm_result" -eq 0 ] && [ "$_yaesm_code" -ne 0 ]; then '
+        '_yaesm_result=$_yaesm_code; fi; done; exit "$_yaesm_result"'
+    )

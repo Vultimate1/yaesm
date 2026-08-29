@@ -4,11 +4,28 @@ import logging
 import shlex
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 import yaesm.command as command_module
-from yaesm.command import CommandError, CommandRunner
+from yaesm.command import CommandError, CommandRunner, CommandStage
+from yaesm.ssh import SSHTarget
+
+
+def test_command_stage_normalizes_its_command():
+    stage = CommandStage(("command", Path("argument")))
+
+    assert stage.command == ("command", "argument")
+    assert stage.ssh is None
+    assert stage.execution_command() == stage.command
+
+
+def test_command_stage_builds_ssh_command(tmp_path):
+    ssh = SSHTarget("ssh://host", tmp_path / "identity")
+    stage = CommandStage(("command", "argument"), ssh)
+
+    assert stage.execution_command() == ssh.openssh_command(stage.command)
 
 
 def test_pipeline_logs_commands(caplog):
@@ -45,6 +62,61 @@ def test_pipeline_streams_between_commands():
     )
 
     assert result.stdout == "HELLO\n"
+
+
+def test_pipeline_executes_command_stages():
+    result = CommandRunner().pipeline(
+        (
+            CommandStage((sys.executable, "-c", "print('hello')")),
+            CommandStage(
+                (sys.executable, "-c", "import sys; sys.stdout.write(sys.stdin.read().upper())")
+            ),
+        ),
+        capture_output=True,
+    )
+
+    assert result.stdout == "HELLO\n"
+
+
+def test_execution_groups_adjacent_stages_on_the_same_ssh_connection(tmp_path):
+    ssh = SSHTarget("ssh://host", tmp_path / "identity")
+    stages = (
+        CommandStage(("produce", "data"), ssh),
+        CommandStage(("transform", "data"), ssh),
+    )
+
+    assert command_module._execution_commands(stages) == (
+        ssh.openssh_pipeline(tuple(stage.command for stage in stages)),
+    )
+
+
+def test_execution_separates_local_and_different_ssh_stages(tmp_path):
+    first_ssh = SSHTarget("ssh://first", tmp_path / "first-key")
+    second_ssh = SSHTarget("ssh://second", tmp_path / "second-key")
+
+    assert command_module._execution_commands(
+        (
+            CommandStage(("first",), first_ssh),
+            CommandStage(("second",), first_ssh),
+            CommandStage(("local",)),
+            CommandStage(("third",), second_ssh),
+            ("raw",),
+        )
+    ) == (
+        first_ssh.openssh_pipeline((("first",), ("second",))),
+        ("local",),
+        second_ssh.openssh_command(("third",)),
+        ("raw",),
+    )
+
+
+def test_execution_does_not_group_different_ssh_configuration(tmp_path):
+    first = SSHTarget("ssh://host", tmp_path / "first-key")
+    second = SSHTarget("ssh://host", tmp_path / "second-key")
+
+    assert command_module._execution_commands(
+        (CommandStage(("first",), first), CommandStage(("second",), second))
+    ) == (first.openssh_command(("first",)), second.openssh_command(("second",)))
 
 
 def test_pipeline_reports_failed_command():

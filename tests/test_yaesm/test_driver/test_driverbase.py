@@ -19,6 +19,7 @@ from yaesm.representation import (
     ReadableTree,
     Representation,
 )
+from yaesm.ssh import SSHTarget
 
 
 class AllCapabilitiesDriver(DriverBase):
@@ -141,6 +142,12 @@ def test_driver_has_global_settings():
 
     assert EmptyDriver(global_settings=settings).global_settings is settings
     assert EmptyDriver().global_settings == {}
+
+
+def test_driver_has_shared_ssh_configuration(tmp_path):
+    ssh = SSHTarget("ssh://host", tmp_path / "key")
+
+    assert EmptyDriver(ssh=ssh).ssh is ssh
 
 
 def test_capabilities_are_advertised_by_defining_methods():

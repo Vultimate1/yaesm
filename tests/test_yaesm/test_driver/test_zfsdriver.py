@@ -14,7 +14,14 @@ import yaesm.command as command_module
 import yaesm.ty as ty
 from yaesm.backup import Backup, BackupArtifact, BackupError, BackupOperation
 from yaesm.check import CheckRole
-from yaesm.command import Command, CommandError, CommandResult, CommandRunner
+from yaesm.command import (
+    Command,
+    CommandError,
+    CommandResult,
+    CommandRunner,
+    CommandStage,
+    PipelineCommand,
+)
 from yaesm.driver.zfsdriver import (
     ZFSDataset,
     ZFSDriver,
@@ -63,12 +70,17 @@ class RecordingRunner(CommandRunner):
 
     def pipeline(
         self,
-        commands: ty.Sequence[Command],
+        commands: ty.Sequence[PipelineCommand],
         *,
         capture_output: bool = False,
         check: bool = True,
     ) -> CommandResult:
-        normalized = tuple(tuple(str(argument) for argument in command) for command in commands)
+        normalized = tuple(
+            command.execution_command()
+            if isinstance(command, CommandStage)
+            else tuple(str(argument) for argument in command)
+            for command in commands
+        )
         self.pipelines.append(normalized)
         failure = self.pipeline_failures.pop(0) if self.pipeline_failures else None
         if failure is not None:
@@ -102,13 +114,8 @@ def test_config_schema_accepts_shorthand():
     assert ZFSDriver.config_schema()("tank/home") == {"dataset": "tank/home"}
 
 
-def test_config_schema_accepts_expanded_configuration(tmp_path):
-    target = SSHTarget("ssh://host", tmp_path / "key")
-
-    assert ZFSDriver.config_schema()({"dataset": "tank/home", "ssh": target}) == {
-        "dataset": "tank/home",
-        "ssh": target,
-    }
+def test_config_schema_accepts_expanded_configuration():
+    assert ZFSDriver.config_schema()({"dataset": "tank/home"}) == {"dataset": "tank/home"}
 
 
 def test_config_schema_accepts_encryption():
@@ -139,11 +146,6 @@ def test_config_schema_rejects_invalid_dataset(dataset):
 def test_config_schema_rejects_invalid_structure(config):
     with pytest.raises(vlp.Invalid):
         ZFSDriver.config_schema()(config)
-
-
-def test_config_schema_rejects_invalid_target():
-    with pytest.raises(vlp.Invalid, match="ssh must be an SSHTarget"):
-        ZFSDriver.config_schema()({"dataset": "tank/home", "ssh": "host"})
 
 
 @pytest.mark.parametrize("encryption", [None, 0, 1, "yes", []])
@@ -582,7 +584,7 @@ def test_cap_export_full():
     stream = ZFSDriver("tank/home").cap_export(snapshot)
 
     assert stream == ZFSStream(
-        (("zfs", "send", "-c", snapshot.name),),
+        (CommandStage(("zfs", "send", "-c", snapshot.name)),),
         suffixes=(".zfs",),
     )
 
@@ -593,7 +595,7 @@ def test_cap_export_incremental():
 
     stream = ZFSDriver("tank/home").cap_export(snapshot, base)
 
-    assert stream.commands == (("zfs", "send", "-c", "-i", base.name, snapshot.name),)
+    assert stream.stages == (CommandStage(("zfs", "send", "-c", "-i", base.name, snapshot.name)),)
     assert stream.base_guid == base.guid
 
 
@@ -604,7 +606,7 @@ def test_cap_export_uses_raw_send_for_native_encryption():
     stream = with_runner(ZFSDriver("tank/home", encryption=True), runner).cap_export(snapshot)
 
     assert stream == ZFSStream(
-        (("zfs", "send", "-w", snapshot.name),),
+        (CommandStage(("zfs", "send", "-w", snapshot.name)),),
         encrypted=True,
         suffixes=(".zfs",),
     )
@@ -617,7 +619,7 @@ def test_cap_export_uses_raw_incremental_send():
 
     stream = ZFSDriver("tank/home").cap_export(snapshot, base)
 
-    assert stream.commands == (("zfs", "send", "-w", "-i", base.name, snapshot.name),)
+    assert stream.stages == (CommandStage(("zfs", "send", "-w", "-i", base.name, snapshot.name)),)
     assert stream.base_guid == base.guid
 
 
@@ -720,7 +722,7 @@ def test_cap_export_remote(tmp_path):
 
     stream = ZFSDriver("tank/home").cap_export(snapshot)
 
-    assert stream.commands == (target.openssh_command(("zfs", "send", "-c", snapshot.name)),)
+    assert stream.stages == (CommandStage(("zfs", "send", "-c", snapshot.name), target),)
 
 
 @pytest.mark.parametrize(
@@ -738,7 +740,7 @@ def test_cap_export_rejects_incompatible_base(base):
 def test_cap_import_remote(tmp_path):
     runner = RecordingRunner()
     target = SSHTarget("ssh://host", tmp_path / "key")
-    stream = ZFSStream((("zfs", "send", "tank/home@snapshot"),))
+    stream = ZFSStream((CommandStage(("zfs", "send", "tank/home@snapshot")),))
 
     artifact = with_runner(ZFSDriver("backup/home", target), runner).cap_import(stream, operation())
 
@@ -748,7 +750,7 @@ def test_cap_import_remote(tmp_path):
     )
     assert runner.pipelines == [
         (
-            stream.commands[0],
+            stream.stages[0].execution_command(),
             target.openssh_command(
                 (
                     "zfs",
@@ -764,7 +766,7 @@ def test_cap_import_remote(tmp_path):
 
 
 def test_cap_import_rejects_incompatible_base():
-    stream = ZFSStream((("zfs", "send", "tank/home@snapshot"),))
+    stream = ZFSStream((CommandStage(("zfs", "send", "tank/home@snapshot")),))
 
     with pytest.raises(ZFSDriverError, match="does not belong to the destination"):
         ZFSDriver("backup/home").cap_import(
@@ -776,7 +778,7 @@ def test_cap_import_rejects_incompatible_base():
 
 def test_cap_import_cleans_up_failed_snapshot():
     runner = RecordingRunner(pipeline_failures=(RuntimeError("receive failed"),))
-    stream = ZFSStream((("zfs", "send", "tank/home@snapshot"),))
+    stream = ZFSStream((CommandStage(("zfs", "send", "tank/home@snapshot")),))
 
     with pytest.raises(RuntimeError, match="receive failed"):
         with_runner(ZFSDriver("backup/home"), runner).cap_import(stream, operation())
@@ -788,7 +790,7 @@ def test_cap_import_cleans_up_failed_snapshot():
 def test_cap_import_preserves_encryption_state():
     runner = RecordingRunner()
     stream = ZFSStream(
-        (("zfs", "send", "-w", "tank/home@snapshot"),),
+        (CommandStage(("zfs", "send", "-w", "tank/home@snapshot")),),
         encrypted=True,
     )
 

@@ -8,7 +8,7 @@ import voluptuous as vlp
 import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.check import Check, CheckRole
-from yaesm.command import CommandError, CommandResult
+from yaesm.command import CommandError, CommandResult, CommandStage
 from yaesm.driver.driverbase import (
     CapabilityMetadata,
     DriverBase,
@@ -72,13 +72,12 @@ class ZFSDriver(DriverBase):
         *,
         global_settings: GlobalSettings | None = None,
     ) -> None:
-        super().__init__(global_settings)
+        super().__init__(global_settings, ssh=ssh)
         if not _dataset_valid(dataset):
             raise YaesmValueError(f"invalid ZFS dataset: {dataset!r}")
         if not isinstance(encryption, bool):
             raise YaesmValueError("encryption must be a boolean")
         self.dataset = dataset
-        self.ssh = ssh
         self.encryption = encryption
 
     @classmethod
@@ -92,11 +91,6 @@ class ZFSDriver(DriverBase):
                 raise vlp.Invalid("dataset must be a ZFS filesystem name")
             return ty.cast(str, value)
 
-        def ssh(value: object) -> SSHTarget:
-            if not isinstance(value, SSHTarget):
-                raise vlp.Invalid("ssh must be an SSHTarget")
-            return value
-
         def encryption(value: object) -> bool:
             if not isinstance(value, bool):
                 raise vlp.Invalid("encryption must be a boolean")
@@ -105,7 +99,6 @@ class ZFSDriver(DriverBase):
         mapping = vlp.Schema(
             {
                 vlp.Required("dataset"): dataset,
-                vlp.Optional("ssh"): ssh,
                 vlp.Optional("encryption"): encryption,
             }
         )
@@ -152,9 +145,6 @@ class ZFSDriver(DriverBase):
                 )
             case CheckRole.TRANSFORM:
                 return ()
-
-    def _check_ssh(self) -> SSHTarget | None:
-        return self.ssh
 
     def _base_compatible(
         self,
@@ -307,7 +297,7 @@ class ZFSDriver(DriverBase):
             command.extend(("-i", base.name))
         command.append(source.name)
         return ZFSStream(
-            (command_for_ssh(source.ssh, command),),
+            (CommandStage(command, source.ssh),),
             encrypted,
             base_guid=None if base is None else base.guid,
             suffixes=(ZFSStream.suffix,),
@@ -331,10 +321,10 @@ class ZFSDriver(DriverBase):
         try:
             self.runner.pipeline(
                 (
-                    *source.commands,
-                    command_for_ssh(
-                        self.ssh,
+                    *source.stages,
+                    CommandStage(
                         ("zfs", "receive", "-u", "-o", "mountpoint=none", self.dataset),
+                        self.ssh,
                     ),
                 )
             )

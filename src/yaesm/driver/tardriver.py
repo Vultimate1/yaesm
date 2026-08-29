@@ -9,6 +9,7 @@ import voluptuous as vlp
 import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.check import Check, CheckRole
+from yaesm.command import CommandStage
 from yaesm.driver.driverbase import DriverBase, DriverError, GlobalSettings, capability
 from yaesm.errors import YaesmValueError
 from yaesm.representation import (
@@ -60,11 +61,10 @@ class TarDriver(DriverBase):
         *,
         global_settings: GlobalSettings | None = None,
     ) -> None:
-        super().__init__(global_settings)
+        super().__init__(global_settings, ssh=ssh)
         if not isinstance(one_file_system, bool):
             raise YaesmValueError("one_file_system must be a boolean")
         self.location = Path(location)
-        self.ssh = ssh
         self.one_file_system = one_file_system
 
     @classmethod
@@ -81,11 +81,6 @@ class TarDriver(DriverBase):
                 raise vlp.Invalid("location must be an absolute path")
             return path
 
-        def ssh(value: object) -> SSHTarget:
-            if not isinstance(value, SSHTarget):
-                raise vlp.Invalid("ssh must be an SSHTarget")
-            return value
-
         def one_file_system(value: object) -> bool:
             if not isinstance(value, bool):
                 raise vlp.Invalid("one_file_system must be a boolean")
@@ -94,7 +89,6 @@ class TarDriver(DriverBase):
         return vlp.Schema(
             {
                 vlp.Required("location"): absolute_path,
-                vlp.Optional("ssh"): ssh,
                 vlp.Optional("one_file_system"): one_file_system,
             }
         )
@@ -112,16 +106,12 @@ class TarDriver(DriverBase):
             )
         )
 
-    def _check_ssh(self) -> SSHTarget | None:
-        return self.ssh
-
     @capability("export", adds=(DataProperty.ARCHIVED,))
     def cap_export(self, source: PathTree, base: PathTree | None = None) -> TarStream:
         exclude = self._destination_exclude(source)
         return TarStream(
             (
-                command_for_ssh(
-                    source.ssh,
+                CommandStage(
                     (
                         "tar",
                         "-c",
@@ -137,6 +127,7 @@ class TarDriver(DriverBase):
                         source.path,
                         ".",
                     ),
+                    source.ssh,
                 ),
             ),
             suffixes=(TarStream.suffix,),
@@ -172,11 +163,8 @@ class TarDriver(DriverBase):
         try:
             self.runner.pipeline(
                 (
-                    *source.commands,
-                    command_for_ssh(
-                        self.ssh,
-                        ("dd", f"of={temporary.path}", "bs=1048576"),
-                    ),
+                    *source.stages,
+                    CommandStage(("dd", f"of={temporary.path}", "bs=1048576"), self.ssh),
                 )
             )
             self.runner.run(

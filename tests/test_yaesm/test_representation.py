@@ -1,5 +1,6 @@
 """Tests for yaesm.representation."""
 
+from yaesm.command import CommandStage
 from yaesm.representation import (
     BlockDevice,
     ByteStream,
@@ -37,10 +38,11 @@ def test_path_tree_has_local_or_remote_location(tmp_path):
     assert PathTree(tmp_path, target).ssh is target
 
 
-def test_command_stream_contains_commands():
-    stream = CommandStream((("first",), ("second", "argument")))
+def test_command_stream_contains_stages():
+    stages = (CommandStage(("first",)), CommandStage(("second", "argument")))
+    stream = CommandStream(stages)
 
-    assert stream.commands == (("first",), ("second", "argument"))
+    assert stream.stages == stages
     assert stream.suffixes == ()
 
 

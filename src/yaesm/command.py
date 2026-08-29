@@ -12,8 +12,30 @@ import tempfile
 import yaesm.ty as ty
 from yaesm.errors import YaesmError
 
+if ty.TYPE_CHECKING:
+    from yaesm.ssh import SSHTarget
+
 Command: ty.TypeAlias = ty.Sequence[str | ty.Path]
 logger = logging.getLogger(__name__)
+
+
+@dataclasses.dataclass(frozen=True, init=False)
+class CommandStage:
+    """A pipeline command and the SSH connection on which it runs."""
+
+    command: tuple[str, ...]
+    ssh: SSHTarget | None
+
+    def __init__(self, command: Command, ssh: SSHTarget | None = None) -> None:
+        object.__setattr__(self, "command", tuple(str(argument) for argument in command))
+        object.__setattr__(self, "ssh", ssh)
+
+    def execution_command(self) -> tuple[str, ...]:
+        """Return the local command used to execute this stage."""
+        return self.command if self.ssh is None else self.ssh.openssh_command(self.command)
+
+
+PipelineCommand: ty.TypeAlias = Command | CommandStage
 
 
 @dataclasses.dataclass(frozen=True)
@@ -61,17 +83,20 @@ class CommandRunner:
 
     def pipeline(
         self,
-        commands: ty.Sequence[Command],
+        commands: ty.Sequence[PipelineCommand],
         *,
         capture_output: bool = False,
         check: bool = True,
     ) -> CommandResult:
         """Run commands connected by pipes and check every exit status."""
-        normalized = tuple(tuple(str(arg) for arg in command) for command in commands)
-        if not normalized:
+        if not commands:
             raise ValueError("a command pipeline cannot be empty")
-        if any(not command for command in normalized):
+        if any(
+            not (command.command if isinstance(command, CommandStage) else command)
+            for command in commands
+        ):
             raise ValueError("a command cannot be empty")
+        normalized = _execution_commands(commands)
 
         logger.debug("exec: %s", " | ".join(shlex.join(command) for command in normalized))
         processes: list[subprocess.Popen[bytes]] = []
@@ -139,6 +164,35 @@ def run(
 ) -> CommandResult:
     """Run one command."""
     return CommandRunner().run(command, capture_output=capture_output, check=check)
+
+
+def _execution_commands(
+    commands: ty.Sequence[PipelineCommand],
+) -> tuple[tuple[str, ...], ...]:
+    execution_commands = []
+    index = 0
+    while index < len(commands):
+        stage = commands[index]
+        if not isinstance(stage, CommandStage) or stage.ssh is None:
+            execution_commands.append(
+                stage.execution_command()
+                if isinstance(stage, CommandStage)
+                else tuple(str(argument) for argument in stage)
+            )
+            index += 1
+            continue
+
+        ssh = stage.ssh
+        group = [stage.command]
+        index += 1
+        while index < len(commands):
+            following = commands[index]
+            if not isinstance(following, CommandStage) or following.ssh != ssh:
+                break
+            group.append(following.command)
+            index += 1
+        execution_commands.append(ssh.openssh_pipeline(group))
+    return tuple(execution_commands)
 
 
 def _terminate(processes: ty.Sequence[subprocess.Popen[bytes]]) -> None:

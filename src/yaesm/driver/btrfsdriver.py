@@ -9,6 +9,7 @@ import voluptuous as vlp
 import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.check import Check, CheckRole
+from yaesm.command import CommandStage
 from yaesm.driver.driverbase import DriverBase, DriverError, GlobalSettings, capability
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, DataProperty, PathTree, Representation
@@ -55,13 +56,12 @@ class BtrfsDriver(DriverBase):
         *,
         global_settings: GlobalSettings | None = None,
     ) -> None:
-        super().__init__(global_settings)
+        super().__init__(global_settings, ssh=ssh)
         if bootstrap_refresh_days < 0:
             raise YaesmValueError(
                 f"bootstrap_refresh_days must be at least 0, got {bootstrap_refresh_days}"
             )
         self.location = Path(location)
-        self.ssh = ssh
         self.bootstrap_refresh_days = bootstrap_refresh_days or None
 
     @classmethod
@@ -78,11 +78,6 @@ class BtrfsDriver(DriverBase):
                 raise vlp.Invalid("location must be an absolute path")
             return path
 
-        def ssh(value: object) -> SSHTarget:
-            if not isinstance(value, SSHTarget):
-                raise vlp.Invalid("ssh must be an SSHTarget")
-            return value
-
         def refresh_days(value: object) -> int:
             if isinstance(value, bool) or not isinstance(value, int):
                 raise vlp.Invalid("bootstrap_refresh_days must be an integer")
@@ -93,7 +88,6 @@ class BtrfsDriver(DriverBase):
         return vlp.Schema(
             {
                 vlp.Required("location"): absolute_path,
-                vlp.Optional("ssh"): ssh,
                 vlp.Optional("bootstrap_refresh_days", default=21): refresh_days,
             }
         )
@@ -141,9 +135,6 @@ class BtrfsDriver(DriverBase):
             )
             for description, command in requirements
         )
-
-    def _check_ssh(self) -> SSHTarget | None:
-        return self.ssh
 
     def _base_compatible(
         self,
@@ -246,7 +237,7 @@ class BtrfsDriver(DriverBase):
             command.extend(("-p", base.path))
         command.append(source.path)
         return BtrfsStream(
-            (command_for_ssh(source.ssh, command),),
+            (CommandStage(command, source.ssh),),
             subvolume_name=source.path.name,
             base_uuid=None if base is None else base.uuid,
             suffixes=(BtrfsStream.suffix,),
@@ -267,11 +258,8 @@ class BtrfsDriver(DriverBase):
         try:
             self.runner.pipeline(
                 (
-                    *source.commands,
-                    command_for_ssh(
-                        self.ssh,
-                        ("btrfs", "receive", self.location),
-                    ),
+                    *source.stages,
+                    CommandStage(("btrfs", "receive", self.location), self.ssh),
                 )
             )
             self.runner.run(
@@ -439,11 +427,8 @@ class BtrfsDriver(DriverBase):
             try:
                 self.runner.pipeline(
                     (
-                        *stream.commands,
-                        command_for_ssh(
-                            self.ssh,
-                            ("btrfs", "receive", self.location),
-                        ),
+                        *stream.stages,
+                        CommandStage(("btrfs", "receive", self.location), self.ssh),
                     )
                 )
             except BaseException:

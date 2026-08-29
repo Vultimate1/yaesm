@@ -7,10 +7,11 @@ import voluptuous as vlp
 
 import yaesm.ty as ty
 from yaesm.check import Check, CheckRole
+from yaesm.command import CommandStage
 from yaesm.driver.driverbase import DriverBase, GlobalSettings
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, EncryptedStream
-from yaesm.ssh import SSHTarget, command_for_ssh
+from yaesm.ssh import SSHTarget
 
 
 class GPGStream(EncryptedStream):
@@ -29,14 +30,13 @@ class GPGDriver(DriverBase):
         *,
         global_settings: GlobalSettings | None = None,
     ) -> None:
-        super().__init__(global_settings)
+        super().__init__(global_settings, ssh=ssh)
         if not isinstance(public_key, str | Path):
             raise YaesmValueError("public_key must be a path")
         public_key = Path(public_key)
         if not public_key.is_absolute():
             raise YaesmValueError("public_key must be an absolute path")
         self.public_key = public_key
-        self.ssh = ssh
 
     @classmethod
     def name(cls) -> str:
@@ -52,15 +52,9 @@ class GPGDriver(DriverBase):
                 raise vlp.Invalid("public_key must be an absolute path")
             return path
 
-        def ssh(value: object) -> SSHTarget:
-            if not isinstance(value, SSHTarget):
-                raise vlp.Invalid("ssh must be an SSHTarget")
-            return value
-
         mapping = vlp.Schema(
             {
                 vlp.Required("public_key"): public_key,
-                vlp.Optional("ssh"): ssh,
             }
         )
         return vlp.Schema(
@@ -83,12 +77,9 @@ class GPGDriver(DriverBase):
             ),
         )
 
-    def _check_ssh(self) -> SSHTarget | None:
-        return self.ssh
-
     def cap_encrypt(self, source: CommandStream) -> GPGStream:
         return GPGStream(
-            (*source.commands, command_for_ssh(self.ssh, (*self._command(), "--encrypt"))),
+            (*source.stages, CommandStage((*self._command(), "--encrypt"), self.ssh)),
             suffixes=(*source.suffixes, GPGStream.suffix),
         )
 

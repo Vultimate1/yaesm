@@ -211,34 +211,29 @@ def test_config_has_no_hardcoded_type_registries():
 def test_parse_config_builds_complete_backup():
     value = {
         "home": backup_config(
+            ssh={
+                "endpoint": "ssh://server",
+                "identity_file": "/root/.ssh/server-key",
+                "config_file": "/root/.ssh/config",
+            },
             source={
                 "btrfs": {
                     "location": "/home",
-                    "ssh": {
-                        "endpoint": "ssh://source",
-                        "identity_file": "/root/.ssh/source-key",
-                    },
+                    "remote": True,
                 }
             },
             destination={
                 "tar": {
                     "location": "/backups",
-                    "ssh": {
-                        "endpoint": "ssh://backup",
-                        "identity_file": "/root/.ssh/backup-key",
-                        "config_file": "/root/.ssh/config",
-                    },
+                    "remote": True,
                 }
             },
             drivers=[
-                {"zstd": {"level": 7}},
+                {"zstd": {"level": 7, "remote": True}},
                 {
                     "gpg": {
                         "public_key": "/root/backup-key.asc",
-                        "ssh": {
-                            "endpoint": "ssh://key-host",
-                            "identity_file": "/root/.ssh/key-host",
-                        },
+                        "remote": True,
                     }
                 },
             ],
@@ -251,28 +246,24 @@ def test_parse_config_builds_complete_backup():
     assert config.global_settings == {}
     assert tuple(backups) == ("home",)
     backup = backups["home"]
+    ssh = SSHTarget(
+        "ssh://server",
+        Path("/root/.ssh/server-key"),
+        Path("/root/.ssh/config"),
+    )
     assert backup.name == "home"
     assert isinstance(backup.source, BtrfsDriver)
     assert backup.source.location == Path("/home")
-    assert backup.source.ssh == SSHTarget(
-        "ssh://source",
-        Path("/root/.ssh/source-key"),
-    )
+    assert backup.source.ssh == ssh
     assert isinstance(backup.destination, TarDriver)
     assert backup.destination.location == Path("/backups")
-    assert backup.destination.ssh == SSHTarget(
-        "ssh://backup",
-        Path("/root/.ssh/backup-key"),
-        Path("/root/.ssh/config"),
-    )
+    assert backup.destination.ssh is backup.source.ssh
     assert isinstance(backup.drivers[0], ZstdDriver)
     assert backup.drivers[0].level == 7
+    assert backup.drivers[0].ssh is backup.source.ssh
     assert isinstance(backup.drivers[1], GPGDriver)
     assert backup.drivers[1].public_key == Path("/root/backup-key.asc")
-    assert backup.drivers[1].ssh == SSHTarget(
-        "ssh://key-host",
-        Path("/root/.ssh/key-host"),
-    )
+    assert backup.drivers[1].ssh is backup.source.ssh
     assert backup.schedules == (Schedule("daily", CronSchedule("30 4 * * *")),)
     assert backup.retention_policies == (KeepLast(7, "daily"),)
 
@@ -655,9 +646,35 @@ def test_parse_config_rejects_invalid_driver_configuration():
     ],
 )
 def test_parse_config_rejects_invalid_ssh_target(ssh):
-    source = {"btrfs": {"location": "/source", "ssh": ssh}}
-
     with pytest.raises(ConfigError, match="invalid SSH configuration"):
+        parse_config({"home": backup_config(ssh=ssh)})
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [
+        ("source", {"btrfs": {"location": "/source", "remote": True}}),
+        ("destination", {"btrfs": {"location": "/destination", "remote": True}}),
+        ("drivers", [{"zstd": {"remote": True}}]),
+    ],
+)
+def test_parse_config_rejects_remote_driver_without_ssh(setting, value):
+    with pytest.raises(ConfigError, match="remote requires backup SSH configuration"):
+        parse_config({"home": backup_config(**{setting: value})})
+
+
+@pytest.mark.parametrize("remote", [None, 1, "yes", []])
+def test_parse_config_rejects_invalid_remote_setting(remote):
+    source = {"btrfs": {"location": "/source", "remote": remote}}
+
+    with pytest.raises(ConfigError, match="remote must be a boolean"):
+        parse_config({"home": backup_config(source=source)})
+
+
+def test_parse_config_rejects_driver_ssh_configuration():
+    source = {"btrfs": {"location": "/source", "ssh": {}}}
+
+    with pytest.raises(ConfigError, match="extra keys not allowed.*ssh"):
         parse_config({"home": backup_config(source=source)})
 
 
@@ -755,6 +772,44 @@ def test_parse_config_accepts_previous_name_as_backup_source():
     )
 
     assert config.backups["offsite"].source == bckp.BackupSource("old-local")
+
+
+def test_parse_config_rejects_replication_between_ssh_endpoints():
+    def remote(endpoint):
+        return {
+            "ssh": {"endpoint": endpoint, "identity_file": "/key"},
+            "destination": {"btrfs": {"location": "/destination", "remote": True}},
+        }
+
+    with pytest.raises(ConfigError, match="use different SSH configurations"):
+        parse_config(
+            {
+                "original": backup_config(**remote("ssh://first")),
+                "replica": backup_config(
+                    source={"backup": "original"},
+                    **remote("ssh://second"),
+                ),
+            }
+        )
+
+
+def test_parse_config_accepts_replication_on_one_ssh_endpoint():
+    ssh = {"endpoint": "ssh://server", "identity_file": "/key"}
+    config = parse_config(
+        {
+            "original": backup_config(
+                ssh=ssh,
+                destination={"btrfs": {"location": "/original", "remote": True}},
+            ),
+            "replica": backup_config(
+                ssh=ssh,
+                source={"backup": "original"},
+                destination={"btrfs": {"location": "/replica", "remote": True}},
+            ),
+        }
+    )
+
+    assert config.backups["original"].destination.ssh == config.backups["replica"].destination.ssh
 
 
 def test_parse_config_rejects_requirements_setting():

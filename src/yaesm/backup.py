@@ -113,8 +113,18 @@ class Backup:
     previous_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        from yaesm.driver.driverbase import DriverBase
+
         if not backup_name_valid(self.name):
             raise YaesmValueError(f"invalid backup name: {self.name!r}")
+
+        drivers = (self.destination, *self.drivers)
+        if not isinstance(self.source, BackupSource):
+            drivers = (self.source, *drivers)
+        ssh = {driver.ssh for driver in drivers if isinstance(driver, DriverBase) and driver.ssh}
+        if len(ssh) > 1:
+            raise YaesmValueError(f"backup {self.name!r} uses more than one SSH configuration")
+
         seen = {self.name}
         for name in self.previous_names:
             if not backup_name_valid(name):

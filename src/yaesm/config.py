@@ -143,7 +143,7 @@ def _parse_backup(
 
     messages = []
     required = {"source", "destination", "schedules"}
-    allowed = required | {"drivers", "previous_names"}
+    allowed = required | {"drivers", "previous_names", "ssh"}
     if missing := sorted(required - value.keys()):
         messages.append(f"missing required settings: {', '.join(missing)}")
     if unknown := sorted(value.keys() - allowed, key=str):
@@ -160,23 +160,35 @@ def _parse_backup(
         _collect_messages(messages, error)
         previous_names = ()
 
+    ssh = None
+    if "ssh" in value:
+        try:
+            ssh = SSHTarget.from_config(value["ssh"])
+        except SSHTargetError as error:
+            messages.append(error.format())
+
     source = None
     if "source" in value:
         try:
-            source = _parse_source(value["source"], global_settings)
+            source = _parse_source(value["source"], global_settings, ssh)
         except YaesmError as error:
             _collect_messages(messages, error)
 
     destination = None
     if "destination" in value:
         try:
-            destination = _parse_driver(value["destination"], "destination", global_settings)
+            destination = _parse_driver(
+                value["destination"],
+                "destination",
+                global_settings,
+                ssh,
+            )
             _validate_destination(destination)
         except YaesmError as error:
             _collect_messages(messages, error)
 
     try:
-        drivers = _parse_drivers(value.get("drivers", []), global_settings)
+        drivers = _parse_drivers(value.get("drivers", []), global_settings, ssh)
     except YaesmError as error:
         _collect_messages(messages, error)
         drivers = ()
@@ -210,18 +222,20 @@ def _parse_backup(
 def _parse_source(
     value: object,
     global_settings: GlobalSettings,
+    ssh: SSHTarget | None,
 ) -> DriverBase | bckp.BackupSource:
     if isinstance(value, dict) and set(value) == {"backup"}:
         backup_name = value["backup"]
         if not isinstance(backup_name, str) or not backup_name:
             raise ConfigError("source backup name must be a nonempty string")
         return bckp.BackupSource(backup_name)
-    return _parse_driver(value, "source", global_settings)
+    return _parse_driver(value, "source", global_settings, ssh)
 
 
 def _parse_drivers(
     value: object,
     global_settings: GlobalSettings,
+    ssh: SSHTarget | None,
 ) -> tuple[DriverBase, ...]:
     if not isinstance(value, list):
         raise ConfigError("drivers must be a list")
@@ -229,7 +243,7 @@ def _parse_drivers(
     messages = []
     for index, definition in enumerate(value, start=1):
         try:
-            drivers.append(_parse_driver(definition, f"driver {index}", global_settings))
+            drivers.append(_parse_driver(definition, f"driver {index}", global_settings, ssh))
         except YaesmError as error:
             _collect_messages(messages, error)
     if messages:
@@ -241,6 +255,7 @@ def _parse_driver(
     value: object,
     label: str,
     global_settings: GlobalSettings,
+    ssh: SSHTarget | None,
 ) -> DriverBase:
     if not isinstance(value, dict) or len(value) != 1:
         raise ConfigError(f"{label} must select one driver")
@@ -250,13 +265,20 @@ def _parse_driver(
         raise ConfigError(f"{label} uses unknown driver {name!r}")
 
     try:
-        if isinstance(config, dict) and "ssh" in config:
+        remote = False
+        if isinstance(config, dict):
             config = dict(config)
-            config["ssh"] = SSHTarget.from_config(config["ssh"])
+            remote = config.pop("remote", False)
+        if not isinstance(remote, bool):
+            raise vlp.Invalid("remote must be a boolean")
+        if remote and ssh is None:
+            raise vlp.Invalid("remote requires backup SSH configuration")
         parsed = driver_type.config_schema()(config)
-    except (vlp.Invalid, SSHTargetError) as error:
+    except vlp.Invalid as error:
         raise ConfigError(f"{label} has invalid {name} configuration: {error}") from error
     constructor = ty.cast(ty.Callable[..., DriverBase], driver_type)
+    if remote:
+        parsed["ssh"] = ssh
     return constructor(**parsed, global_settings=global_settings)
 
 
@@ -294,6 +316,20 @@ def _validate_backup_sources(
             source_backup = backups_by_name.get(source_name)
             if source_backup is not None:
                 visit(source_backup.name)
+                source_ssh = source_backup.destination.ssh
+                backup_ssh = next(
+                    (
+                        driver.ssh
+                        for driver in (backups[name].destination, *backups[name].drivers)
+                        if driver.ssh is not None
+                    ),
+                    None,
+                )
+                if source_ssh is not None and backup_ssh is not None and source_ssh != backup_ssh:
+                    messages.append(
+                        f"backup {name!r} and source backup {source_backup.name!r} "
+                        "use different SSH configurations"
+                    )
             elif source_name not in declared_names:
                 messages.append(f"backup {name!r} references unknown source backup {source_name!r}")
         visiting.pop()

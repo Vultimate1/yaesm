@@ -13,7 +13,7 @@ import yaesm.command as command_module
 import yaesm.ty as ty
 from yaesm.backup import BackupArtifact, BackupOperation
 from yaesm.check import CheckResult, CheckRole
-from yaesm.command import Command, CommandError, CommandResult, CommandRunner
+from yaesm.command import Command, CommandError, CommandResult, CommandRunner, CommandStage
 from yaesm.driver.btrfsdriver import BtrfsDriver
 from yaesm.driver.driverbase import DriverBase
 from yaesm.driver.gpgdriver import GPGDriver, GPGStream
@@ -65,16 +65,6 @@ def test_config_schema_accepts_mapping(tmp_path):
     assert GPGDriver.config_schema()({"public_key": str(public_key)}) == {"public_key": public_key}
 
 
-def test_config_schema_accepts_ssh(tmp_path):
-    public_key = tmp_path / "backup-key.asc"
-    ssh = SSHTarget("ssh://host", tmp_path / "identity")
-
-    assert GPGDriver.config_schema()({"public_key": public_key, "ssh": ssh}) == {
-        "public_key": public_key,
-        "ssh": ssh,
-    }
-
-
 @pytest.mark.parametrize("value", [None, 1, [], {}])
 def test_config_schema_rejects_invalid_public_key_type(value):
     with pytest.raises(vlp.Invalid, match="public_key must be a path"):
@@ -86,11 +76,6 @@ def test_config_schema_rejects_relative_public_key():
         GPGDriver.config_schema()("backup-key.asc")
 
 
-def test_config_schema_rejects_invalid_ssh(tmp_path):
-    with pytest.raises(vlp.Invalid, match="ssh must be an SSHTarget"):
-        GPGDriver.config_schema()({"public_key": tmp_path / "key", "ssh": "ssh://host"})
-
-
 @pytest.mark.parametrize("config", [{}, {"public_key": "/key", "unknown": True}])
 def test_config_schema_rejects_invalid_mapping(config):
     with pytest.raises(vlp.Invalid):
@@ -98,11 +83,10 @@ def test_config_schema_rejects_invalid_mapping(config):
 
 
 def test_config_schema_output_constructs_driver(tmp_path):
-    ssh = SSHTarget("ssh://host", tmp_path / "identity")
-    config = GPGDriver.config_schema()({"public_key": tmp_path / "backup-key.asc", "ssh": ssh})
+    config = GPGDriver.config_schema()({"public_key": tmp_path / "backup-key.asc"})
 
     assert GPGDriver(**config).public_key == tmp_path / "backup-key.asc"
-    assert GPGDriver(**config).ssh is ssh
+    assert GPGDriver(**config).ssh is None
 
 
 def test_constructor_rejects_invalid_public_key_type():
@@ -255,23 +239,25 @@ def test_key_check_is_only_used_for_transform_role(tmp_path, role):
 @pytest.mark.parametrize("suffixes", [(), (".tar", ".zst")])
 def test_cap_encrypt_appends_noninteractive_gpg_filter(tmp_path, suffixes):
     public_key = tmp_path / "backup-key.asc"
-    source = CommandStream((("produce", "data"),), suffixes=suffixes)
+    source = CommandStream((CommandStage(("produce", "data")),), suffixes=suffixes)
 
     stream = GPGDriver(public_key).cap_encrypt(source)
 
     assert stream == GPGStream(
         (
-            ("produce", "data"),
-            (
-                "gpg",
-                "--batch",
-                "--no-tty",
-                "--no-keyring",
-                "--compress-algo",
-                "none",
-                "--recipient-file",
-                str(public_key),
-                "--encrypt",
+            CommandStage(("produce", "data")),
+            CommandStage(
+                (
+                    "gpg",
+                    "--batch",
+                    "--no-tty",
+                    "--no-keyring",
+                    "--compress-algo",
+                    "none",
+                    "--recipient-file",
+                    str(public_key),
+                    "--encrypt",
+                )
             ),
         ),
         suffixes=(*suffixes, ".gpg"),
@@ -281,11 +267,11 @@ def test_cap_encrypt_appends_noninteractive_gpg_filter(tmp_path, suffixes):
 def test_cap_encrypt_runs_gpg_where_the_public_key_is_stored(tmp_path):
     public_key = tmp_path / "backup-key.asc"
     ssh = SSHTarget("ssh://host", tmp_path / "identity")
-    source = CommandStream((("produce", "data"),))
+    source = CommandStream((CommandStage(("produce", "data")),))
 
     stream = GPGDriver(public_key, ssh).cap_encrypt(source)
 
-    assert stream.commands[-1] == ssh.openssh_command(
+    assert stream.stages[-1] == CommandStage(
         (
             "gpg",
             "--batch",
@@ -296,7 +282,8 @@ def test_cap_encrypt_runs_gpg_where_the_public_key_is_stored(tmp_path):
             "--recipient-file",
             str(public_key),
             "--encrypt",
-        )
+        ),
+        ssh,
     )
 
 
@@ -340,8 +327,11 @@ class _FileDestination(DriverBase):
         destination = self.location / operation.artifact_name
         self.runner.pipeline(
             (
-                *source.commands[:-1],
-                (*source.commands[-1], "--output", str(destination)),
+                *source.stages[:-1],
+                dataclasses.replace(
+                    source.stages[-1],
+                    command=(*source.stages[-1].command, "--output", str(destination)),
+                ),
             )
         )
         return BackupArtifact(operation, _EncryptedFile(destination))
@@ -454,13 +444,18 @@ def test_gpg_rejects_invalid_public_key(tmp_path: ty.Path, malformed: bool) -> N
     assert result.stderr
 
     encrypted_backup = tmp_path / "backup.gpg"
-    stream = GPGDriver(public_key).cap_encrypt(CommandStream((("printf", "content"),)))
+    stream = GPGDriver(public_key).cap_encrypt(
+        CommandStream((CommandStage(("printf", "content")),))
+    )
 
     with pytest.raises(CommandError) as error:
         CommandRunner().pipeline(
             (
-                *stream.commands[:-1],
-                (*stream.commands[-1], "--output", str(encrypted_backup)),
+                *stream.stages[:-1],
+                dataclasses.replace(
+                    stream.stages[-1],
+                    command=(*stream.stages[-1].command, "--output", str(encrypted_backup)),
+                ),
             )
         )
 
