@@ -202,7 +202,7 @@ class BtrfsDriver(DriverBase):
             )
             if result.returncode == 0:
                 try:
-                    return bckp.BackupArtifact(operation, self._read_snapshot(destination))
+                    return self._artifact(operation, self._read_snapshot(destination))
                 except BaseException:
                     self._delete((destination,), check=False)
                     raise
@@ -279,7 +279,7 @@ class BtrfsDriver(DriverBase):
             self._delete((stored,), check=False)
             raise
 
-        return bckp.BackupArtifact(operation, snapshot)
+        return self._artifact(operation, snapshot)
 
     def cap_list(self, backup_name: str) -> tuple[bckp.BackupArtifact[BtrfsSnapshot], ...]:
         result = self.runner.run(
@@ -310,13 +310,7 @@ class BtrfsDriver(DriverBase):
                 )
             except YaesmValueError:
                 continue
-            operation = dataclasses.replace(
-                operation,
-                source_artifact_id=(
-                    None if snapshot.source_uuid is None else str(snapshot.source_uuid)
-                ),
-            )
-            artifacts.append(bckp.BackupArtifact(operation, snapshot))
+            artifacts.append(self._artifact(operation, snapshot))
         return tuple(
             sorted(artifacts, key=lambda artifact: artifact.operation.created_at, reverse=True)
         )
@@ -386,14 +380,25 @@ class BtrfsDriver(DriverBase):
             capture_output=True,
         )
         commands = tuple(
-            line.split(maxsplit=1)[0] for line in (result.stdout or "").splitlines() if line.strip()
+            line.split(maxsplit=1)[0]
+            for line in (result.stdout or "").splitlines()
+            if line.strip() and not line.startswith("At ")
         )
-        if not commands or commands[0] != "snapshot" or commands[-1] != "end":
+        if not commands or commands[0] != "snapshot":
             raise BtrfsDriverError("could not read Btrfs change stream")
-        return all(command in {"snapshot", "end"} for command in commands)
+        return len(commands) == 1
 
     def cap_cleanup(self, representation: BtrfsSnapshot) -> None:
         self._delete((representation,))
+
+    @staticmethod
+    def _artifact(
+        operation: bckp.BackupOperation,
+        snapshot: BtrfsSnapshot,
+    ) -> bckp.BackupArtifact[BtrfsSnapshot]:
+        if snapshot.source_uuid is not None:
+            operation = dataclasses.replace(operation, source_artifact_id=str(snapshot.source_uuid))
+        return bckp.BackupArtifact(operation, snapshot)
 
     def _parse_snapshot(self, line: str) -> BtrfsSnapshot | None:
         fields, separator, path = line.partition(" path ")

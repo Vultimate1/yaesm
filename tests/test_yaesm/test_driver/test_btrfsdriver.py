@@ -502,6 +502,18 @@ def test_cap_store_uses_direct_snapshot_on_same_endpoint(tmp_path):
     assert runner.pipelines == []
 
 
+def test_cap_store_records_direct_snapshot_source_uuid(tmp_path):
+    source_uuid = UUID(int=2)
+    runner = RecordingRunner(stdouts=(None, _snapshot_output(parent_uuid=source_uuid)))
+
+    artifact = with_runner(BtrfsDriver(tmp_path / "destination"), runner).cap_store(
+        BtrfsSubvolume(tmp_path / "source"),
+        operation(),
+    )
+
+    assert artifact.operation.source_artifact_id == str(source_uuid)
+
+
 def test_cap_store_falls_back_to_send_receive(tmp_path):
     source_dir = tmp_path / "source"
     destination_dir = tmp_path / "destination"
@@ -1136,9 +1148,9 @@ def test_cap_delete_rejects_different_endpoint(tmp_path):
 @pytest.mark.parametrize(
     ("stdout", "expected"),
     [
-        ("snapshot ./current\nend ./current\n", True),
-        ("snapshot ./current\nupdate_extent ./current/file\nend ./current\n", False),
-        ("snapshot ./current\nunlink ./current/file\nend ./current\n", False),
+        ("At subvol ./current\nsnapshot ./current\n", True),
+        ("At subvol ./current\nsnapshot ./current\nupdate_extent ./current/file\n", False),
+        ("snapshot ./current\nunlink ./current/file\n", False),
     ],
 )
 def test_cap_unchanged_uses_native_incremental_send(tmp_path, stdout, expected):
@@ -1164,7 +1176,7 @@ def test_cap_unchanged_uses_native_incremental_send(tmp_path, stdout, expected):
 
 @pytest.mark.parametrize(
     "stdout",
-    [None, "", "\n", "update_extent ./current/file\n", "snapshot x\n"],
+    [None, "", "\n", "At subvol ./current\n", "update_extent ./current/file\n"],
 )
 def test_cap_unchanged_rejects_invalid_change_stream(tmp_path, stdout):
     source_uuid = UUID(int=2)
@@ -1192,7 +1204,7 @@ def test_cap_unchanged_uses_matching_rolling_base(tmp_path):
     )
     runner = RecordingRunner(
         stdouts=(_snapshot_output(source_uuid),),
-        pipeline_stdouts=("snapshot ./current\nend ./current\n",),
+        pipeline_stdouts=("At subvol ./current\nsnapshot ./current\n",),
     )
 
     assert (
