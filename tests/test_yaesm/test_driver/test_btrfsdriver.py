@@ -131,6 +131,13 @@ def test_config_schema_accepts_path_location(tmp_path):
     assert BtrfsDriver.config_schema()({"location": tmp_path})["location"] == tmp_path
 
 
+def test_config_schema_accepts_shorthand(tmp_path):
+    assert BtrfsDriver.config_schema()(tmp_path) == {
+        "location": tmp_path,
+        "bootstrap_refresh_days": 21,
+    }
+
+
 @pytest.mark.parametrize("refresh_days", [0, 1, 21])
 def test_config_schema_accepts_bootstrap_refresh(tmp_path, refresh_days):
     assert BtrfsDriver.config_schema()(

@@ -125,6 +125,10 @@ def test_config_schema_accepts_path_location(tmp_path):
     assert TarDriver.config_schema()({"location": tmp_path}) == {"location": tmp_path}
 
 
+def test_config_schema_accepts_shorthand(tmp_path):
+    assert TarDriver.config_schema()(tmp_path) == {"location": tmp_path}
+
+
 def test_config_schema_accepts_one_file_system(tmp_path):
     assert TarDriver.config_schema()({"location": tmp_path, "one_file_system": False}) == {
         "location": tmp_path,

@@ -142,8 +142,8 @@ def _parse_backup(
         raise ConfigError("settings must be a mapping")
 
     messages = []
-    required = {"source", "destination", "schedules"}
-    allowed = required | {"previous_names", "ssh", "transforms"}
+    required = {"source", "destination"}
+    allowed = required | {"previous_names", "schedules", "ssh", "transforms"}
     if missing := sorted(required - value.keys()):
         messages.append(f"missing required settings: {', '.join(missing)}")
     if unknown := sorted(value.keys() - allowed, key=str):
@@ -193,13 +193,12 @@ def _parse_backup(
         _collect_messages(messages, error)
         transforms = ()
 
-    schedules = ()
-    retention = ()
-    if "schedules" in value:
-        try:
-            schedules, retention = parse_schedules(value["schedules"])
-        except YaesmError as error:
-            _collect_messages(messages, error)
+    try:
+        schedules, retention = parse_schedules(value.get("schedules", {}))
+    except YaesmError as error:
+        _collect_messages(messages, error)
+        schedules = ()
+        retention = ()
 
     if messages:
         raise ConfigError(messages)
@@ -257,18 +256,18 @@ def _parse_driver(
     global_settings: GlobalSettings,
     ssh: SSHTarget | None,
 ) -> DriverBase:
-    if not isinstance(value, dict) or len(value) != 1:
+    if not isinstance(value, dict):
         raise ConfigError(f"{label} must select one driver")
-    name, config = next(iter(value.items()))
+    remote = value.get("remote", False)
+    selection = tuple((name, config) for name, config in value.items() if name != "remote")
+    if len(selection) != 1:
+        raise ConfigError(f"{label} must select one driver")
+    name, config = selection[0]
     driver_type = _type_named(DriverBase, name)
     if driver_type is None:
         raise ConfigError(f"{label} uses unknown driver {name!r}")
 
     try:
-        remote = False
-        if isinstance(config, dict):
-            config = dict(config)
-            remote = config.pop("remote", False)
         if not isinstance(remote, bool):
             raise vlp.Invalid("remote must be a boolean")
         if remote and ssh is None:
@@ -347,8 +346,6 @@ def parse_schedules(
     """Parse named schedules and their nested retention policies."""
     if not isinstance(value, dict):
         raise ConfigError("schedules must be a mapping")
-    if not value:
-        raise ConfigError("at least one schedule is required")
 
     schedules = []
     policies = []

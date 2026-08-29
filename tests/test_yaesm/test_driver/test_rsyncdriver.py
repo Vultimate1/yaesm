@@ -105,6 +105,15 @@ def test_config_schema_accepts_path_location(tmp_path):
     assert RsyncDriver.config_schema()({"location": tmp_path})["location"] == tmp_path
 
 
+def test_config_schema_accepts_shorthand(tmp_path):
+    assert RsyncDriver.config_schema()(tmp_path) == {
+        "location": tmp_path,
+        "extra_options": (),
+        "exclude": (),
+        "one_file_system": False,
+    }
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [

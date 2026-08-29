@@ -28,13 +28,17 @@ def test_config_schema_accepts_standard_levels(level):
     assert ZstdDriver.config_schema()({"level": level}) == {"level": level}
 
 
+def test_config_schema_accepts_shorthand():
+    assert ZstdDriver.config_schema()(7) == {"level": 7}
+
+
 @pytest.mark.parametrize("level", [None, True, 0, 20, 3.0, "3"])
 def test_config_schema_rejects_invalid_level(level):
     with pytest.raises(vlp.Invalid, match="level must be an integer from 1 to 19"):
         ZstdDriver.config_schema()({"level": level})
 
 
-@pytest.mark.parametrize("config", [None, [], 1, {"unknown": True}])
+@pytest.mark.parametrize("config", [None, [], "3", {"unknown": True}])
 def test_config_schema_rejects_invalid_structure(config):
     with pytest.raises(vlp.Invalid):
         ZstdDriver.config_schema()(config)

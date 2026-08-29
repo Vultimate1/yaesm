@@ -41,7 +41,10 @@ class ZstdDriver(DriverBase):
                 raise vlp.Invalid("level must be an integer from 1 to 19")
             return value
 
-        return vlp.Schema({vlp.Optional("level", default=3): level})
+        mapping = vlp.Schema({vlp.Optional("level", default=3): level})
+        return vlp.Schema(
+            lambda value: mapping({"level": value} if isinstance(value, int) else value)
+        )
 
     def cap_compress(self, source: CommandStream) -> ZstdStream:
         return ZstdStream(

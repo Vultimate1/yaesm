@@ -85,11 +85,14 @@ class BtrfsDriver(DriverBase):
                 raise vlp.Invalid("bootstrap_refresh_days must be at least 0")
             return value
 
-        return vlp.Schema(
+        mapping = vlp.Schema(
             {
                 vlp.Required("location"): absolute_path,
                 vlp.Optional("bootstrap_refresh_days", default=21): refresh_days,
             }
+        )
+        return vlp.Schema(
+            lambda value: mapping({"location": value} if isinstance(value, str | Path) else value)
         )
 
     def _checks(self, role: CheckRole) -> tuple[Check, ...]:

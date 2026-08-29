@@ -405,12 +405,12 @@ def test_configured_remote_pipeline_uses_one_ssh_command():
                     "endpoint": "ssh://server",
                     "identity_file": "/key",
                 },
-                "source": {"btrfs": {"location": "/source", "remote": True}},
+                "source": {"btrfs": "/source", "remote": True},
                 "transforms": [
-                    {"zstd": {"remote": True}},
-                    {"gpg": {"public_key": "/public-key.asc", "remote": True}},
+                    {"zstd": {}, "remote": True},
+                    {"gpg": "/public-key.asc", "remote": True},
                 ],
-                "destination": {"tar": {"location": "/backups", "remote": True}},
+                "destination": {"tar": "/backups", "remote": True},
                 "schedules": {
                     "manual": {
                         "on-demand": {},

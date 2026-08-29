@@ -108,13 +108,16 @@ class RsyncDriver(DriverBase):
                 raise vlp.Invalid("one_file_system must be a boolean")
             return value
 
-        return vlp.Schema(
+        mapping = vlp.Schema(
             {
                 vlp.Required("location"): absolute_path,
                 vlp.Optional("extra_options", default=()): extra_options,
                 vlp.Optional("exclude", default=()): exclude,
                 vlp.Optional("one_file_system", default=False): one_file_system,
             }
+        )
+        return vlp.Schema(
+            lambda value: mapping({"location": value} if isinstance(value, str | Path) else value)
         )
 
     def _checks(self, role: CheckRole) -> tuple[Check, ...]:
