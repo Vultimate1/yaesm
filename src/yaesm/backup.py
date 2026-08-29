@@ -102,7 +102,7 @@ class BackupArtifact(ty.Generic[_RepresentationT]):
 
 @dataclasses.dataclass(frozen=True)
 class Backup:
-    """A named backup definition used to create operations."""
+    """A named backup definition whose history belongs to its destination."""
 
     name: str
     source: DriverBase | BackupSource
@@ -138,7 +138,7 @@ class Backup:
         return (self.name, *self.previous_names)
 
     def artifacts(self) -> tuple[BackupArtifact[Representation], ...]:
-        """Return stored artifacts under their current backup and schedule names."""
+        """Return artifacts from this destination under current and previous names."""
         schedule_names = {
             name: schedule.name for schedule in self.schedules for name in schedule.names
         }
@@ -247,16 +247,11 @@ class Backup:
                     ),
                     None,
                 )
-                needs_source_base = any(
-                    step.driver.capability_metadata(step.capability).base == "source"
-                    for step in pipeline.steps
+                base = IncrementalBase(
+                    source_base,
+                    newest.representation,
+                    newest.operation.created_at,
                 )
-                if source_base is not None or not needs_source_base:
-                    base = IncrementalBase(
-                        source_base,
-                        newest.representation,
-                        newest.operation.created_at,
-                    )
             else:
                 base = IncrementalBase(
                     None,

@@ -44,6 +44,7 @@ class ZFSSnapshot(Representation):
     snapshot: str
     target: SSHTarget | None = None
     encrypted: bool = False
+    guid: int | None = dataclasses.field(default=None, kw_only=True, compare=False)
 
     @property
     def name(self) -> str:
@@ -57,6 +58,7 @@ class ZFSStream(CommandStream):
 
     suffix = ".zfs"
     encrypted: bool = False
+    base_guid: int | None = dataclasses.field(default=None, kw_only=True)
 
 
 class ZFSDriver(DriverBase):
@@ -154,6 +156,56 @@ class ZFSDriver(DriverBase):
     def _check_target(self) -> SSHTarget | None:
         return self.target
 
+    def _base_compatible(
+        self,
+        capability: str,
+        source: Representation,
+        source_base: Representation | None,
+        destination_base: Representation | None,
+    ) -> bool:
+        if not isinstance(destination_base, ZFSSnapshot):
+            return False
+        if capability == "store":
+            if not isinstance(source, ZFSDataset) or not self._owns(destination_base):
+                return False
+            if same_endpoint(source.target, self.target) and source.name == self.dataset:
+                return False
+            source_base = ZFSSnapshot(
+                source.name,
+                destination_base.snapshot,
+                source.target,
+                source.encrypted,
+            )
+        elif capability == "export":
+            if source_base is None:
+                raise ZFSDriverError("ZFS source incremental base snapshot is missing")
+            if (
+                not isinstance(source, ZFSSnapshot)
+                or not isinstance(source_base, ZFSSnapshot)
+                or not same_endpoint(source.target, source_base.target)
+                or source.dataset != source_base.dataset
+            ):
+                return False
+        elif capability == "import":
+            if (
+                not isinstance(source, ZFSStream)
+                or not isinstance(source_base, ZFSSnapshot)
+                or not self._owns(destination_base)
+            ):
+                return False
+        else:
+            return False
+
+        source_guid = self._snapshot_guid(source_base)
+        if source_guid != self._snapshot_guid(destination_base):
+            raise ZFSDriverError(
+                "ZFS incremental base snapshots have different GUIDs: "
+                f"{source_base.name} and {destination_base.name}"
+            )
+        if isinstance(source, ZFSStream) and source.base_guid != source_guid:
+            raise ZFSDriverError("ZFS stream does not match its incremental base")
+        return True
+
     def capability_metadata(self, name: str) -> CapabilityMetadata:
         metadata = super().capability_metadata(name)
         if self.encryption and name in {"source", "store", "export"}:
@@ -200,9 +252,7 @@ class ZFSDriver(DriverBase):
             )
             return self._record_artifact(bckp.BackupArtifact(operation, destination))
 
-        if base is not None and (
-            not same_endpoint(base.target, self.target) or base.dataset != self.dataset
-        ):
+        if base is not None and not self._owns(base):
             raise ZFSDriverError("ZFS base does not belong to the destination dataset")
 
         source_snapshot = ZFSSnapshot(
@@ -219,6 +269,7 @@ class ZFSDriver(DriverBase):
                 base.snapshot,
                 source.target,
                 encrypted,
+                guid=base.guid,
             )
         )
         self.runner.run(
@@ -262,6 +313,7 @@ class ZFSDriver(DriverBase):
         return ZFSStream(
             (command_for_target(source.target, command),),
             encrypted,
+            base_guid=None if base is None else base.guid,
             suffixes=(ZFSStream.suffix,),
         )
 
@@ -271,9 +323,7 @@ class ZFSDriver(DriverBase):
         operation: bckp.BackupOperation,
         base: ZFSSnapshot | None = None,
     ) -> bckp.BackupArtifact[ZFSSnapshot]:
-        if base is not None and (
-            not same_endpoint(base.target, self.target) or base.dataset != self.dataset
-        ):
+        if base is not None and not self._owns(base):
             raise ZFSDriverError("ZFS import base does not belong to the destination dataset")
 
         destination = ZFSSnapshot(
@@ -309,7 +359,7 @@ class ZFSDriver(DriverBase):
                         "-t",
                         "snapshot",
                         "-o",
-                        f"name,{_SOURCE_ARTIFACT_PROPERTY}",
+                        f"name,guid,{_SOURCE_ARTIFACT_PROPERTY}",
                         "-d",
                         "1",
                         self.dataset,
@@ -325,7 +375,11 @@ class ZFSDriver(DriverBase):
         prefix = f"{self.dataset}@"
         artifacts = []
         for line in (result.stdout or "").splitlines():
-            name, separator, source_artifact_id = line.partition("\t")
+            try:
+                name, guid_value, source_artifact_id = line.split("\t", 2)
+                guid = int(guid_value)
+            except ValueError:
+                continue
             if not name.startswith(prefix):
                 continue
             snapshot_name = name.removeprefix(prefix)
@@ -338,19 +392,21 @@ class ZFSDriver(DriverBase):
                 continue
             operation = dataclasses.replace(
                 operation,
-                source_artifact_id=(
-                    source_artifact_id if separator and source_artifact_id != "-" else None
-                ),
+                source_artifact_id=(source_artifact_id if source_artifact_id != "-" else None),
             )
             artifacts.append(
                 bckp.BackupArtifact(
                     operation,
-                    ZFSSnapshot(self.dataset, snapshot_name, self.target),
+                    ZFSSnapshot(self.dataset, snapshot_name, self.target, guid=guid),
                 )
             )
         return tuple(
             sorted(artifacts, key=lambda artifact: artifact.operation.created_at, reverse=True)
         )
+
+    def artifact_id(self, artifact: bckp.BackupArtifact) -> str:
+        snapshot = ty.cast(ZFSSnapshot, artifact.representation)
+        return str(snapshot.guid) if snapshot.guid is not None else super().artifact_id(artifact)
 
     def _record_artifact(
         self,
@@ -376,6 +432,24 @@ class ZFSDriver(DriverBase):
             raise
         return artifact
 
+    def _owns(self, snapshot: ZFSSnapshot) -> bool:
+        return same_endpoint(snapshot.target, self.target) and snapshot.dataset == self.dataset
+
+    def _snapshot_guid(self, snapshot: ZFSSnapshot) -> int:
+        if snapshot.guid is not None:
+            return snapshot.guid
+        result = self.runner.run(
+            command_for_target(
+                snapshot.target,
+                ("zfs", "get", "-H", "-o", "value", "guid", snapshot.name),
+            ),
+            capture_output=True,
+        )
+        try:
+            return int((result.stdout or "").strip())
+        except ValueError as error:
+            raise ZFSDriverError(f"could not read ZFS snapshot GUID: {snapshot.name}") from error
+
     def format_locator(self, artifact: bckp.BackupArtifact[ZFSSnapshot]) -> str:
         snapshot = artifact.representation
         return (
@@ -389,10 +463,7 @@ class ZFSDriver(DriverBase):
         artifacts: ty.Sequence[bckp.BackupArtifact[ZFSSnapshot]],
     ) -> None:
         snapshots = tuple(artifact.representation for artifact in artifacts)
-        if any(
-            not same_endpoint(snapshot.target, self.target) or snapshot.dataset != self.dataset
-            for snapshot in snapshots
-        ):
+        if any(not self._owns(snapshot) for snapshot in snapshots):
             raise ZFSDriverError("ZFS artifact does not belong to the destination dataset")
         self._destroy(snapshots)
 

@@ -151,6 +151,32 @@ class DriverBase(abc.ABC):
                 return getattr(implementation, _CAPABILITY_ATTRIBUTE, metadata)
         raise ValueError(f"unknown capability: {name}")
 
+    @ty.final
+    def validate_base(
+        self,
+        capability: str,
+        source: Representation,
+        source_base: Representation | None,
+        destination_base: Representation | None,
+    ) -> bool:
+        """Return whether this driver approves the pair for incremental use."""
+        return self._base_compatible(
+            capability,
+            source,
+            source_base,
+            destination_base,
+        )
+
+    def _base_compatible(
+        self,
+        capability: str,
+        source: Representation,
+        source_base: Representation | None,
+        destination_base: Representation | None,
+    ) -> bool:
+        """Return whether a capability may safely use an incremental base pair."""
+        return False
+
     @staticmethod
     @abc.abstractmethod
     def config_schema() -> vlp.Schema:
@@ -230,7 +256,7 @@ class DriverBase(abc.ABC):
         operation: bckp.BackupOperation,
         base: Representation | None = None,
     ) -> bckp.BackupArtifact:
-        """Persist source as an artifact for an operation, optionally using a base."""
+        """Persist source, using the base only after validating its compatibility."""
         raise NotImplementedError(f"{self.name()} driver does not provide the store capability")
 
     @capability("snapshot", adds=(DataProperty.SNAPSHOT,), temporary=True)
@@ -245,7 +271,7 @@ class DriverBase(abc.ABC):
 
     @capability("export", base="source")
     def cap_export(self, source: Representation, base: Representation | None = None) -> ByteStream:
-        """Export source data, optionally relative to another representation."""
+        """Export source data, using the base only after validating its compatibility."""
         raise NotImplementedError(f"{self.name()} driver does not provide the export capability")
 
     @capability("import", base="destination")
@@ -255,7 +281,7 @@ class DriverBase(abc.ABC):
         operation: bckp.BackupOperation,
         base: Representation | None = None,
     ) -> bckp.BackupArtifact:
-        """Import a stream as an artifact for an operation, optionally using a base."""
+        """Import a stream, using the base only after validating its compatibility."""
         raise NotImplementedError(f"{self.name()} driver does not provide the import capability")
 
     @capability("compress", adds=(DataProperty.COMPRESSED,))

@@ -80,12 +80,14 @@ class Pipeline:
         operation: BackupOperation,
         base: IncrementalBase | None = None,
     ) -> BackupArtifact:
-        """Execute the resolved capabilities for one backup operation."""
+        """Execute one backup, omitting a rejected incremental base from every step."""
         value: object | None = (
             None if self.source_artifact is None else self.source_artifact.representation
         )
         artifact: BackupArtifact | None = None
         temporaries: list[tuple[PipelineStep, Representation]] = []
+        approved_base: IncrementalBase | None = None
+        base_checked = base is None
         try:
             for step in self.steps:
                 method = step.driver.capability_method(step.capability)
@@ -96,11 +98,22 @@ class Pipeline:
                     step.driver.name(),
                     step.capability,
                 )
-                step_base = (
-                    None if base is None or metadata.base is None else getattr(base, metadata.base)
-                )
-
                 try:
+                    if not base_checked and metadata.base is not None:
+                        assert base is not None
+                        if step.driver.validate_base(
+                            step.capability,
+                            ty.cast(Representation, value),
+                            base.source,
+                            base.destination,
+                        ):
+                            approved_base = base
+                        base_checked = True
+                    step_base = (
+                        None
+                        if approved_base is None or metadata.base is None
+                        else getattr(approved_base, metadata.base)
+                    )
                     if step.capability == "source":
                         value = method()
                     elif step.capability in {"store", "import"}:

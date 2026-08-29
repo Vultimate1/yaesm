@@ -348,6 +348,23 @@ def test_cap_store_rejects_base_on_different_endpoint(tmp_path):
         RsyncDriver(tmp_path, target).cap_store(PathTree(tmp_path / "source"), operation(), base)
 
 
+def test_incremental_base_requires_rsync_tree_on_destination_endpoint(tmp_path):
+    target = SSHTarget("ssh://destination", tmp_path / "key")
+    driver = RsyncDriver(tmp_path, target)
+    source = PathTree(tmp_path / "source")
+    base = RsyncTree(tmp_path / "base", target)
+
+    assert driver.validate_base("store", source, None, base)
+    assert not driver.validate_base("store", source, None, PathTree(base.path, target))
+    assert not driver.validate_base(
+        "store",
+        source,
+        None,
+        RsyncTree(base.path, SSHTarget("ssh://other", tmp_path / "key")),
+    )
+    assert not driver.validate_base("export", source, None, base)
+
+
 def test_cap_store_local_to_remote(tmp_path):
     runner = RecordingRunner()
     target = SSHTarget("ssh://user@host:2222", tmp_path / "key")

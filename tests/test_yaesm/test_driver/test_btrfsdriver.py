@@ -1,5 +1,6 @@
 """Tests for yaesm.driver.btrfsdriver."""
 
+import dataclasses
 import subprocess
 from datetime import datetime
 from uuid import UUID
@@ -540,6 +541,24 @@ def test_cap_store_uses_explicit_base_without_bootstrap(tmp_path):
     assert all(".yaesm-btrfs-bootstrap" not in " ".join(command) for command in runner.commands)
 
 
+def test_cap_store_existing_snapshot_uses_full_send_without_bootstrap(tmp_path):
+    runner = RecordingRunner()
+    target = SSHTarget("ssh://source", tmp_path / "key")
+    source = _snapshot(tmp_path / "source", target)
+    destination = tmp_path / "destination"
+
+    artifact = with_runner(BtrfsDriver(destination), runner).cap_store(source, operation())
+
+    assert artifact.representation.path == destination / operation().artifact_name
+    assert runner.pipelines == [
+        (
+            target.openssh_command((*_BTRFS_SEND, source.path)),
+            ("btrfs", "receive", str(destination)),
+        )
+    ]
+    assert not any("bootstrap" in " ".join(command) for command in runner.commands)
+
+
 @pytest.mark.parametrize(
     ("source_spec", "destination_spec"),
     [
@@ -779,6 +798,7 @@ def test_cap_export_full(tmp_path):
 
     assert stream.commands == ((*_BTRFS_SEND, str(snapshot.path)),)
     assert stream.subvolume_name == "snapshot"
+    assert stream.base_uuid is None
     assert stream.suffixes == (".btrfs",)
 
 
@@ -789,6 +809,7 @@ def test_cap_export_incremental(tmp_path):
     stream = BtrfsDriver(tmp_path).cap_export(snapshot, base)
 
     assert stream.commands == ((*_BTRFS_SEND, "-p", str(base.path), str(snapshot.path)),)
+    assert stream.base_uuid == base.uuid
 
 
 def test_cap_export_remote(tmp_path):
@@ -808,6 +829,65 @@ def test_cap_export_rejects_base_on_different_endpoint(tmp_path):
 
     with pytest.raises(BtrfsDriverError, match="different SSH endpoints"):
         BtrfsDriver(tmp_path).cap_export(snapshot, base)
+
+
+def test_incremental_base_requires_matching_btrfs_uuid_pair(tmp_path):
+    source_target = SSHTarget("ssh://source", tmp_path / "key")
+    destination_target = SSHTarget("ssh://destination", tmp_path / "key")
+    source = _snapshot(tmp_path / "source", source_target, uuid=UUID(int=1))
+    source_base = _snapshot(tmp_path / "source-base", source_target, uuid=UUID(int=2))
+    destination_base = _snapshot(
+        tmp_path / "destination-base",
+        destination_target,
+        uuid=UUID(int=3),
+        source_uuid=source_base.uuid,
+    )
+
+    assert BtrfsDriver(tmp_path, source_target).validate_base(
+        "export", source, source_base, destination_base
+    )
+    assert BtrfsDriver(tmp_path, destination_target).validate_base(
+        "store", source, source_base, destination_base
+    )
+    assert not BtrfsDriver(tmp_path, source_target).validate_base(
+        "export",
+        source,
+        source_base,
+        dataclasses.replace(destination_base, source_uuid=UUID(int=4)),
+    )
+    assert not BtrfsDriver(tmp_path, destination_target).validate_base(
+        "store",
+        source,
+        source_base,
+        dataclasses.replace(destination_base, target=source_target),
+    )
+    assert not BtrfsDriver(tmp_path, source_target).validate_base(
+        "export",
+        PathTree(source.path, source_target),
+        source_base,
+        destination_base,
+    )
+
+
+def test_incremental_btrfs_import_requires_matching_stream_and_destination(tmp_path):
+    target = SSHTarget("ssh://destination", tmp_path / "key")
+    source_base = _snapshot(tmp_path / "source-base", uuid=UUID(int=1))
+    destination_base = _snapshot(
+        tmp_path / "destination-base",
+        target,
+        uuid=UUID(int=2),
+        source_uuid=source_base.uuid,
+    )
+    stream = BtrfsStream((), subvolume_name="snapshot", base_uuid=source_base.uuid)
+    driver = BtrfsDriver(tmp_path, target)
+
+    assert driver.validate_base("import", stream, source_base, destination_base)
+    assert not driver.validate_base(
+        "import",
+        dataclasses.replace(stream, base_uuid=UUID(int=3)),
+        source_base,
+        destination_base,
+    )
 
 
 def test_cap_import_rejects_base_on_different_endpoint(tmp_path):

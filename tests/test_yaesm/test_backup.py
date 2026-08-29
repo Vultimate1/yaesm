@@ -72,6 +72,15 @@ class DestinationDriver(DriverBase):
             raise DriverError("delete failed")
         self.deleted = tuple(artifacts)
 
+    def _base_compatible(
+        self,
+        capability: str,
+        source: Representation,
+        source_base: Representation | None,
+        destination_base: Representation | None,
+    ) -> bool:
+        return True
+
 
 class ArtifactDriver(DestinationDriver):
     def __init__(self, artifacts: ty.Sequence[bckp.BackupArtifact] = ()) -> None:
@@ -85,6 +94,22 @@ class ArtifactDriver(DestinationDriver):
     ) -> CommandStream:
         self.export_call = (source, base)
         return CommandStream()
+
+    def _base_compatible(
+        self,
+        capability: str,
+        source: Representation,
+        source_base: Representation | None,
+        destination_base: Representation | None,
+    ) -> bool:
+        if capability == "export":
+            return source_base is not None and destination_base is not None
+        return super()._base_compatible(
+            capability,
+            source,
+            source_base,
+            destination_base,
+        )
 
 
 class IdentifiedArtifactDriver(ArtifactDriver):
@@ -121,6 +146,15 @@ class StreamDestinationDriver(DriverBase):
         return tuple(
             artifact for artifact in self.artifacts if artifact.operation.backup_name == backup_name
         )
+
+    def _base_compatible(
+        self,
+        capability: str,
+        source: Representation,
+        source_base: Representation | None,
+        destination_base: Representation | None,
+    ) -> bool:
+        return True
 
 
 def artifact(
@@ -409,6 +443,45 @@ def test_backup_artifacts_normalizes_previous_backup_and_schedule_names():
         item.representation for item in stored
     )
     assert tuple(item.stored_name for item in artifacts) == tuple(item.name for item in stored)
+
+
+def test_backup_artifact_history_is_independent_of_configured_drivers():
+    stored = artifact("hourly", 12)
+    destination = DestinationDriver((stored,))
+
+    before = bckp.Backup("home", SourceDriver(), destination)
+    after = bckp.Backup(
+        "home",
+        SourceDriver(),
+        destination,
+        drivers=(ArtifactDriver(),),
+    )
+
+    assert before.artifacts() == (stored,)
+    assert after.artifacts() == (stored,)
+
+
+def test_backup_destination_change_starts_new_history():
+    old_destination = DestinationDriver((artifact("hourly", 12),))
+    new_destination = DestinationDriver()
+
+    assert bckp.Backup("home", SourceDriver(), old_destination).artifacts()
+    assert bckp.Backup("home", SourceDriver(), new_destination).artifacts() == ()
+
+
+def test_previous_names_only_search_the_configured_destination():
+    old_destination = DestinationDriver((artifact("hourly", 12, "old-home"),))
+    new_destination = DestinationDriver()
+    backup = bckp.Backup(
+        "home",
+        SourceDriver(),
+        new_destination,
+        previous_names=("old-home",),
+    )
+
+    assert backup.artifacts() == ()
+    assert new_destination.listed_names == ["home", "old-home"]
+    assert old_destination.listed_names == []
 
 
 def test_backup_artifacts_rejects_duplicate_logical_operation():

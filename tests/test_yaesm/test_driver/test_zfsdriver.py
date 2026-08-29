@@ -1,5 +1,6 @@
 """Tests for yaesm.driver.zfsdriver."""
 
+import dataclasses
 import os
 import shutil
 import subprocess
@@ -11,7 +12,7 @@ import voluptuous as vlp
 
 import yaesm.command as command_module
 import yaesm.ty as ty
-from yaesm.backup import Backup, BackupArtifact, BackupOperation
+from yaesm.backup import Backup, BackupArtifact, BackupError, BackupOperation
 from yaesm.check import CheckRole
 from yaesm.command import Command, CommandError, CommandResult, CommandRunner
 from yaesm.driver.zfsdriver import (
@@ -587,12 +588,13 @@ def test_cap_export_full():
 
 
 def test_cap_export_incremental():
-    base = ZFSSnapshot("tank/home", "base")
+    base = ZFSSnapshot("tank/home", "base", guid=42)
     snapshot = ZFSSnapshot("tank/home", "snapshot")
 
     stream = ZFSDriver("tank/home").cap_export(snapshot, base)
 
     assert stream.commands == (("zfs", "send", "-c", "-i", base.name, snapshot.name),)
+    assert stream.base_guid == base.guid
 
 
 def test_cap_export_uses_raw_send_for_native_encryption():
@@ -610,12 +612,106 @@ def test_cap_export_uses_raw_send_for_native_encryption():
 
 
 def test_cap_export_uses_raw_incremental_send():
-    base = ZFSSnapshot("tank/home", "base", encrypted=True)
+    base = ZFSSnapshot("tank/home", "base", encrypted=True, guid=42)
     snapshot = ZFSSnapshot("tank/home", "snapshot", encrypted=True)
 
     stream = ZFSDriver("tank/home").cap_export(snapshot, base)
 
     assert stream.commands == (("zfs", "send", "-w", "-i", base.name, snapshot.name),)
+    assert stream.base_guid == base.guid
+
+
+def test_incremental_base_requires_matching_zfs_guids():
+    source = ZFSSnapshot("tank/home", "current", guid=2)
+    source_base = ZFSSnapshot("tank/home", "base", guid=1)
+    destination_base = ZFSSnapshot("backup/home", "base", guid=1)
+
+    assert ZFSDriver("tank/home").validate_base("export", source, source_base, destination_base)
+    assert ZFSDriver("backup/home").validate_base(
+        "import",
+        ZFSStream((), base_guid=1),
+        source_base,
+        destination_base,
+    )
+
+    with pytest.raises(ZFSDriverError, match="different GUIDs"):
+        ZFSDriver("tank/home").validate_base(
+            "export",
+            source,
+            source_base,
+            dataclasses.replace(destination_base, guid=3),
+        )
+
+    with pytest.raises(ZFSDriverError, match="stream does not match"):
+        ZFSDriver("backup/home").validate_base(
+            "import",
+            ZFSStream((), base_guid=2),
+            source_base,
+            destination_base,
+        )
+
+    with pytest.raises(ZFSDriverError, match="source incremental base snapshot is missing"):
+        ZFSDriver("tank/home").validate_base("export", source, None, destination_base)
+
+
+def test_zfs_store_validates_source_snapshot_guid():
+    old = operation(11)
+    runner = RecordingRunner(stdouts=("42\n",))
+    destination_base = ZFSSnapshot("backup/home", old.artifact_name, guid=42)
+    driver = with_runner(ZFSDriver("backup/home"), runner)
+
+    assert driver.validate_base(
+        "store",
+        ZFSDataset("tank/home"),
+        None,
+        destination_base,
+    )
+    assert runner.commands == [
+        (
+            "zfs",
+            "get",
+            "-H",
+            "-o",
+            "value",
+            "guid",
+            f"tank/home@{old.artifact_name}",
+        )
+    ]
+
+
+def test_zfs_base_rejects_incompatible_representations():
+    destination_base = ZFSSnapshot("backup/home", "base", guid=1)
+    driver = ZFSDriver("backup/home")
+
+    assert not driver.validate_base("store", Representation(), None, destination_base)
+    assert not driver.validate_base(
+        "store",
+        ZFSDataset("backup/home"),
+        None,
+        destination_base,
+    )
+    assert not driver.validate_base(
+        "export",
+        ZFSSnapshot("tank/home", "current", guid=2),
+        ZFSSnapshot("other/home", "base", guid=1),
+        destination_base,
+    )
+    assert not driver.validate_base("import", Representation(), None, destination_base)
+    assert not driver.validate_base("unknown", Representation(), None, destination_base)
+    assert not driver.validate_base("store", Representation(), None, Representation())
+
+
+def test_zfs_base_rejects_unreadable_guid():
+    runner = RecordingRunner(stdouts=("invalid\n",))
+    driver = with_runner(ZFSDriver("backup/home"), runner)
+
+    with pytest.raises(ZFSDriverError, match="could not read ZFS snapshot GUID"):
+        driver.validate_base(
+            "store",
+            ZFSDataset("tank/home"),
+            None,
+            ZFSSnapshot("backup/home", "base", guid=1),
+        )
 
 
 def test_cap_export_remote(tmp_path):
@@ -709,10 +805,12 @@ def test_cap_list_returns_matching_artifacts_newest_first():
         stdouts=(
             "\n".join(
                 (
-                    f"backup/home@{older.artifact_name}\t-",
-                    "backup/home@not-an-artifact",
-                    f"other/home@{newer.artifact_name}",
-                    f"backup/home@{newer.artifact_name}\t{source}",
+                    f"backup/home@{older.artifact_name}\t11\t-",
+                    "malformed",
+                    f"backup/home@{older.artifact_name}\tinvalid\t-",
+                    "backup/home@not-an-artifact\t12\t-",
+                    f"other/home@{newer.artifact_name}\t13\t-",
+                    f"backup/home@{newer.artifact_name}\t14\t{source}",
                 )
             ),
         )
@@ -724,6 +822,8 @@ def test_cap_list_returns_matching_artifacts_newest_first():
         BackupArtifact(newer, ZFSSnapshot("backup/home", newer.artifact_name)),
         BackupArtifact(older, ZFSSnapshot("backup/home", older.artifact_name)),
     )
+    assert tuple(artifact.representation.guid for artifact in artifacts) == (14, 11)
+    assert ZFSDriver("backup/home").artifact_id(artifacts[0]) == "14"
     assert runner.commands == [
         (
             "zfs",
@@ -732,7 +832,7 @@ def test_cap_list_returns_matching_artifacts_newest_first():
             "-t",
             "snapshot",
             "-o",
-            "name,yaesm:source-artifact",
+            "name,guid,yaesm:source-artifact",
             "-d",
             "1",
             "backup/home",
@@ -773,7 +873,7 @@ def test_cap_list_remote(tmp_path):
                 "-t",
                 "snapshot",
                 "-o",
-                "name,yaesm:source-artifact",
+                "name,guid,yaesm:source-artifact",
                 "-d",
                 "1",
                 "backup/home",
@@ -852,9 +952,14 @@ def test_cap_cleanup_destroys_snapshot():
     assert runner.commands == [("zfs", "destroy", "tank/home@staging")]
 
 
-def test_backup_execute_uses_zfs_store_and_incremental_base():
+def test_backup_execute_uses_validated_zfs_incremental_base():
     old = operation(11)
-    runner = RecordingRunner(stdouts=(f"backup/home@{old.artifact_name}\n",))
+    runner = RecordingRunner(
+        stdouts=(
+            f"backup/home@{old.artifact_name}\t42\t-\n",
+            "42\n",
+        )
+    )
     backup = Backup(
         "example",
         ZFSDriver("tank/home"),
@@ -875,6 +980,26 @@ def test_backup_execute_uses_zfs_store_and_incremental_base():
         f"tank/home@{old.artifact_name}",
         f"tank/home@{operation().artifact_name}",
     )
+
+
+def test_backup_execute_rejects_mismatched_zfs_base_guids():
+    old = operation(11)
+    runner = RecordingRunner(
+        stdouts=(
+            f"backup/home@{old.artifact_name}\t42\t-\n",
+            "43\n",
+        )
+    )
+    backup = Backup(
+        "example",
+        ZFSDriver("tank/home"),
+        with_runner(ZFSDriver("backup/home"), runner),
+    )
+
+    with pytest.raises(BackupError, match="failed in zfs.store"):
+        backup.execute("hourly", operation().created_at)
+
+    assert runner.pipelines == []
 
 
 def test_backup_execute_preserves_configured_native_encryption():

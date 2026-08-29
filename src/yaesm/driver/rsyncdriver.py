@@ -13,7 +13,7 @@ from yaesm.check import Check, CheckRole
 from yaesm.command import Command
 from yaesm.driver.driverbase import DriverBase, DriverError, GlobalSettings
 from yaesm.errors import YaesmValueError
-from yaesm.representation import PathTree
+from yaesm.representation import PathTree, Representation
 from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
 
 
@@ -126,6 +126,19 @@ class RsyncDriver(DriverBase):
 
     def _check_target(self) -> SSHTarget | None:
         return self.target
+
+    def _base_compatible(
+        self,
+        capability: str,
+        source: Representation,
+        source_base: Representation | None,
+        destination_base: Representation | None,
+    ) -> bool:
+        return (
+            capability == "store"
+            and isinstance(destination_base, RsyncTree)
+            and same_endpoint(destination_base.target, self.target)
+        )
 
     def cap_source(self) -> PathTree:
         return PathTree(self.location, self.target)

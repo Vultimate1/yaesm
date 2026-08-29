@@ -63,6 +63,26 @@ class ExportDriver(DriverBase):
         self.call = (source, base)
         return self.output
 
+    def _base_compatible(
+        self,
+        capability: str,
+        source: Representation,
+        source_base: Representation | None,
+        destination_base: Representation | None,
+    ) -> bool:
+        return True
+
+
+class RejectingExportDriver(ExportDriver):
+    def _base_compatible(
+        self,
+        capability: str,
+        source: Representation,
+        source_base: Representation | None,
+        destination_base: Representation | None,
+    ) -> bool:
+        return False
+
 
 class FailingExportDriver(ExportDriver):
     def cap_export(
@@ -136,6 +156,15 @@ class DestinationDriver(DriverBase):
     ) -> BackupArtifact:
         self.call = (source, operation, base)
         return BackupArtifact(operation, source)
+
+    def _base_compatible(
+        self,
+        capability: str,
+        source: Representation,
+        source_base: Representation | None,
+        destination_base: Representation | None,
+    ) -> bool:
+        return True
 
 
 class BrokenDestinationDriver(DestinationDriver):
@@ -329,6 +358,26 @@ def test_pipeline_passes_each_side_of_incremental_base():
 
     assert exporter.call == (source.output, source_base)
     assert destination.call == (exporter.output, operation, destination_base)
+
+
+def test_pipeline_omits_unapproved_incremental_base():
+    source = SourceDriver()
+    exporter = RejectingExportDriver()
+    destination = DestinationDriver()
+    base = IncrementalBase(
+        ReadableTree(),
+        ByteStream(),
+        datetime(2026, 8, 27, 12, 0),
+    )
+
+    Pipeline(source, destination, (exporter,)).execute(
+        BackupOperation("home", "hourly", datetime(2026, 8, 27, 13, 0)),
+        base,
+    )
+
+    assert exporter.call == (source.output, None)
+    assert destination.call is not None
+    assert destination.call[2] is None
 
 
 def test_pipeline_executes_transform_capabilities():

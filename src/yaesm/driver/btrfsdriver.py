@@ -11,7 +11,7 @@ import yaesm.ty as ty
 from yaesm.check import Check, CheckRole
 from yaesm.driver.driverbase import DriverBase, DriverError, GlobalSettings, capability
 from yaesm.errors import YaesmValueError
-from yaesm.representation import CommandStream, DataProperty, PathTree
+from yaesm.representation import CommandStream, DataProperty, PathTree, Representation
 from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
 
 
@@ -41,6 +41,7 @@ class BtrfsStream(CommandStream):
 
     suffix = ".btrfs"
     subvolume_name: str = dataclasses.field(kw_only=True)
+    base_uuid: UUID | None = dataclasses.field(default=None, kw_only=True)
 
 
 class BtrfsDriver(DriverBase):
@@ -144,6 +145,32 @@ class BtrfsDriver(DriverBase):
     def _check_target(self) -> SSHTarget | None:
         return self.target
 
+    def _base_compatible(
+        self,
+        capability: str,
+        source: Representation,
+        source_base: Representation | None,
+        destination_base: Representation | None,
+    ) -> bool:
+        if (
+            not isinstance(source_base, BtrfsSnapshot)
+            or not isinstance(destination_base, BtrfsSnapshot)
+            or destination_base.source_uuid != source_base.uuid
+        ):
+            return False
+        if capability in {"store", "export"}:
+            return (
+                isinstance(source, BtrfsSnapshot)
+                and same_endpoint(source.target, source_base.target)
+                and (capability == "export" or same_endpoint(destination_base.target, self.target))
+            )
+        return (
+            capability == "import"
+            and isinstance(source, BtrfsStream)
+            and source.base_uuid == source_base.uuid
+            and same_endpoint(destination_base.target, self.target)
+        )
+
     def cap_source(self) -> BtrfsSubvolume:
         return BtrfsSubvolume(self.location, self.target)
 
@@ -195,6 +222,9 @@ class BtrfsDriver(DriverBase):
                     self._delete((destination,), check=False)
                     raise
 
+        if isinstance(source, BtrfsSnapshot):
+            return self.cap_import(self.cap_export(source, base), operation)
+
         if base is None:
             base = self._bootstrap(
                 source,
@@ -218,6 +248,7 @@ class BtrfsDriver(DriverBase):
         return BtrfsStream(
             (command_for_target(source.target, command),),
             subvolume_name=source.path.name,
+            base_uuid=None if base is None else base.uuid,
             suffixes=(BtrfsStream.suffix,),
         )
 

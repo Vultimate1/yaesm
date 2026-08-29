@@ -84,6 +84,15 @@ class AllCapabilitiesDriver(DriverBase):
     def cap_fake(self) -> None:
         pass
 
+    def _base_compatible(
+        self,
+        capability: str,
+        source: Representation,
+        source_base: Representation | None,
+        destination_base: Representation | None,
+    ) -> bool:
+        return True
+
 
 class EmptyDriver(DriverBase):
     @classmethod
@@ -187,6 +196,21 @@ def test_capability_effects_are_described_by_metadata():
     assert driver.capability_metadata("store").base == "destination"
     assert driver.capability_metadata("import").base == "destination"
     assert driver.capability_metadata("snapshot").temporary is True
+
+
+def test_incremental_bases_require_driver_approval():
+    source = Representation()
+    destination_base = Representation()
+
+    assert EmptyDriver().validate_base("store", source, None, destination_base) is False
+
+
+def test_incremental_bases_can_be_approved():
+    source = Representation()
+    source_base = Representation()
+    destination_base = Representation()
+
+    assert AllCapabilitiesDriver().validate_base("store", source, source_base, destination_base)
 
 
 @pytest.mark.parametrize(
