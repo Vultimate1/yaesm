@@ -8,7 +8,7 @@ import voluptuous as vlp
 from yaesm.backup import BackupArtifact, BackupOperation
 from yaesm.errors import YaesmValueError
 from yaesm.representation import Representation
-from yaesm.retention import KeepFor, KeepLast, RetentionPolicyBase
+from yaesm.retention import KeepAll, KeepFor, KeepLast, RetentionPolicyBase
 
 
 class PolicyWithoutConfiguration(RetentionPolicyBase):
@@ -40,6 +40,40 @@ def test_keep_last():
     newest = artifact("hourly", 5)
 
     assert KeepLast(2).retain([newer, older, newest], datetime(2026, 8, 6)) == [newest, newer]
+
+
+def test_keep_all():
+    older = artifact("hourly", 1)
+    newer = artifact("hourly", 3)
+
+    assert KeepAll().retain([older, newer], datetime(2026, 8, 6)) == [newer, older]
+
+
+def test_keep_all_name():
+    assert KeepAll.name() == "keep-all"
+
+
+def test_keep_all_filters_by_schedule():
+    hourly = artifact("hourly", 1)
+    daily = artifact("daily", 2)
+
+    assert KeepAll("hourly").retain([daily, hourly], datetime(2026, 8, 3)) == [hourly]
+
+
+def test_keep_all_config_schema_constructs_policy():
+    config = KeepAll.config_schema()({})
+
+    assert config == {}
+    assert KeepAll(**config) == KeepAll()
+
+
+@pytest.mark.parametrize(
+    "config",
+    [None, [], True, 1, "all", {"unknown": True}, {"schedule_name": "daily"}],
+)
+def test_keep_all_config_schema_rejects_settings(config):
+    with pytest.raises(vlp.Invalid):
+        KeepAll.config_schema()(config)
 
 
 def test_keep_last_name():

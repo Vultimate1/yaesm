@@ -22,7 +22,7 @@ from yaesm.driver.zfsdriver import ZFSDriver
 from yaesm.driver.zstddriver import ZstdDriver
 from yaesm.pipeline import Pipeline
 from yaesm.representation import Representation
-from yaesm.retention import KeepFor, KeepLast, RetentionPolicyBase
+from yaesm.retention import KeepAll, KeepFor, KeepLast, RetentionPolicyBase
 from yaesm.schedule import CronSchedule, OnDemandSchedule, Schedule, ScheduleBase
 from yaesm.ssh import SSHTarget
 
@@ -166,6 +166,7 @@ _DRIVER_CONFIGS = {
 }
 _CRON_EXPRESSIONS = st.sampled_from(("* * * * *", "0 * * * *", "30 4 * * *", "*/15 9-17 * * 1-5"))
 _RETENTION = st.one_of(
+    st.just({"keep-all": {}}),
     st.integers(min_value=1, max_value=100).map(lambda count: {"keep-last": count}),
     st.integers(min_value=1, max_value=100).map(lambda count: {"keep-last": {"count": count}}),
     st.tuples(
@@ -338,6 +339,7 @@ _INVALID_MUTATION_NAMES = (
     "unknown-retention",
     "invalid-keep-last",
     "invalid-keep-for",
+    "invalid-keep-all",
 )
 _INVALID_MUTATIONS = st.sampled_from(_INVALID_MUTATION_NAMES)
 
@@ -438,6 +440,9 @@ def invalidate_backup(config, mutation):
         case "invalid-keep-for":
             schedule["retention"] = {"keep-for": "0d"}
             return config, "has invalid keep-for configuration"
+        case "invalid-keep-all":
+            schedule["retention"] = {"keep-all": True}
+            return config, "has invalid keep-all configuration"
     raise AssertionError(f"unknown mutation: {mutation}")
 
 
@@ -482,7 +487,7 @@ def test_config_types_are_discovered_from_subclasses():
     assert backup.schedules[1] == Schedule("manual", OnDemandSchedule())
     assert backup.retention_policies == (
         AutomaticallyDiscoveredRetention(2, "automatic"),
-        KeepLast(1, "manual"),
+        KeepAll("manual"),
     )
 
 
@@ -503,7 +508,7 @@ def test_config_generator_covers_every_builtin_type():
 
     assert set(_DRIVER_CONFIGS) == names(DriverBase)
     assert {"cron", "on-demand"} == names(ScheduleBase)
-    assert {"keep-last", "keep-for"} == names(RetentionPolicyBase)
+    assert {"keep-all", "keep-last", "keep-for"} == names(RetentionPolicyBase)
 
 
 def test_parse_config_builds_complete_backup():
@@ -551,7 +556,7 @@ def test_parse_config_builds_complete_backup():
         Schedule("daily", CronSchedule("30 4 * * *")),
         Schedule("manual", OnDemandSchedule()),
     )
-    assert backup.retention_policies == (KeepLast(7, "daily"), KeepLast(1, "manual"))
+    assert backup.retention_policies == (KeepLast(7, "daily"), KeepAll("manual"))
 
 
 def test_parse_config_builds_previous_name_lookup():
@@ -935,7 +940,7 @@ def test_parse_config_allows_omitted_schedules():
     backup = parse_config({"home": config}).backups["home"]
 
     assert backup.schedules == (Schedule("manual", OnDemandSchedule()),)
-    assert backup.retention_policies == (KeepLast(1, "manual"),)
+    assert backup.retention_policies == (KeepAll("manual"),)
 
 
 def test_parse_config_accepts_minimal_configuration():
@@ -1317,7 +1322,7 @@ def test_parse_schedules_adds_implicit_manual_schedule():
         Schedule("daily", CronSchedule("30 4 * * *")),
         Schedule("manual", OnDemandSchedule()),
     )
-    assert retention == (KeepLast(7, "daily"), KeepLast(1, "manual"))
+    assert retention == (KeepLast(7, "daily"), KeepAll("manual"))
 
 
 def test_parse_schedules_preserves_explicit_on_demand_schedule():
@@ -1332,6 +1337,20 @@ def test_parse_schedules_preserves_explicit_on_demand_schedule():
 
     assert schedules == (Schedule("adhoc", OnDemandSchedule()),)
     assert retention == (KeepLast(4, "adhoc"),)
+
+
+def test_parse_schedules_accepts_keep_all():
+    schedules, retention = parse_schedules(
+        {
+            "manual": {
+                "on-demand": {},
+                "retention": {"keep-all": {}},
+            }
+        }
+    )
+
+    assert schedules == (Schedule("manual", OnDemandSchedule()),)
+    assert retention == (KeepAll("manual"),)
 
 
 def test_parse_schedules_reserves_manual_for_on_demand():
@@ -1359,7 +1378,7 @@ def test_parse_schedules_accepts_empty_mapping():
     schedules, retention = parse_schedules({})
 
     assert schedules == (Schedule("manual", OnDemandSchedule()),)
-    assert retention == (KeepLast(1, "manual"),)
+    assert retention == (KeepAll("manual"),)
 
 
 @pytest.mark.parametrize(

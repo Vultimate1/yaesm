@@ -31,6 +31,36 @@ class RetentionPolicyBase(abc.ABC):
 
 
 @dataclasses.dataclass(frozen=True)
+class KeepAll(RetentionPolicyBase):
+    """Retain every artifact, optionally from one schedule."""
+
+    schedule_name: str | None = None
+
+    @classmethod
+    def name(cls) -> str:
+        return "keep-all"
+
+    @staticmethod
+    def config_schema() -> vlp.Schema:
+        return vlp.Schema({})
+
+    def retain(
+        self, artifacts: ty.Sequence[BackupArtifact], now: ty.datetime
+    ) -> list[BackupArtifact]:
+        """Return every matching artifact, newest first."""
+        return sorted(
+            (
+                artifact
+                for artifact in artifacts
+                if self.schedule_name is None
+                or artifact.operation.schedule_name == self.schedule_name
+            ),
+            key=lambda artifact: artifact.operation.created_at,
+            reverse=True,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class KeepLast(RetentionPolicyBase):
     """Retain the newest artifacts, optionally from one schedule."""
 
