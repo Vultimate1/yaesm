@@ -37,13 +37,13 @@ def test_configure_defaults_to_info():
     assert basic_config.call_args.kwargs["level"] == logging.INFO
 
 
-def test_configure_can_use_message_only_stderr():
+def test_configure_formats_interactive_stderr():
     with mock.patch.object(logging, "basicConfig") as basic_config:
         configure(message_only_stderr=True)
 
     handler = basic_config.call_args.kwargs["handlers"][0]
     record = logging.LogRecord("test", logging.ERROR, "", 0, "plain error", (), None)
-    assert handler.format(record) == "plain error"
+    assert handler.format(record) == "yaesm: plain error"
 
 
 def test_configure_uses_syslog():

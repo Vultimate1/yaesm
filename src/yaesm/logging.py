@@ -53,7 +53,7 @@ def configure(
     if stderr:
         handler = logging.StreamHandler()
         if message_only_stderr:
-            handler.setFormatter(logging.Formatter("%(message)s"))
+            handler.setFormatter(logging.Formatter("yaesm: %(message)s"))
         handlers.append(handler)
     if logfile:
         handlers.append(logging.FileHandler(logfile, encoding="utf-8"))
