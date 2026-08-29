@@ -10,6 +10,8 @@ from yaesm.representation import CommandStream, CompressedStream
 class ZstdStream(CompressedStream):
     """A Zstandard-compressed byte stream."""
 
+    suffix = ".zst"
+
 
 class ZstdDriver(DriverBase):
     """Compress byte streams using Zstandard."""
@@ -49,5 +51,6 @@ class ZstdDriver(DriverBase):
                     "--quiet",
                     f"-{self.level}",
                 ),
-            )
+            ),
+            suffixes=(*source.suffixes, ZstdStream.suffix),
         )

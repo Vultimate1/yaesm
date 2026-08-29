@@ -19,6 +19,8 @@ class DataProperty(enum.Enum):
 class Representation:
     """Base type for data produced and consumed by driver capabilities."""
 
+    suffix: ty.ClassVar[str] = ""
+
 
 class ReadableTree(Representation):
     """A directory tree that can be read file by file."""
@@ -45,6 +47,7 @@ class CommandStream(ByteStream):
     """A byte stream produced by a pipeline of external commands."""
 
     commands: tuple[tuple[str, ...], ...] = ()
+    suffixes: tuple[str, ...] = dataclasses.field(default=(), kw_only=True)
 
 
 class UncompressedStream(CommandStream):

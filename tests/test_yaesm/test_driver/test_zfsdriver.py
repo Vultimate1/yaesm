@@ -580,7 +580,10 @@ def test_cap_export_full():
 
     stream = ZFSDriver("tank/home").cap_export(snapshot)
 
-    assert stream == ZFSStream((("zfs", "send", "-c", snapshot.name),))
+    assert stream == ZFSStream(
+        (("zfs", "send", "-c", snapshot.name),),
+        suffixes=(".zfs",),
+    )
 
 
 def test_cap_export_incremental():
@@ -598,7 +601,11 @@ def test_cap_export_uses_raw_send_for_native_encryption():
 
     stream = with_runner(ZFSDriver("tank/home", encryption=True), runner).cap_export(snapshot)
 
-    assert stream == ZFSStream((("zfs", "send", "-w", snapshot.name),), encrypted=True)
+    assert stream == ZFSStream(
+        (("zfs", "send", "-w", snapshot.name),),
+        encrypted=True,
+        suffixes=(".zfs",),
+    )
     assert runner.commands == [("zfs", "get", "-H", "-o", "value", "encryption", "tank/home")]
 
 
@@ -879,6 +886,7 @@ def test_zfs_representation_types():
     assert isinstance(ZFSDataset("tank/home"), Representation)
     assert isinstance(ZFSSnapshot("tank/home", "snapshot"), Representation)
     assert ZFSStream.__bases__ == (CommandStream,)
+    assert ZFSStream.suffix == ".zfs"
 
 
 @pytest.fixture

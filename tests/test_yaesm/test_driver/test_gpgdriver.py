@@ -193,9 +193,10 @@ def test_key_check_is_only_used_for_transform_role(tmp_path, role):
     assert driver._checks(role) == ()
 
 
-def test_cap_encrypt_appends_noninteractive_gpg_filter(tmp_path):
+@pytest.mark.parametrize("suffixes", [(), (".tar", ".zst")])
+def test_cap_encrypt_appends_noninteractive_gpg_filter(tmp_path, suffixes):
     public_key = tmp_path / "backup-key.asc"
-    source = CommandStream((("produce", "data"),))
+    source = CommandStream((("produce", "data"),), suffixes=suffixes)
 
     stream = GPGDriver(public_key).cap_encrypt(source)
 
@@ -213,7 +214,8 @@ def test_cap_encrypt_appends_noninteractive_gpg_filter(tmp_path):
                 str(public_key),
                 "--encrypt",
             ),
-        )
+        ),
+        suffixes=(*suffixes, ".gpg"),
     )
 
 
@@ -226,6 +228,7 @@ def test_capability_advertises_only_encryption(tmp_path):
 
 def test_gpg_stream_is_encrypted_command_stream():
     assert issubclass(GPGStream, EncryptedStream)
+    assert GPGStream.suffix == ".gpg"
 
 
 @dataclasses.dataclass(frozen=True)

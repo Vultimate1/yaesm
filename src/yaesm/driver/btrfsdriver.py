@@ -39,6 +39,7 @@ class BtrfsSnapshot(BtrfsSubvolume):
 class BtrfsStream(CommandStream):
     """A Btrfs send stream."""
 
+    suffix = ".btrfs"
     subvolume_name: str = dataclasses.field(kw_only=True)
 
 
@@ -213,6 +214,7 @@ class BtrfsDriver(DriverBase):
         return BtrfsStream(
             (command_for_target(source.target, command),),
             subvolume_name=source.path.name,
+            suffixes=(BtrfsStream.suffix,),
         )
 
     def cap_import(

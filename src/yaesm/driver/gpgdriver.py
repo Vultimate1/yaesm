@@ -15,6 +15,8 @@ from yaesm.representation import CommandStream, EncryptedStream
 class GPGStream(EncryptedStream):
     """An OpenPGP-encrypted byte stream."""
 
+    suffix = ".gpg"
+
 
 class GPGDriver(DriverBase):
     """Encrypt byte streams for a public key using GnuPG."""
@@ -69,7 +71,10 @@ class GPGDriver(DriverBase):
         )
 
     def cap_encrypt(self, source: CommandStream) -> GPGStream:
-        return GPGStream((*source.commands, (*self._command(), "--encrypt")))
+        return GPGStream(
+            (*source.commands, (*self._command(), "--encrypt")),
+            suffixes=(*source.suffixes, GPGStream.suffix),
+        )
 
     def _command(self) -> tuple[str, ...]:
         return (

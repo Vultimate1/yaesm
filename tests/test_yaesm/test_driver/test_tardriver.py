@@ -17,6 +17,7 @@ from yaesm.command import Command, CommandError, CommandResult, CommandRunner
 from yaesm.driver.gpgdriver import GPGDriver
 from yaesm.driver.rsyncdriver import RsyncDriver
 from yaesm.driver.tardriver import TarArchive, TarDriver, TarDriverError, TarStream
+from yaesm.driver.zstddriver import ZstdDriver
 from yaesm.errors import YaesmValueError
 from yaesm.pipeline import Pipeline, PipelineStep
 from yaesm.representation import (
@@ -224,7 +225,7 @@ def test_non_destination_checks_only_require_tar(role, tmp_path):
 def test_cap_export_creates_complete_portable_archive(tmp_path):
     stream = TarDriver(tmp_path).cap_export(PathTree(Path("/source")))
 
-    assert stream == TarStream((_TAR_COMMAND,))
+    assert stream == TarStream((_TAR_COMMAND,), suffixes=(".tar",))
 
 
 def test_cap_export_can_cross_filesystem_boundaries(tmp_path):
@@ -301,6 +302,7 @@ def test_tar_representations(tmp_path):
 
     assert issubclass(TarStream, UncompressedStream)
     assert issubclass(TarArchive, Representation)
+    assert TarStream.suffix == ".tar"
     assert TarArchive(tmp_path / "archive", target).target is target
 
 
@@ -309,12 +311,16 @@ def test_cap_import_stores_stream_atomically(tmp_path, monkeypatch):
     runner = RecordingRunner()
     driver = TarDriver(tmp_path)
     driver.runner = runner
-    source = CommandStream((("produce", "archive"),))
+    source = CommandStream(
+        (("produce", "archive"),),
+        suffixes=(".tar", ".zst", ".gpg"),
+    )
 
     result = driver.cap_import(source, operation())
 
-    destination = tmp_path / operation().artifact_name
-    temporary = tmp_path / f".{operation().artifact_name}.tmp-{UUID(int=1).hex}"
+    artifact_name = f"{operation().artifact_name}.tar.zst.gpg"
+    destination = tmp_path / artifact_name
+    temporary = tmp_path / f".{artifact_name}.tmp-{UUID(int=1).hex}"
     assert result == BackupArtifact(operation(), TarArchive(destination))
     assert runner.pipeline_calls == [
         (
@@ -384,8 +390,8 @@ def test_cap_import_removes_temporary_after_rename_failure(tmp_path, monkeypatch
 
 
 def test_cap_list_returns_newest_archives_first(tmp_path):
-    old = tmp_path / operation().artifact_name
-    new = tmp_path / operation(1).artifact_name
+    old = tmp_path / f"{operation().artifact_name}.tar"
+    new = tmp_path / f"{operation(1).artifact_name}.tar.zst.gpg"
     runner = RecordingRunner(stdouts=(f"{old}\n{tmp_path / 'unrelated'}\n{new}\n",))
     driver = TarDriver(tmp_path)
     driver.runner = runner
@@ -492,6 +498,20 @@ def test_encrypted_tar_pipeline_uses_tar_as_destination(tmp_path):
         PipelineStep(gpg, "encrypt"),
         PipelineStep(tar, "import"),
     )
+
+
+def test_archive_pipeline_stores_suffixes_in_driver_order(tmp_path):
+    tar = TarDriver(tmp_path)
+    tar.runner = RecordingRunner()
+    pipeline = Pipeline(
+        RsyncDriver(Path("/source")),
+        tar,
+        (ZstdDriver(), GPGDriver(tmp_path / "public-key.asc")),
+    )
+
+    result = pipeline.execute(operation())
+
+    assert result.representation.path == tmp_path / (f"{operation().artifact_name}.tar.zst.gpg")
 
 
 def test_tar_creates_and_stores_archive(tmp_path):

@@ -69,8 +69,9 @@ def test_checks_only_require_zstd_executable(role, monkeypatch):
     assert calls == [(("zstd", "--version"), True, False)]
 
 
-def test_cap_compress_appends_zstd_filter():
-    source = CommandStream((("produce", "data"),))
+@pytest.mark.parametrize("suffixes", [(), (".tar",)])
+def test_cap_compress_appends_zstd_filter(suffixes):
+    source = CommandStream((("produce", "data"),), suffixes=suffixes)
 
     stream = ZstdDriver(level=7).cap_compress(source)
 
@@ -78,7 +79,8 @@ def test_cap_compress_appends_zstd_filter():
         (
             ("produce", "data"),
             ("zstd", "--compress", "--stdout", "--quiet", "-7"),
-        )
+        ),
+        suffixes=(*suffixes, ".zst"),
     )
 
 
@@ -91,6 +93,7 @@ def test_capability_advertises_only_compression():
 
 def test_zstd_stream_is_compressed_command_stream():
     assert issubclass(ZstdStream, CompressedStream)
+    assert ZstdStream.suffix == ".zst"
 
 
 def test_zstd_compresses_and_restores_stream():

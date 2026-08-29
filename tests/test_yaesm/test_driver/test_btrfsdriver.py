@@ -747,6 +747,7 @@ def test_cap_export_full(tmp_path):
 
     assert stream.commands == ((*_BTRFS_SEND, str(snapshot.path)),)
     assert stream.subvolume_name == "snapshot"
+    assert stream.suffixes == (".btrfs",)
 
 
 def test_cap_export_incremental(tmp_path):
@@ -1074,3 +1075,4 @@ def test_btrfs_representation_types():
     assert issubclass(BtrfsSubvolume, PathTree)
     assert issubclass(BtrfsSnapshot, BtrfsSubvolume)
     assert BtrfsStream.__bases__ == (CommandStream,)
+    assert BtrfsStream.suffix == ".btrfs"

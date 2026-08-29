@@ -26,6 +26,10 @@ def test_representation_types_share_one_root():
     assert EncryptedStream.__bases__ == (CommandStream,)
 
 
+def test_representations_have_no_suffix_by_default():
+    assert Representation.suffix == ""
+
+
 def test_path_tree_has_local_or_remote_location(tmp_path):
     target = SSHTarget("ssh://host", tmp_path / "key")
 
@@ -37,6 +41,13 @@ def test_command_stream_contains_commands():
     stream = CommandStream((("first",), ("second", "argument")))
 
     assert stream.commands == (("first",), ("second", "argument"))
+    assert stream.suffixes == ()
+
+
+def test_command_stream_contains_ordered_suffixes():
+    stream = CommandStream(suffixes=(".tar", ".zst", ".gpg"))
+
+    assert stream.suffixes == (".tar", ".zst", ".gpg")
 
 
 def test_data_properties():

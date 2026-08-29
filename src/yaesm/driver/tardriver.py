@@ -28,6 +28,8 @@ class TarDriverError(DriverError):
 class TarStream(UncompressedStream):
     """An uncompressed POSIX pax archive stream."""
 
+    suffix = ".tar"
+
 
 @dataclasses.dataclass(frozen=True)
 class TarArchive(Representation):
@@ -35,6 +37,16 @@ class TarArchive(Representation):
 
     path: ty.Path
     target: SSHTarget | None = None
+
+
+def _operation_from_archive_name(backup_name: str, archive_name: str) -> bckp.BackupOperation:
+    while True:
+        try:
+            return bckp.BackupOperation.from_artifact_name(backup_name, archive_name)
+        except YaesmValueError:
+            archive_name, separator, _ = archive_name.rpartition(".")
+            if not separator:
+                raise
 
 
 class TarDriver(DriverBase):
@@ -126,7 +138,8 @@ class TarDriver(DriverBase):
                         ".",
                     ),
                 ),
-            )
+            ),
+            suffixes=(TarStream.suffix,),
         )
 
     def _destination_exclude(self, source: PathTree) -> str | None:
@@ -150,9 +163,10 @@ class TarDriver(DriverBase):
         operation: bckp.BackupOperation,
         base: TarArchive | None = None,
     ) -> bckp.BackupArtifact[TarArchive]:
-        destination = TarArchive(self.location / operation.artifact_name, self.target)
+        artifact_name = operation.artifact_name + "".join(source.suffixes)
+        destination = TarArchive(self.location / artifact_name, self.target)
         temporary = TarArchive(
-            self.location / f".{operation.artifact_name}.tmp-{uuid4().hex}",
+            self.location / f".{artifact_name}.tmp-{uuid4().hex}",
             self.target,
         )
         try:
@@ -198,7 +212,7 @@ class TarDriver(DriverBase):
         for value in (result.stdout or "").splitlines():
             path = Path(value)
             try:
-                operation = bckp.BackupOperation.from_artifact_name(backup_name, path.name)
+                operation = _operation_from_archive_name(backup_name, path.name)
             except YaesmValueError:
                 continue
             artifacts.append(bckp.BackupArtifact(operation, TarArchive(path, self.target)))

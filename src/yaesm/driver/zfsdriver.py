@@ -55,6 +55,7 @@ class ZFSSnapshot(Representation):
 class ZFSStream(CommandStream):
     """A ZFS send stream."""
 
+    suffix = ".zfs"
     encrypted: bool = False
 
 
@@ -258,7 +259,11 @@ class ZFSDriver(DriverBase):
         if base is not None:
             command.extend(("-i", base.name))
         command.append(source.name)
-        return ZFSStream((command_for_target(source.target, command),), encrypted)
+        return ZFSStream(
+            (command_for_target(source.target, command),),
+            encrypted,
+            suffixes=(ZFSStream.suffix,),
+        )
 
     def cap_import(
         self,
