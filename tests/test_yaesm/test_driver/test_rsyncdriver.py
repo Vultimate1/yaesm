@@ -23,8 +23,13 @@ from yaesm.ssh import SSHTarget
 _RSYNC_OPTIONS = (
     "rsync",
     "--archive",
+    "--hard-links",
+    "--acls",
+    "--xattrs",
+    "--sparse",
     "--numeric-ids",
     "--delete",
+    "--delete-excluded",
     "--protect-args",
 )
 _MARKER_PREFIX = ".yaesm-rsync-artifact-"
@@ -91,6 +96,8 @@ def test_config_schema_defaults(tmp_path):
     assert RsyncDriver.config_schema()({"location": str(tmp_path)}) == {
         "location": tmp_path,
         "extra_options": (),
+        "exclude": (),
+        "one_file_system": False,
     }
 
 
@@ -114,6 +121,20 @@ def test_config_schema_parses_extra_options(tmp_path, value, expected):
     )
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (".cache/", (".cache/",)),
+        ([".cache/", "*.tmp"], (".cache/", "*.tmp")),
+        ((), ()),
+    ],
+)
+def test_config_schema_parses_exclude(tmp_path, value, expected):
+    assert (
+        RsyncDriver.config_schema()({"location": tmp_path, "exclude": value})["exclude"] == expected
+    )
+
+
 @pytest.mark.parametrize("location", [None, 42])
 def test_config_schema_rejects_invalid_location_type(location):
     with pytest.raises(vlp.Invalid, match="location must be a path"):
@@ -131,6 +152,14 @@ def test_config_schema_rejects_invalid_location_type(location):
         {"location": "/tmp", "extra_options": 1},
         {"location": "/tmp", "extra_options": True},
         {"location": "/tmp", "extra_options": ["--archive", 1]},
+        {"location": "/tmp", "exclude": None},
+        {"location": "/tmp", "exclude": 1},
+        {"location": "/tmp", "exclude": True},
+        {"location": "/tmp", "exclude": [".cache/", ""]},
+        {"location": "/tmp", "exclude": [".cache/", 1]},
+        {"location": "/tmp", "one_file_system": None},
+        {"location": "/tmp", "one_file_system": 1},
+        {"location": "/tmp", "one_file_system": "true"},
         {"location": "/tmp", "unknown": True},
     ],
 )
@@ -149,6 +178,8 @@ def test_config_schema_output_constructs_driver(tmp_path):
         {
             "location": tmp_path,
             "extra_options": ["--checksum"],
+            "exclude": [".cache/"],
+            "one_file_system": True,
         }
     )
 
@@ -157,12 +188,26 @@ def test_config_schema_output_constructs_driver(tmp_path):
     assert driver.location == tmp_path
     assert driver.ssh is None
     assert driver.extra_options == ("--checksum",)
+    assert driver.exclude == (".cache/",)
+    assert driver.one_file_system is True
 
 
 @pytest.mark.parametrize("extra_options", ["--checksum", ("",), (1,)])
 def test_constructor_rejects_invalid_extra_options(tmp_path, extra_options):
     with pytest.raises(YaesmValueError, match="must contain nonempty strings"):
         RsyncDriver(tmp_path, extra_options=ty.cast(ty.Any, extra_options))
+
+
+@pytest.mark.parametrize("exclude", [".cache/", ("",), (1,)])
+def test_constructor_rejects_invalid_exclude(tmp_path, exclude):
+    with pytest.raises(YaesmValueError, match="exclude must contain nonempty strings"):
+        RsyncDriver(tmp_path, exclude=ty.cast(ty.Any, exclude))
+
+
+@pytest.mark.parametrize("one_file_system", [None, 0, 1, "true"])
+def test_constructor_rejects_invalid_one_file_system(tmp_path, one_file_system):
+    with pytest.raises(YaesmValueError, match="one_file_system must be a boolean"):
+        RsyncDriver(tmp_path, one_file_system=ty.cast(ty.Any, one_file_system))
 
 
 def test_cap_source(tmp_path):
@@ -291,6 +336,38 @@ def test_cap_store_local(tmp_path):
         (*_RSYNC_OPTIONS, "--checksum", f"{source.path}/", f"{destination}/"),
         ("touch", str(marker(destination))),
     ]
+
+
+def test_cap_store_uses_exclude_patterns(tmp_path):
+    runner = RecordingRunner()
+    source = PathTree(tmp_path / "source")
+    destination_dir = tmp_path / "destination"
+    driver = with_runner(
+        RsyncDriver(destination_dir, exclude=(".cache/", "*.tmp")),
+        runner,
+    )
+
+    driver.cap_store(source, operation())
+
+    destination = destination_dir / operation().artifact_name
+    assert runner.commands[0] == (
+        *_RSYNC_OPTIONS,
+        "--exclude=.cache/",
+        "--exclude=*.tmp",
+        f"{source.path}/",
+        f"{destination}/",
+    )
+
+
+def test_cap_store_can_stay_on_one_file_system(tmp_path):
+    runner = RecordingRunner()
+    source = PathTree(tmp_path / "source")
+    destination_dir = tmp_path / "destination"
+    driver = with_runner(RsyncDriver(destination_dir, one_file_system=True), runner)
+
+    driver.cap_store(source, operation())
+
+    assert runner.commands[0].count("--one-file-system") == 1
 
 
 def test_cap_store_marks_replicated_artifact(tmp_path):

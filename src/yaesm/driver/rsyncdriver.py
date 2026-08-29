@@ -34,6 +34,8 @@ class RsyncDriver(DriverBase):
         location: ty.Path,
         ssh: SSHTarget | None = None,
         extra_options: ty.Sequence[str] = (),
+        exclude: ty.Sequence[str] = (),
+        one_file_system: bool = False,
         *,
         global_settings: GlobalSettings | None = None,
     ) -> None:
@@ -42,8 +44,16 @@ class RsyncDriver(DriverBase):
             not isinstance(option, str) or not option for option in extra_options
         ):
             raise YaesmValueError("extra_options must contain nonempty strings")
+        if isinstance(exclude, str) or any(
+            not isinstance(pattern, str) or not pattern for pattern in exclude
+        ):
+            raise YaesmValueError("exclude must contain nonempty strings")
+        if not isinstance(one_file_system, bool):
+            raise YaesmValueError("one_file_system must be a boolean")
         self.location = Path(location)
         self.extra_options = tuple(extra_options)
+        self.exclude = tuple(exclude)
+        self.one_file_system = one_file_system
 
     @classmethod
     def name(cls) -> str:
@@ -85,10 +95,25 @@ class RsyncDriver(DriverBase):
             except ValueError as error:
                 raise vlp.Invalid(f"invalid extra_options: {error}") from error
 
+        def exclude(value: object) -> tuple[str, ...]:
+            values = (value,) if isinstance(value, str) else value
+            if not isinstance(values, list | tuple) or any(
+                not isinstance(pattern, str) or not pattern for pattern in values
+            ):
+                raise vlp.Invalid("exclude must be a string or list/tuple of nonempty strings")
+            return tuple(values)
+
+        def one_file_system(value: object) -> bool:
+            if not isinstance(value, bool):
+                raise vlp.Invalid("one_file_system must be a boolean")
+            return value
+
         return vlp.Schema(
             {
                 vlp.Required("location"): absolute_path,
                 vlp.Optional("extra_options", default=()): extra_options,
+                vlp.Optional("exclude", default=()): exclude,
+                vlp.Optional("one_file_system", default=False): one_file_system,
             }
         )
 
@@ -146,9 +171,16 @@ class RsyncDriver(DriverBase):
         command: list[str | ty.Path] = [
             "rsync",
             "--archive",
+            "--hard-links",
+            "--acls",
+            "--xattrs",
+            "--sparse",
+            *(("--one-file-system",) if self.one_file_system else ()),
             "--numeric-ids",
             "--delete",
+            "--delete-excluded",
             "--protect-args",
+            *(f"--exclude={pattern}" for pattern in self.exclude),
             *self.extra_options,
         ]
         if base is not None:
