@@ -28,31 +28,31 @@ class CheckSubcommand(SubcommandBase):
             if not arguments.quiet:
                 print(f"backup: {backup.name}", flush=True)
             checks = self._backup_checks(backup, config.backups_by_name)
-            targets = tuple(
-                dict.fromkeys(check.target for check in checks if check.target is not None)
+            ssh_connections = tuple(
+                dict.fromkeys(check.ssh for check in checks if check.ssh is not None)
             )
             results = []
 
-            if targets:
+            if ssh_connections:
                 if openssh_result is None:
                     openssh_result = Check.command("OpenSSH is installed", ("ssh", "-V")).run()
                 results.append(openssh_result)
                 if openssh_result.passed:
-                    for target in targets:
-                        if target not in connection_results:
-                            connection_results[target] = Check.command(
+                    for ssh in ssh_connections:
+                        if ssh not in connection_results:
+                            connection_results[ssh] = Check.command(
                                 "SSH connection works",
                                 ("true",),
-                                target=target,
-                                failure_message=f"could not connect to {target}",
+                                ssh=ssh,
+                                failure_message=f"could not connect to {ssh}",
                             ).run()
-                        results.append(connection_results[target])
+                        results.append(connection_results[ssh])
 
             for check in checks:
-                if check.target is None or (
+                if check.ssh is None or (
                     openssh_result is not None
                     and openssh_result.passed
-                    and connection_results[check.target].passed
+                    and connection_results[check.ssh].passed
                 ):
                     results.append(check.run())
 

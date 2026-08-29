@@ -33,12 +33,12 @@ def deferred_result(
     description: str,
     failure: str | None = None,
     *,
-    target: SSHTarget | None = None,
+    ssh: SSHTarget | None = None,
     stdout: str | None = None,
     stderr: str | None = None,
 ) -> tuple[Check, mock.Mock]:
     function = mock.Mock(return_value=CheckResult(description, failure, stdout, stderr))
-    return Check(description, function, target), function
+    return Check(description, function, ssh), function
 
 
 def test_check_error_is_expected_error():
@@ -183,11 +183,11 @@ def test_check_rejects_invalid_backup_selection(value, error):
 
 def test_ssh_preflights_are_reused(monkeypatch, tmp_path):
     target = SSHTarget("ssh://server", tmp_path / "key")
-    first_check, first_run = deferred_result("first remote check", target=target)
-    second_check, second_run = deferred_result("second remote check", target=target)
+    first_check, first_run = deferred_result("first remote check", ssh=target)
+    second_check, second_run = deferred_result("second remote check", ssh=target)
     openssh_check, openssh_run = deferred_result("OpenSSH is installed")
     connection_check, connection_run = deferred_result(
-        f"SSH connection works on {target}", target=target
+        f"SSH connection works on {target}", ssh=target
     )
     command = mock.Mock(side_effect=(openssh_check, connection_check))
     monkeypatch.setattr(check_module.Check, "command", command)
@@ -219,13 +219,13 @@ def test_ssh_preflights_are_reused(monkeypatch, tmp_path):
 
 def test_failed_ssh_connection_skips_remote_checks(monkeypatch, tmp_path, capsys):
     target = SSHTarget("ssh://server", tmp_path / "key")
-    remote_check, remote_run = deferred_result("remote check", target=target)
+    remote_check, remote_run = deferred_result("remote check", ssh=target)
     local_check, local_run = deferred_result("local check")
     openssh_check, _ = deferred_result("OpenSSH is installed")
     connection_check, _ = deferred_result(
         f"SSH connection works on {target}",
         f"could not connect to {target}",
-        target=target,
+        ssh=target,
         stderr="connection timed out",
     )
     monkeypatch.setattr(
@@ -253,7 +253,7 @@ def test_failed_ssh_connection_skips_remote_checks(monkeypatch, tmp_path, capsys
 
 def test_missing_openssh_skips_all_remote_checks(monkeypatch, tmp_path):
     target = SSHTarget("ssh://server", tmp_path / "key")
-    remote_check, remote_run = deferred_result("remote check", target=target)
+    remote_check, remote_run = deferred_result("remote check", ssh=target)
     openssh_check, openssh_run = deferred_result("OpenSSH is installed", "could not start ssh")
     command = mock.Mock(return_value=openssh_check)
     monkeypatch.setattr(check_module.Check, "command", command)

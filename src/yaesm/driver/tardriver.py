@@ -18,7 +18,7 @@ from yaesm.representation import (
     Representation,
     UncompressedStream,
 )
-from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
+from yaesm.ssh import SSHTarget, command_for_ssh, same_endpoint
 
 
 class TarDriverError(DriverError):
@@ -36,7 +36,7 @@ class TarArchive(Representation):
     """A stored tar archive file."""
 
     path: ty.Path
-    target: SSHTarget | None = None
+    ssh: SSHTarget | None = None
 
 
 def _operation_from_archive_name(backup_name: str, archive_name: str) -> bckp.BackupOperation:
@@ -55,7 +55,7 @@ class TarDriver(DriverBase):
     def __init__(
         self,
         location: ty.Path,
-        target: SSHTarget | None = None,
+        ssh: SSHTarget | None = None,
         one_file_system: bool = True,
         *,
         global_settings: GlobalSettings | None = None,
@@ -64,7 +64,7 @@ class TarDriver(DriverBase):
         if not isinstance(one_file_system, bool):
             raise YaesmValueError("one_file_system must be a boolean")
         self.location = Path(location)
-        self.target = target
+        self.ssh = ssh
         self.one_file_system = one_file_system
 
     @classmethod
@@ -81,9 +81,9 @@ class TarDriver(DriverBase):
                 raise vlp.Invalid("location must be an absolute path")
             return path
 
-        def ssh_target(value: object) -> SSHTarget:
+        def ssh(value: object) -> SSHTarget:
             if not isinstance(value, SSHTarget):
-                raise vlp.Invalid("target must be an SSHTarget")
+                raise vlp.Invalid("ssh must be an SSHTarget")
             return value
 
         def one_file_system(value: object) -> bool:
@@ -94,7 +94,7 @@ class TarDriver(DriverBase):
         return vlp.Schema(
             {
                 vlp.Required("location"): absolute_path,
-                vlp.Optional("target"): ssh_target,
+                vlp.Optional("ssh"): ssh,
                 vlp.Optional("one_file_system"): one_file_system,
             }
         )
@@ -112,16 +112,16 @@ class TarDriver(DriverBase):
             )
         )
 
-    def _check_target(self) -> SSHTarget | None:
-        return self.target
+    def _check_ssh(self) -> SSHTarget | None:
+        return self.ssh
 
     @capability("export", adds=(DataProperty.ARCHIVED,))
     def cap_export(self, source: PathTree, base: PathTree | None = None) -> TarStream:
         exclude = self._destination_exclude(source)
         return TarStream(
             (
-                command_for_target(
-                    source.target,
+                command_for_ssh(
+                    source.ssh,
                     (
                         "tar",
                         "-c",
@@ -143,7 +143,7 @@ class TarDriver(DriverBase):
         )
 
     def _destination_exclude(self, source: PathTree) -> str | None:
-        if not same_endpoint(source.target, self.target):
+        if not same_endpoint(source.ssh, self.ssh):
             return None
         try:
             relative = self.location.relative_to(source.path)
@@ -164,24 +164,24 @@ class TarDriver(DriverBase):
         base: TarArchive | None = None,
     ) -> bckp.BackupArtifact[TarArchive]:
         artifact_name = operation.artifact_name + "".join(source.suffixes)
-        destination = TarArchive(self.location / artifact_name, self.target)
+        destination = TarArchive(self.location / artifact_name, self.ssh)
         temporary = TarArchive(
             self.location / f".{artifact_name}.tmp-{uuid4().hex}",
-            self.target,
+            self.ssh,
         )
         try:
             self.runner.pipeline(
                 (
                     *source.commands,
-                    command_for_target(
-                        self.target,
+                    command_for_ssh(
+                        self.ssh,
                         ("dd", f"of={temporary.path}", "bs=1048576"),
                     ),
                 )
             )
             self.runner.run(
-                command_for_target(
-                    self.target,
+                command_for_ssh(
+                    self.ssh,
                     ("mv", temporary.path, destination.path),
                 )
             )
@@ -192,8 +192,8 @@ class TarDriver(DriverBase):
 
     def cap_list(self, backup_name: str) -> tuple[bckp.BackupArtifact[TarArchive], ...]:
         result = self.runner.run(
-            command_for_target(
-                self.target,
+            command_for_ssh(
+                self.ssh,
                 (
                     "find",
                     self.location,
@@ -215,7 +215,7 @@ class TarDriver(DriverBase):
                 operation = _operation_from_archive_name(backup_name, path.name)
             except YaesmValueError:
                 continue
-            artifacts.append(bckp.BackupArtifact(operation, TarArchive(path, self.target)))
+            artifacts.append(bckp.BackupArtifact(operation, TarArchive(path, self.ssh)))
         return tuple(
             sorted(artifacts, key=lambda artifact: artifact.operation.created_at, reverse=True)
         )
@@ -223,9 +223,7 @@ class TarDriver(DriverBase):
     def format_locator(self, artifact: bckp.BackupArtifact[TarArchive]) -> str:
         archive = artifact.representation
         return (
-            str(archive.path)
-            if archive.target is None
-            else archive.target.format_location(archive.path)
+            str(archive.path) if archive.ssh is None else archive.ssh.format_location(archive.path)
         )
 
     def cap_delete(
@@ -233,7 +231,7 @@ class TarDriver(DriverBase):
         artifacts: ty.Sequence[bckp.BackupArtifact[TarArchive]],
     ) -> None:
         archives = tuple(artifact.representation for artifact in artifacts)
-        if any(not same_endpoint(archive.target, self.target) for archive in archives):
+        if any(not same_endpoint(archive.ssh, self.ssh) for archive in archives):
             raise TarDriverError("tar archive uses a different SSH endpoint")
         self._delete(archives)
 
@@ -241,8 +239,8 @@ class TarDriver(DriverBase):
         if not archives:
             return
         self.runner.run(
-            command_for_target(
-                archives[0].target,
+            command_for_ssh(
+                archives[0].ssh,
                 ("rm", "-f", *(archive.path for archive in archives)),
             ),
             check=check,

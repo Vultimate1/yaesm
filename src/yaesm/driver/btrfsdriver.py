@@ -12,7 +12,7 @@ from yaesm.check import Check, CheckRole
 from yaesm.driver.driverbase import DriverBase, DriverError, GlobalSettings, capability
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, DataProperty, PathTree, Representation
-from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
+from yaesm.ssh import SSHTarget, command_for_ssh, same_endpoint
 
 
 class BtrfsDriverError(DriverError):
@@ -24,7 +24,7 @@ class BtrfsSubvolume(PathTree):
     """A Btrfs subvolume available at a local or remote path."""
 
     path: ty.Path
-    target: SSHTarget | None = None
+    ssh: SSHTarget | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -50,7 +50,7 @@ class BtrfsDriver(DriverBase):
     def __init__(
         self,
         location: ty.Path,
-        target: SSHTarget | None = None,
+        ssh: SSHTarget | None = None,
         bootstrap_refresh_days: int = 21,
         *,
         global_settings: GlobalSettings | None = None,
@@ -61,7 +61,7 @@ class BtrfsDriver(DriverBase):
                 f"bootstrap_refresh_days must be at least 0, got {bootstrap_refresh_days}"
             )
         self.location = Path(location)
-        self.target = target
+        self.ssh = ssh
         self.bootstrap_refresh_days = bootstrap_refresh_days or None
 
     @classmethod
@@ -78,9 +78,9 @@ class BtrfsDriver(DriverBase):
                 raise vlp.Invalid("location must be an absolute path")
             return path
 
-        def ssh_target(value: object) -> SSHTarget:
+        def ssh(value: object) -> SSHTarget:
             if not isinstance(value, SSHTarget):
-                raise vlp.Invalid("target must be an SSHTarget")
+                raise vlp.Invalid("ssh must be an SSHTarget")
             return value
 
         def refresh_days(value: object) -> int:
@@ -93,7 +93,7 @@ class BtrfsDriver(DriverBase):
         return vlp.Schema(
             {
                 vlp.Required("location"): absolute_path,
-                vlp.Optional("target"): ssh_target,
+                vlp.Optional("ssh"): ssh,
                 vlp.Optional("bootstrap_refresh_days", default=21): refresh_days,
             }
         )
@@ -142,8 +142,8 @@ class BtrfsDriver(DriverBase):
             for description, command in requirements
         )
 
-    def _check_target(self) -> SSHTarget | None:
-        return self.target
+    def _check_ssh(self) -> SSHTarget | None:
+        return self.ssh
 
     def _base_compatible(
         self,
@@ -161,27 +161,27 @@ class BtrfsDriver(DriverBase):
         if capability in {"store", "export"}:
             return (
                 isinstance(source, BtrfsSnapshot)
-                and same_endpoint(source.target, source_base.target)
-                and (capability == "export" or same_endpoint(destination_base.target, self.target))
+                and same_endpoint(source.ssh, source_base.ssh)
+                and (capability == "export" or same_endpoint(destination_base.ssh, self.ssh))
             )
         return (
             capability == "import"
             and isinstance(source, BtrfsStream)
             and source.base_uuid == source_base.uuid
-            and same_endpoint(destination_base.target, self.target)
+            and same_endpoint(destination_base.ssh, self.ssh)
         )
 
     def cap_source(self) -> BtrfsSubvolume:
-        return BtrfsSubvolume(self.location, self.target)
+        return BtrfsSubvolume(self.location, self.ssh)
 
     def cap_snapshot(self, source: BtrfsSubvolume) -> BtrfsSnapshot:
         snapshot = BtrfsSubvolume(
             source.path / f".yaesm-btrfs-staging-{uuid4().hex}",
-            source.target,
+            source.ssh,
         )
         self.runner.run(
-            command_for_target(
-                source.target,
+            command_for_ssh(
+                source.ssh,
                 ("btrfs", "subvolume", "snapshot", "-r", source.path, snapshot.path),
             )
         )
@@ -198,12 +198,12 @@ class BtrfsDriver(DriverBase):
         operation: bckp.BackupOperation,
         base: BtrfsSnapshot | None = None,
     ) -> bckp.BackupArtifact[BtrfsSnapshot]:
-        destination = BtrfsSubvolume(self.location / operation.artifact_name, self.target)
+        destination = BtrfsSubvolume(self.location / operation.artifact_name, self.ssh)
 
-        if same_endpoint(source.target, self.target):
+        if same_endpoint(source.ssh, self.ssh):
             result = self.runner.run(
-                command_for_target(
-                    self.target,
+                command_for_ssh(
+                    self.ssh,
                     (
                         "btrfs",
                         "subvolume",
@@ -238,7 +238,7 @@ class BtrfsDriver(DriverBase):
             self.cap_cleanup(snapshot)
 
     def cap_export(self, source: BtrfsSnapshot, base: BtrfsSnapshot | None = None) -> BtrfsStream:
-        if base is not None and not same_endpoint(source.target, base.target):
+        if base is not None and not same_endpoint(source.ssh, base.ssh):
             raise BtrfsDriverError("Btrfs export and base use different SSH endpoints")
 
         command: list[str | ty.Path] = ["btrfs", "send", "--compressed-data"]
@@ -246,7 +246,7 @@ class BtrfsDriver(DriverBase):
             command.extend(("-p", base.path))
         command.append(source.path)
         return BtrfsStream(
-            (command_for_target(source.target, command),),
+            (command_for_ssh(source.ssh, command),),
             subvolume_name=source.path.name,
             base_uuid=None if base is None else base.uuid,
             suffixes=(BtrfsStream.suffix,),
@@ -258,25 +258,25 @@ class BtrfsDriver(DriverBase):
         operation: bckp.BackupOperation,
         base: BtrfsSnapshot | None = None,
     ) -> bckp.BackupArtifact[BtrfsSnapshot]:
-        if base is not None and not same_endpoint(base.target, self.target):
+        if base is not None and not same_endpoint(base.ssh, self.ssh):
             raise BtrfsDriverError("Btrfs import and base use different SSH endpoints")
 
-        received = BtrfsSubvolume(self.location / source.subvolume_name, self.target)
-        destination = BtrfsSubvolume(self.location / operation.artifact_name, self.target)
+        received = BtrfsSubvolume(self.location / source.subvolume_name, self.ssh)
+        destination = BtrfsSubvolume(self.location / operation.artifact_name, self.ssh)
         stored = received
         try:
             self.runner.pipeline(
                 (
                     *source.commands,
-                    command_for_target(
-                        self.target,
+                    command_for_ssh(
+                        self.ssh,
                         ("btrfs", "receive", self.location),
                     ),
                 )
             )
             self.runner.run(
-                command_for_target(
-                    self.target,
+                command_for_ssh(
+                    self.ssh,
                     ("mv", "-T", "--", received.path, destination.path),
                 )
             )
@@ -290,8 +290,8 @@ class BtrfsDriver(DriverBase):
 
     def cap_list(self, backup_name: str) -> tuple[bckp.BackupArtifact[BtrfsSnapshot], ...]:
         result = self.runner.run(
-            command_for_target(
-                self.target,
+            command_for_ssh(
+                self.ssh,
                 (
                     "btrfs",
                     "subvolume",
@@ -332,8 +332,8 @@ class BtrfsDriver(DriverBase):
         snapshot = artifact.representation
         return (
             str(snapshot.path)
-            if snapshot.target is None
-            else snapshot.target.format_location(snapshot.path)
+            if snapshot.ssh is None
+            else snapshot.ssh.format_location(snapshot.path)
         )
 
     def artifact_id(self, artifact: bckp.BackupArtifact) -> str:
@@ -346,7 +346,7 @@ class BtrfsDriver(DriverBase):
         artifacts: ty.Sequence[bckp.BackupArtifact[BtrfsSnapshot]],
     ) -> None:
         snapshots = tuple(artifact.representation for artifact in artifacts)
-        if any(not same_endpoint(snapshot.target, self.target) for snapshot in snapshots):
+        if any(not same_endpoint(snapshot.ssh, self.ssh) for snapshot in snapshots):
             raise BtrfsDriverError("Btrfs artifact uses a different SSH endpoint")
         self._delete(snapshots)
 
@@ -372,7 +372,7 @@ class BtrfsDriver(DriverBase):
             return None
         return BtrfsSnapshot(
             self.location / Path(path).name,
-            self.target,
+            self.ssh,
             uuid=snapshot_uuid,
             source_uuid=source_uuid,
         )
@@ -384,16 +384,16 @@ class BtrfsDriver(DriverBase):
         previous_backup_names: ty.Sequence[str],
     ) -> BtrfsSnapshot:
         name = f".yaesm-btrfs-bootstrap-{backup_name}"
-        source_path = BtrfsSubvolume(source.path / name, source.target)
-        destination_path = BtrfsSubvolume(self.location / name, self.target)
+        source_path = BtrfsSubvolume(source.path / name, source.ssh)
+        destination_path = BtrfsSubvolume(self.location / name, self.ssh)
         source_bootstrap = self._find_snapshot(source_path)
         destination_bootstrap = self._find_snapshot(destination_path)
 
         if source_bootstrap is None and destination_bootstrap is None:
             for previous_name in previous_backup_names:
                 name = f".yaesm-btrfs-bootstrap-{previous_name}"
-                previous_source = BtrfsSubvolume(source.path / name, source.target)
-                previous_destination = BtrfsSubvolume(self.location / name, self.target)
+                previous_source = BtrfsSubvolume(source.path / name, source.ssh)
+                previous_destination = BtrfsSubvolume(self.location / name, self.ssh)
                 previous_source_bootstrap = self._find_snapshot(previous_source)
                 previous_destination_bootstrap = self._find_snapshot(previous_destination)
                 if (
@@ -416,8 +416,8 @@ class BtrfsDriver(DriverBase):
                 self._delete((destination_bootstrap,))
                 destination_bootstrap = None
             self.runner.run(
-                command_for_target(
-                    source.target,
+                command_for_ssh(
+                    source.ssh,
                     (
                         "btrfs",
                         "subvolume",
@@ -440,8 +440,8 @@ class BtrfsDriver(DriverBase):
                 self.runner.pipeline(
                     (
                         *stream.commands,
-                        command_for_target(
-                            self.target,
+                        command_for_ssh(
+                            self.ssh,
                             ("btrfs", "receive", self.location),
                         ),
                     )
@@ -456,8 +456,8 @@ class BtrfsDriver(DriverBase):
         if self.bootstrap_refresh_days is None:
             return False
         result = self.runner.run(
-            command_for_target(
-                snapshot.target,
+            command_for_ssh(
+                snapshot.ssh,
                 (
                     "find",
                     snapshot.path,
@@ -473,8 +473,8 @@ class BtrfsDriver(DriverBase):
 
     def _read_snapshot(self, snapshot: BtrfsSubvolume) -> BtrfsSnapshot:
         result = self.runner.run(
-            command_for_target(
-                snapshot.target,
+            command_for_ssh(
+                snapshot.ssh,
                 ("btrfs", "subvolume", "show", snapshot.path),
             ),
             capture_output=True,
@@ -483,8 +483,8 @@ class BtrfsDriver(DriverBase):
 
     def _find_snapshot(self, snapshot: BtrfsSubvolume) -> BtrfsSnapshot | None:
         result = self.runner.run(
-            command_for_target(
-                snapshot.target,
+            command_for_ssh(
+                snapshot.ssh,
                 ("btrfs", "subvolume", "show", snapshot.path),
             ),
             capture_output=True,
@@ -524,7 +524,7 @@ class BtrfsDriver(DriverBase):
             ) from error
         return BtrfsSnapshot(
             snapshot.path,
-            snapshot.target,
+            snapshot.ssh,
             uuid=snapshot_uuid,
             source_uuid=source_uuid,
         )
@@ -538,8 +538,8 @@ class BtrfsDriver(DriverBase):
         if not snapshots:
             return
         self.runner.run(
-            command_for_target(
-                snapshots[0].target,
+            command_for_ssh(
+                snapshots[0].ssh,
                 ("btrfs", "subvolume", "delete", *(snapshot.path for snapshot in snapshots)),
             ),
             check=check,

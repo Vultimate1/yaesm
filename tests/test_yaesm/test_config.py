@@ -214,19 +214,19 @@ def test_parse_config_builds_complete_backup():
             source={
                 "btrfs": {
                     "location": "/home",
-                    "target": {
-                        "spec": "ssh://source",
-                        "key": "/root/.ssh/source-key",
+                    "ssh": {
+                        "endpoint": "ssh://source",
+                        "identity_file": "/root/.ssh/source-key",
                     },
                 }
             },
             destination={
                 "tar": {
                     "location": "/backups",
-                    "target": {
-                        "spec": "ssh://backup",
-                        "key": "/root/.ssh/backup-key",
-                        "ssh_config": "/root/.ssh/config",
+                    "ssh": {
+                        "endpoint": "ssh://backup",
+                        "identity_file": "/root/.ssh/backup-key",
+                        "config_file": "/root/.ssh/config",
                     },
                 }
             },
@@ -246,13 +246,13 @@ def test_parse_config_builds_complete_backup():
     assert backup.name == "home"
     assert isinstance(backup.source, BtrfsDriver)
     assert backup.source.location == Path("/home")
-    assert backup.source.target == SSHTarget(
+    assert backup.source.ssh == SSHTarget(
         "ssh://source",
         Path("/root/.ssh/source-key"),
     )
     assert isinstance(backup.destination, TarDriver)
     assert backup.destination.location == Path("/backups")
-    assert backup.destination.target == SSHTarget(
+    assert backup.destination.ssh == SSHTarget(
         "ssh://backup",
         Path("/root/.ssh/backup-key"),
         Path("/root/.ssh/config"),
@@ -627,21 +627,40 @@ def test_parse_config_rejects_invalid_driver_configuration():
 
 
 @pytest.mark.parametrize(
-    "target",
+    "ssh",
     [
         None,
         {},
-        {"spec": "host", "key": "/key"},
-        {"spec": "ssh://host", "key": 1},
-        {"spec": "ssh://host", "key": "relative"},
-        {"spec": "ssh://host", "key": "/key", "ssh_config": "relative"},
-        {"spec": "ssh://host", "key": "/key", "unknown": True},
+        {"endpoint": "host", "identity_file": "/key"},
+        {"endpoint": "ssh://host", "identity_file": 1},
+        {"endpoint": "ssh://host", "identity_file": "relative"},
+        {
+            "endpoint": "ssh://host",
+            "identity_file": "/key",
+            "config_file": "relative",
+        },
+        {"endpoint": "ssh://host", "identity_file": "/key", "unknown": True},
     ],
 )
-def test_parse_config_rejects_invalid_ssh_target(target):
-    source = {"btrfs": {"location": "/source", "target": target}}
+def test_parse_config_rejects_invalid_ssh_target(ssh):
+    source = {"btrfs": {"location": "/source", "ssh": ssh}}
 
-    with pytest.raises(ConfigError, match="invalid SSH target"):
+    with pytest.raises(ConfigError, match="invalid SSH configuration"):
+        parse_config({"home": backup_config(source=source)})
+
+
+def test_parse_config_rejects_target_setting():
+    source = {
+        "btrfs": {
+            "location": "/source",
+            "target": {
+                "spec": "ssh://host",
+                "key": "/key",
+            },
+        }
+    }
+
+    with pytest.raises(ConfigError, match="extra keys not allowed.*target"):
         parse_config({"home": backup_config(source=source)})
 
 

@@ -15,38 +15,38 @@ from yaesm.errors import YaesmValueError
 
 
 class SSHTargetError(YaesmValueError):
-    """Raised when an SSH target specification is invalid."""
+    """Raised when an SSH target is invalid."""
 
 
 @dataclasses.dataclass(frozen=True)
 class SSHTarget:
     """An SSH endpoint and its OpenSSH configuration."""
 
-    spec: dataclasses.InitVar[str]
-    key: ty.Path
-    ssh_config: ty.Path | None = None
+    endpoint: dataclasses.InitVar[str]
+    identity_file: ty.Path
+    config_file: ty.Path | None = None
     host: str = dataclasses.field(init=False)
     user: str | None = dataclasses.field(init=False)
     port: int | None = dataclasses.field(init=False)
 
-    def __post_init__(self, spec: str) -> None:
-        user, host, port = _parse_spec(spec)
+    def __post_init__(self, endpoint: str) -> None:
+        user, host, port = _parse_endpoint(endpoint)
 
-        object.__setattr__(self, "key", Path(self.key))
+        object.__setattr__(self, "identity_file", Path(self.identity_file))
         object.__setattr__(
             self,
-            "ssh_config",
-            None if self.ssh_config is None else Path(self.ssh_config),
+            "config_file",
+            None if self.config_file is None else Path(self.config_file),
         )
         object.__setattr__(self, "host", host)
         object.__setattr__(self, "user", user)
         object.__setattr__(self, "port", port)
 
     @staticmethod
-    def is_spec(spec: object) -> bool:
-        """Return whether an object is a valid SSH target specification."""
+    def is_endpoint(endpoint: object) -> bool:
+        """Return whether an object is a valid SSH endpoint."""
         try:
-            _parse_spec(spec)
+            _parse_endpoint(endpoint)
         except SSHTargetError:
             return False
         return True
@@ -65,15 +65,15 @@ class SSHTarget:
 
         schema = vlp.Schema(
             {
-                vlp.Required("spec"): str,
-                vlp.Required("key"): absolute_path,
-                vlp.Optional("ssh_config"): absolute_path,
+                vlp.Required("endpoint"): str,
+                vlp.Required("identity_file"): absolute_path,
+                vlp.Optional("config_file"): absolute_path,
             }
         )
         try:
             return cls(**schema(value))
         except (vlp.Invalid, SSHTargetError, TypeError) as error:
-            raise SSHTargetError(f"invalid SSH target: {error}") from error
+            raise SSHTargetError(f"invalid SSH configuration: {error}") from error
 
     def same_endpoint(self, other: SSHTarget) -> bool:
         """Return whether two targets use the same user, host, and port."""
@@ -82,14 +82,14 @@ class SSHTarget:
     def openssh_options(self) -> tuple[str, ...]:
         """Return the OpenSSH options used for this target."""
         options = []
-        if self.ssh_config is not None:
-            options.extend(("-F", str(self.ssh_config)))
+        if self.config_file is not None:
+            options.extend(("-F", str(self.config_file)))
         if self.port is not None:
             options.extend(("-p", str(self.port)))
         options.extend(
             (
                 "-o",
-                f"IdentityFile={self.key}",
+                f"IdentityFile={self.identity_file}",
                 "-o",
                 "ControlMaster=auto",
                 "-o",
@@ -149,9 +149,9 @@ class SSHTarget:
         )
 
     def __str__(self) -> str:
-        return self._spec()
+        return self._endpoint()
 
-    def _spec(self) -> str:
+    def _endpoint(self) -> str:
         host = urllib.parse.quote(self.host, safe=":-._~")
         if ":" in self.host:
             host = f"[{host}]"
@@ -167,22 +167,22 @@ def same_endpoint(first: SSHTarget | None, second: SSHTarget | None) -> bool:
     return first.same_endpoint(second)
 
 
-def command_for_target(target: SSHTarget | None, command: Command) -> tuple[str, ...]:
+def command_for_ssh(ssh: SSHTarget | None, command: Command) -> tuple[str, ...]:
     """Return a command ready to run locally or through SSH."""
-    if target is not None:
-        return target.openssh_command(command)
+    if ssh is not None:
+        return ssh.openssh_command(command)
     return tuple(str(argument) for argument in command)
 
 
-def _parse_spec(spec: object) -> tuple[str | None, str, int | None]:
-    if not isinstance(spec, str):
-        raise SSHTargetError(f"invalid SSH target spec: {spec!r}")
+def _parse_endpoint(endpoint: object) -> tuple[str | None, str, int | None]:
+    if not isinstance(endpoint, str):
+        raise SSHTargetError(f"invalid SSH endpoint: {endpoint!r}")
 
     try:
-        parsed = urllib.parse.urlsplit(spec)
+        parsed = urllib.parse.urlsplit(endpoint)
         port = parsed.port
     except ValueError as error:
-        raise SSHTargetError(f"invalid SSH target spec: {spec!r}") from error
+        raise SSHTargetError(f"invalid SSH endpoint: {endpoint!r}") from error
 
     authority = parsed.netloc.rsplit("@", 1)[-1]
     if (
@@ -195,7 +195,7 @@ def _parse_spec(spec: object) -> tuple[str | None, str, int | None]:
         or parsed.fragment
         or port == 0
     ):
-        raise SSHTargetError(f"invalid SSH target spec: {spec!r}")
+        raise SSHTargetError(f"invalid SSH endpoint: {endpoint!r}")
 
     user = None if parsed.username is None else urllib.parse.unquote(parsed.username)
     host = urllib.parse.unquote(parsed.hostname)
@@ -205,5 +205,5 @@ def _parse_spec(spec: object) -> tuple[str | None, str, int | None]:
         or any(character.isspace() for character in host)
         or (user is not None and any(character.isspace() for character in user))
     ):
-        raise SSHTargetError(f"invalid SSH target spec: {spec!r}")
+        raise SSHTargetError(f"invalid SSH endpoint: {endpoint!r}")
     return user, host, port

@@ -34,7 +34,7 @@ def test_path_tree_has_local_or_remote_location(tmp_path):
     target = SSHTarget("ssh://host", tmp_path / "key")
 
     assert PathTree(tmp_path).path == tmp_path
-    assert PathTree(tmp_path, target).target is target
+    assert PathTree(tmp_path, target).ssh is target
 
 
 def test_command_stream_contains_commands():

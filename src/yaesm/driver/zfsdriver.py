@@ -18,7 +18,7 @@ from yaesm.driver.driverbase import (
 )
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, DataProperty, Representation
-from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
+from yaesm.ssh import SSHTarget, command_for_ssh, same_endpoint
 
 _SOURCE_ARTIFACT_PROPERTY = "yaesm:source-artifact"
 
@@ -32,7 +32,7 @@ class ZFSDataset(Representation):
     """A ZFS filesystem available locally or remotely."""
 
     name: str
-    target: SSHTarget | None = None
+    ssh: SSHTarget | None = None
     encrypted: bool = False
 
 
@@ -42,7 +42,7 @@ class ZFSSnapshot(Representation):
 
     dataset: str
     snapshot: str
-    target: SSHTarget | None = None
+    ssh: SSHTarget | None = None
     encrypted: bool = False
     guid: int | None = dataclasses.field(default=None, kw_only=True, compare=False)
 
@@ -67,7 +67,7 @@ class ZFSDriver(DriverBase):
     def __init__(
         self,
         dataset: str,
-        target: SSHTarget | None = None,
+        ssh: SSHTarget | None = None,
         encryption: bool = False,
         *,
         global_settings: GlobalSettings | None = None,
@@ -78,7 +78,7 @@ class ZFSDriver(DriverBase):
         if not isinstance(encryption, bool):
             raise YaesmValueError("encryption must be a boolean")
         self.dataset = dataset
-        self.target = target
+        self.ssh = ssh
         self.encryption = encryption
 
     @classmethod
@@ -92,9 +92,9 @@ class ZFSDriver(DriverBase):
                 raise vlp.Invalid("dataset must be a ZFS filesystem name")
             return ty.cast(str, value)
 
-        def target(value: object) -> SSHTarget:
+        def ssh(value: object) -> SSHTarget:
             if not isinstance(value, SSHTarget):
-                raise vlp.Invalid("target must be an SSHTarget")
+                raise vlp.Invalid("ssh must be an SSHTarget")
             return value
 
         def encryption(value: object) -> bool:
@@ -105,7 +105,7 @@ class ZFSDriver(DriverBase):
         mapping = vlp.Schema(
             {
                 vlp.Required("dataset"): dataset,
-                vlp.Optional("target"): target,
+                vlp.Optional("ssh"): ssh,
                 vlp.Optional("encryption"): encryption,
             }
         )
@@ -153,8 +153,8 @@ class ZFSDriver(DriverBase):
             case CheckRole.TRANSFORM:
                 return ()
 
-    def _check_target(self) -> SSHTarget | None:
-        return self.target
+    def _check_ssh(self) -> SSHTarget | None:
+        return self.ssh
 
     def _base_compatible(
         self,
@@ -168,12 +168,12 @@ class ZFSDriver(DriverBase):
         if capability == "store":
             if not isinstance(source, ZFSDataset) or not self._owns(destination_base):
                 return False
-            if same_endpoint(source.target, self.target) and source.name == self.dataset:
+            if same_endpoint(source.ssh, self.ssh) and source.name == self.dataset:
                 return False
             source_base = ZFSSnapshot(
                 source.name,
                 destination_base.snapshot,
-                source.target,
+                source.ssh,
                 source.encrypted,
             )
         elif capability == "export":
@@ -182,7 +182,7 @@ class ZFSDriver(DriverBase):
             if (
                 not isinstance(source, ZFSSnapshot)
                 or not isinstance(source_base, ZFSSnapshot)
-                or not same_endpoint(source.target, source_base.target)
+                or not same_endpoint(source.ssh, source_base.ssh)
                 or source.dataset != source_base.dataset
             ):
                 return False
@@ -217,17 +217,17 @@ class ZFSDriver(DriverBase):
 
     def cap_source(self) -> ZFSDataset:
         if self.encryption:
-            self._require_encrypted(self.dataset, self.target)
-        return ZFSDataset(self.dataset, self.target, self.encryption)
+            self._require_encrypted(self.dataset, self.ssh)
+        return ZFSDataset(self.dataset, self.ssh, self.encryption)
 
     def cap_snapshot(self, source: ZFSDataset) -> ZFSSnapshot:
         snapshot = ZFSSnapshot(
             source.name,
             f".yaesm-zfs-staging-{uuid4().hex}",
-            source.target,
+            source.ssh,
             source.encrypted,
         )
-        self.runner.run(command_for_target(source.target, ("zfs", "snapshot", snapshot.name)))
+        self.runner.run(command_for_ssh(source.ssh, ("zfs", "snapshot", snapshot.name)))
         return snapshot
 
     @capability("store", adds=(DataProperty.SNAPSHOT,), base="destination")
@@ -239,17 +239,15 @@ class ZFSDriver(DriverBase):
     ) -> bckp.BackupArtifact[ZFSSnapshot]:
         encrypted = source.encrypted or self.encryption
         if self.encryption and not source.encrypted:
-            self._require_encrypted(source.name, source.target)
+            self._require_encrypted(source.name, source.ssh)
         destination = ZFSSnapshot(
             self.dataset,
             operation.artifact_name,
-            self.target,
+            self.ssh,
             encrypted,
         )
-        if same_endpoint(source.target, self.target) and source.name == self.dataset:
-            self.runner.run(
-                command_for_target(source.target, ("zfs", "snapshot", destination.name))
-            )
+        if same_endpoint(source.ssh, self.ssh) and source.name == self.dataset:
+            self.runner.run(command_for_ssh(source.ssh, ("zfs", "snapshot", destination.name)))
             return self._record_artifact(bckp.BackupArtifact(operation, destination))
 
         if base is not None and not self._owns(base):
@@ -258,7 +256,7 @@ class ZFSDriver(DriverBase):
         source_snapshot = ZFSSnapshot(
             source.name,
             operation.artifact_name,
-            source.target,
+            source.ssh,
             encrypted,
         )
         source_base = (
@@ -267,14 +265,12 @@ class ZFSDriver(DriverBase):
             else ZFSSnapshot(
                 source.name,
                 base.snapshot,
-                source.target,
+                source.ssh,
                 encrypted,
                 guid=base.guid,
             )
         )
-        self.runner.run(
-            command_for_target(source.target, ("zfs", "snapshot", source_snapshot.name))
-        )
+        self.runner.run(command_for_ssh(source.ssh, ("zfs", "snapshot", source_snapshot.name)))
         try:
             artifact = self.cap_import(
                 self.cap_export(source_snapshot, source_base),
@@ -294,13 +290,13 @@ class ZFSDriver(DriverBase):
         base: ZFSSnapshot | None = None,
     ) -> ZFSStream:
         if base is not None and (
-            not same_endpoint(source.target, base.target) or source.dataset != base.dataset
+            not same_endpoint(source.ssh, base.ssh) or source.dataset != base.dataset
         ):
             raise ZFSDriverError("ZFS export and base use different datasets")
 
         encrypted = source.encrypted or self.encryption
         if self.encryption and not source.encrypted:
-            self._require_encrypted(source.dataset, source.target)
+            self._require_encrypted(source.dataset, source.ssh)
 
         command = ["zfs", "send"]
         if encrypted:
@@ -311,7 +307,7 @@ class ZFSDriver(DriverBase):
             command.extend(("-i", base.name))
         command.append(source.name)
         return ZFSStream(
-            (command_for_target(source.target, command),),
+            (command_for_ssh(source.ssh, command),),
             encrypted,
             base_guid=None if base is None else base.guid,
             suffixes=(ZFSStream.suffix,),
@@ -329,15 +325,15 @@ class ZFSDriver(DriverBase):
         destination = ZFSSnapshot(
             self.dataset,
             operation.artifact_name,
-            self.target,
+            self.ssh,
             source.encrypted,
         )
         try:
             self.runner.pipeline(
                 (
                     *source.commands,
-                    command_for_target(
-                        self.target,
+                    command_for_ssh(
+                        self.ssh,
                         ("zfs", "receive", "-u", "-o", "mountpoint=none", self.dataset),
                     ),
                 )
@@ -350,8 +346,8 @@ class ZFSDriver(DriverBase):
     def cap_list(self, backup_name: str) -> tuple[bckp.BackupArtifact[ZFSSnapshot], ...]:
         try:
             result = self.runner.run(
-                command_for_target(
-                    self.target,
+                command_for_ssh(
+                    self.ssh,
                     (
                         "zfs",
                         "list",
@@ -397,7 +393,7 @@ class ZFSDriver(DriverBase):
             artifacts.append(
                 bckp.BackupArtifact(
                     operation,
-                    ZFSSnapshot(self.dataset, snapshot_name, self.target, guid=guid),
+                    ZFSSnapshot(self.dataset, snapshot_name, self.ssh, guid=guid),
                 )
             )
         return tuple(
@@ -417,8 +413,8 @@ class ZFSDriver(DriverBase):
             return artifact
         try:
             self.runner.run(
-                command_for_target(
-                    self.target,
+                command_for_ssh(
+                    self.ssh,
                     (
                         "zfs",
                         "set",
@@ -433,14 +429,14 @@ class ZFSDriver(DriverBase):
         return artifact
 
     def _owns(self, snapshot: ZFSSnapshot) -> bool:
-        return same_endpoint(snapshot.target, self.target) and snapshot.dataset == self.dataset
+        return same_endpoint(snapshot.ssh, self.ssh) and snapshot.dataset == self.dataset
 
     def _snapshot_guid(self, snapshot: ZFSSnapshot) -> int:
         if snapshot.guid is not None:
             return snapshot.guid
         result = self.runner.run(
-            command_for_target(
-                snapshot.target,
+            command_for_ssh(
+                snapshot.ssh,
                 ("zfs", "get", "-H", "-o", "value", "guid", snapshot.name),
             ),
             capture_output=True,
@@ -453,9 +449,7 @@ class ZFSDriver(DriverBase):
     def format_locator(self, artifact: bckp.BackupArtifact[ZFSSnapshot]) -> str:
         snapshot = artifact.representation
         return (
-            snapshot.name
-            if snapshot.target is None
-            else snapshot.target.format_location(snapshot.name)
+            snapshot.name if snapshot.ssh is None else snapshot.ssh.format_location(snapshot.name)
         )
 
     def cap_delete(
@@ -481,8 +475,8 @@ class ZFSDriver(DriverBase):
         first = snapshots[0]
         names = ",".join(snapshot.snapshot for snapshot in snapshots)
         self.runner.run(
-            command_for_target(
-                first.target,
+            command_for_ssh(
+                first.ssh,
                 ("zfs", "destroy", f"{first.dataset}@{names}"),
             ),
             check=check,
@@ -491,11 +485,11 @@ class ZFSDriver(DriverBase):
     def _require_encrypted(
         self,
         dataset: str,
-        target: SSHTarget | None,
+        ssh: SSHTarget | None,
     ) -> None:
         result = self.runner.run(
-            command_for_target(
-                target,
+            command_for_ssh(
+                ssh,
                 ("zfs", "get", "-H", "-o", "value", "encryption", dataset),
             ),
             capture_output=True,

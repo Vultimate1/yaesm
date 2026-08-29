@@ -14,7 +14,7 @@ from yaesm.command import Command
 from yaesm.driver.driverbase import DriverBase, DriverError, GlobalSettings
 from yaesm.errors import YaesmValueError
 from yaesm.representation import PathTree, Representation
-from yaesm.ssh import SSHTarget, command_for_target, same_endpoint
+from yaesm.ssh import SSHTarget, command_for_ssh, same_endpoint
 
 
 class RsyncDriverError(DriverError):
@@ -32,7 +32,7 @@ class RsyncDriver(DriverBase):
     def __init__(
         self,
         location: ty.Path,
-        target: SSHTarget | None = None,
+        ssh: SSHTarget | None = None,
         extra_options: ty.Sequence[str] = (),
         *,
         global_settings: GlobalSettings | None = None,
@@ -43,7 +43,7 @@ class RsyncDriver(DriverBase):
         ):
             raise YaesmValueError("extra_options must contain nonempty strings")
         self.location = Path(location)
-        self.target = target
+        self.ssh = ssh
         self.extra_options = tuple(extra_options)
 
     @classmethod
@@ -69,9 +69,9 @@ class RsyncDriver(DriverBase):
                 raise vlp.Invalid("location must be an absolute path")
             return path
 
-        def ssh_target(value: object) -> SSHTarget:
+        def ssh(value: object) -> SSHTarget:
             if not isinstance(value, SSHTarget):
-                raise vlp.Invalid("target must be an SSHTarget")
+                raise vlp.Invalid("ssh must be an SSHTarget")
             return value
 
         def extra_options(value: object) -> tuple[str, ...]:
@@ -94,7 +94,7 @@ class RsyncDriver(DriverBase):
         return vlp.Schema(
             {
                 vlp.Required("location"): absolute_path,
-                vlp.Optional("target"): ssh_target,
+                vlp.Optional("ssh"): ssh,
                 vlp.Optional("extra_options", default=()): extra_options,
             }
         )
@@ -124,8 +124,8 @@ class RsyncDriver(DriverBase):
             for description, command in requirements
         )
 
-    def _check_target(self) -> SSHTarget | None:
-        return self.target
+    def _check_ssh(self) -> SSHTarget | None:
+        return self.ssh
 
     def _base_compatible(
         self,
@@ -137,11 +137,11 @@ class RsyncDriver(DriverBase):
         return (
             capability == "store"
             and isinstance(destination_base, RsyncTree)
-            and same_endpoint(destination_base.target, self.target)
+            and same_endpoint(destination_base.ssh, self.ssh)
         )
 
     def cap_source(self) -> PathTree:
-        return PathTree(self.location, self.target)
+        return PathTree(self.location, self.ssh)
 
     def cap_store(
         self,
@@ -149,10 +149,10 @@ class RsyncDriver(DriverBase):
         operation: bckp.BackupOperation,
         base: RsyncTree | None = None,
     ) -> bckp.BackupArtifact[RsyncTree]:
-        if base is not None and not same_endpoint(base.target, self.target):
+        if base is not None and not same_endpoint(base.ssh, self.ssh):
             raise RsyncDriverError("rsync base and destination use different SSH endpoints")
 
-        destination = RsyncTree(self.location / operation.artifact_name, self.target)
+        destination = RsyncTree(self.location / operation.artifact_name, self.ssh)
         command: list[str | ty.Path] = [
             "rsync",
             "--archive",
@@ -164,13 +164,13 @@ class RsyncDriver(DriverBase):
         if base is not None:
             command.append(f"--link-dest={base.path}")
         command.extend((_directory(source.path), _directory(destination.path)))
-        rsync_command = self._command(source.target, destination.target, command)
+        rsync_command = self._command(source.ssh, destination.ssh, command)
 
         try:
             self.runner.run(rsync_command)
             self.runner.run(
-                command_for_target(
-                    self.target,
+                command_for_ssh(
+                    self.ssh,
                     ("touch", self._marker(destination.path)),
                 )
             )
@@ -181,8 +181,8 @@ class RsyncDriver(DriverBase):
 
     def cap_list(self, backup_name: str) -> tuple[bckp.BackupArtifact[RsyncTree], ...]:
         result = self.runner.run(
-            command_for_target(
-                self.target,
+            command_for_ssh(
+                self.ssh,
                 (
                     "find",
                     self.location,
@@ -213,21 +213,21 @@ class RsyncDriver(DriverBase):
                 operation = bckp.BackupOperation.from_artifact_name(backup_name, path.name)
             except YaesmValueError:
                 continue
-            artifacts.append(bckp.BackupArtifact(operation, RsyncTree(path, self.target)))
+            artifacts.append(bckp.BackupArtifact(operation, RsyncTree(path, self.ssh)))
         return tuple(
             sorted(artifacts, key=lambda artifact: artifact.operation.created_at, reverse=True)
         )
 
     def format_locator(self, artifact: bckp.BackupArtifact[RsyncTree]) -> str:
         tree = artifact.representation
-        return str(tree.path) if tree.target is None else tree.target.format_location(tree.path)
+        return str(tree.path) if tree.ssh is None else tree.ssh.format_location(tree.path)
 
     def cap_delete(
         self,
         artifacts: ty.Sequence[bckp.BackupArtifact[RsyncTree]],
     ) -> None:
         trees = tuple(artifact.representation for artifact in artifacts)
-        if any(not same_endpoint(tree.target, self.target) for tree in trees):
+        if any(not same_endpoint(tree.ssh, self.ssh) for tree in trees):
             raise RsyncDriverError("rsync artifact uses a different SSH endpoint")
         self._delete(trees)
 
@@ -238,7 +238,7 @@ class RsyncDriver(DriverBase):
         command: Command,
     ) -> tuple[str, ...]:
         if same_endpoint(source, destination):
-            return command_for_target(destination, command)
+            return command_for_ssh(destination, command)
         if source is not None and destination is not None:
             raise RsyncDriverError("rsync cannot copy between different SSH endpoints")
 
@@ -258,8 +258,8 @@ class RsyncDriver(DriverBase):
             return
         paths = tuple(path for tree in trees for path in (tree.path, self._marker(tree.path)))
         self.runner.run(
-            command_for_target(
-                trees[0].target,
+            command_for_ssh(
+                trees[0].ssh,
                 ("rm", "-rf", *paths),
             ),
             check=check,
@@ -271,7 +271,7 @@ def _directory(path: ty.Path) -> str:
     return value if value == "/" else f"{value.rstrip('/')}/"
 
 
-def _remote_directory(target: SSHTarget, path: ty.Path) -> str:
-    host = f"[{target.host}]" if ":" in target.host else target.host
-    destination = host if target.user is None else f"{target.user}@{host}"
+def _remote_directory(ssh: SSHTarget, path: ty.Path) -> str:
+    host = f"[{ssh.host}]" if ":" in ssh.host else ssh.host
+    destination = host if ssh.user is None else f"{ssh.user}@{host}"
     return f"{destination}:{_directory(path)}"

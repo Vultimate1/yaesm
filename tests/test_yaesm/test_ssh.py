@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from yaesm.command import Command, CommandResult, CommandRunner
-from yaesm.ssh import SSHTarget, SSHTargetError, command_for_target, same_endpoint
+from yaesm.ssh import SSHTarget, SSHTargetError, command_for_ssh, same_endpoint
 
 
 class RecordingRunner(CommandRunner):
@@ -25,7 +25,7 @@ class RecordingRunner(CommandRunner):
 
 
 @pytest.mark.parametrize(
-    ("spec", "user", "host", "port"),
+    ("endpoint", "user", "host", "port"),
     [
         ("ssh://host", None, "host", None),
         ("ssh://user@host", "user", "host", None),
@@ -34,28 +34,44 @@ class RecordingRunner(CommandRunner):
         ("ssh://user@[2001:db8::1]:2222", "user", "2001:db8::1", 2222),
     ],
 )
-def test_ssh_target_parses_spec(spec, user, host, port):
-    target = SSHTarget(spec, Path("/key"))
+def test_ssh_target_parses_endpoint(endpoint, user, host, port):
+    target = SSHTarget(endpoint, Path("/key"))
 
     assert target.user == user
     assert target.host == host
     assert target.port == port
-    assert str(target) == spec
-    assert SSHTarget.is_spec(spec)
+    assert str(target) == endpoint
+    assert SSHTarget.is_endpoint(endpoint)
 
 
 def test_ssh_target_parses_configuration():
-    assert SSHTarget.from_config(
+    target = SSHTarget.from_config(
         {
-            "spec": "ssh://user@host:2222",
-            "key": "/key",
-            "ssh_config": "/config",
+            "endpoint": "ssh://user@host:2222",
+            "identity_file": "/key",
+            "config_file": "/config",
         }
-    ) == SSHTarget("ssh://user@host:2222", Path("/key"), Path("/config"))
+    )
+
+    assert target == SSHTarget("ssh://user@host:2222", Path("/key"), Path("/config"))
+    assert target.identity_file == Path("/key")
+    assert target.config_file == Path("/config")
 
 
 @pytest.mark.parametrize(
-    "spec",
+    "config",
+    [
+        {"spec": "ssh://host", "key": "/key"},
+        {"endpoint": "ssh://host", "identity_file": "/key", "ssh_config": "/config"},
+    ],
+)
+def test_ssh_target_rejects_old_configuration_vocabulary(config):
+    with pytest.raises(SSHTargetError, match="invalid SSH configuration"):
+        SSHTarget.from_config(config)
+
+
+@pytest.mark.parametrize(
+    "endpoint",
     [
         "host:/backup",
         "ssh://host:/backup",
@@ -71,10 +87,10 @@ def test_ssh_target_parses_configuration():
         "ssh://host#fragment",
     ],
 )
-def test_ssh_target_rejects_invalid_spec(spec):
-    assert not SSHTarget.is_spec(spec)
-    with pytest.raises(SSHTargetError, match="invalid SSH target spec"):
-        SSHTarget(spec, Path("/key"))
+def test_ssh_target_rejects_invalid_endpoint(endpoint):
+    assert not SSHTarget.is_endpoint(endpoint)
+    with pytest.raises(SSHTargetError, match="invalid SSH endpoint"):
+        SSHTarget(endpoint, Path("/key"))
 
 
 def test_ssh_target_compares_endpoints():
@@ -97,7 +113,7 @@ def test_same_local_or_ssh_endpoint():
 
 
 def test_command_for_local_target():
-    assert command_for_target(None, ("command", Path("/a path"))) == (
+    assert command_for_ssh(None, ("command", Path("/a path"))) == (
         "command",
         "/a path",
     )
@@ -106,7 +122,7 @@ def test_command_for_local_target():
 def test_command_for_ssh_target():
     target = SSHTarget("ssh://host", Path("/key"))
 
-    assert command_for_target(target, ("command", Path("/a path"))) == (
+    assert command_for_ssh(target, ("command", Path("/a path"))) == (
         target.openssh_command(("command", Path("/a path")))
     )
 

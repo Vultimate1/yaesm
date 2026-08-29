@@ -7,7 +7,7 @@ import enum
 
 import yaesm.command as cmd
 import yaesm.ty as ty
-from yaesm.ssh import SSHTarget, command_for_target
+from yaesm.ssh import SSHTarget, command_for_ssh
 
 
 class CheckRole(enum.Enum):
@@ -45,7 +45,7 @@ class Check:
 
     description: str
     function: ty.Callable[[], CheckResult]
-    target: SSHTarget | None = None
+    ssh: SSHTarget | None = None
 
     @classmethod
     def command(
@@ -53,15 +53,15 @@ class Check:
         description: str,
         command: cmd.Command,
         *,
-        target: SSHTarget | None = None,
+        ssh: SSHTarget | None = None,
         failure_message: str | None = None,
         validate: ty.Callable[[cmd.CommandResult], str | None] | None = None,
     ) -> Check:
         """Return a deferred check for a harmless command."""
         command = tuple(str(argument) for argument in command)
-        execution_command = command_for_target(target, command)
-        if target is not None:
-            description = f"{description} on {target}"
+        execution_command = command_for_ssh(ssh, command)
+        if ssh is not None:
+            description = f"{description} on {ssh}"
 
         def run() -> CheckResult:
             try:
@@ -90,7 +90,7 @@ class Check:
                 result.stderr or None,
             )
 
-        return cls(description, run, target)
+        return cls(description, run, ssh)
 
     def run(self) -> CheckResult:
         """Run the check and return its result."""

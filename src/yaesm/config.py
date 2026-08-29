@@ -250,9 +250,9 @@ def _parse_driver(
         raise ConfigError(f"{label} uses unknown driver {name!r}")
 
     try:
-        if isinstance(config, dict) and "target" in config:
+        if isinstance(config, dict) and "ssh" in config:
             config = dict(config)
-            config["target"] = SSHTarget.from_config(config["target"])
+            config["ssh"] = SSHTarget.from_config(config["ssh"])
         parsed = driver_type.config_schema()(config)
     except (vlp.Invalid, SSHTargetError) as error:
         raise ConfigError(f"{label} has invalid {name} configuration: {error}") from error

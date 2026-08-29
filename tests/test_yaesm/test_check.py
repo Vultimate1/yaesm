@@ -55,7 +55,7 @@ def test_check_is_deferred_and_returns_its_result():
     check = Check("tool runs", run)
 
     assert check.description == "tool runs"
-    assert check.target is None
+    assert check.ssh is None
     assert calls == []
     assert check.run() is result
     assert calls == [True]
@@ -196,7 +196,7 @@ def test_command_check_runs_on_ssh_target(tmp_path, monkeypatch):
         return CommandResult(None, "remote failure", (4,))
 
     monkeypatch.setattr(command_module, "run", run)
-    check = Check.command("tool works", ("tool", "argument"), target=target)
+    check = Check.command("tool works", ("tool", "argument"), ssh=target)
     result = check.run()
 
     assert result == CheckResult(
@@ -204,7 +204,7 @@ def test_command_check_runs_on_ssh_target(tmp_path, monkeypatch):
         "tool exited with status 4",
         stderr="remote failure",
     )
-    assert check.target is target
+    assert check.ssh is target
     assert calls == [target.openssh_command(("tool", "argument"))]
 
 
@@ -216,6 +216,6 @@ def test_remote_command_check_reports_local_ssh_start_failure(tmp_path, monkeypa
 
     monkeypatch.setattr(command_module, "run", run)
 
-    result = Check.command("tool works", ("tool",), target=target).run()
+    result = Check.command("tool works", ("tool",), ssh=target).run()
 
     assert result.failure == "could not start ssh"

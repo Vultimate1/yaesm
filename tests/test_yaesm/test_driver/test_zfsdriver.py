@@ -105,9 +105,9 @@ def test_config_schema_accepts_shorthand():
 def test_config_schema_accepts_expanded_configuration(tmp_path):
     target = SSHTarget("ssh://host", tmp_path / "key")
 
-    assert ZFSDriver.config_schema()({"dataset": "tank/home", "target": target}) == {
+    assert ZFSDriver.config_schema()({"dataset": "tank/home", "ssh": target}) == {
         "dataset": "tank/home",
-        "target": target,
+        "ssh": target,
     }
 
 
@@ -142,8 +142,8 @@ def test_config_schema_rejects_invalid_structure(config):
 
 
 def test_config_schema_rejects_invalid_target():
-    with pytest.raises(vlp.Invalid, match="target must be an SSHTarget"):
-        ZFSDriver.config_schema()({"dataset": "tank/home", "target": "host"})
+    with pytest.raises(vlp.Invalid, match="ssh must be an SSHTarget"):
+        ZFSDriver.config_schema()({"dataset": "tank/home", "ssh": "host"})
 
 
 @pytest.mark.parametrize("encryption", [None, 0, 1, "yes", []])

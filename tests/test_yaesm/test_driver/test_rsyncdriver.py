@@ -101,9 +101,9 @@ def test_config_schema_accepts_path_location(tmp_path):
 def test_config_schema_accepts_ssh_target(tmp_path):
     target = SSHTarget("ssh://host", tmp_path / "key")
 
-    assert RsyncDriver.config_schema()({"location": tmp_path, "target": target}) == {
+    assert RsyncDriver.config_schema()({"location": tmp_path, "ssh": target}) == {
         "location": tmp_path,
-        "target": target,
+        "ssh": target,
         "extra_options": (),
     }
 
@@ -135,8 +135,8 @@ def test_config_schema_rejects_invalid_location_type(location):
     [
         {},
         {"location": "relative"},
-        {"location": "/tmp", "target": None},
-        {"location": "/tmp", "target": "ssh://host"},
+        {"location": "/tmp", "ssh": None},
+        {"location": "/tmp", "ssh": "ssh://host"},
         {"location": "/tmp", "extra_options": None},
         {"location": "/tmp", "extra_options": 1},
         {"location": "/tmp", "extra_options": True},
@@ -159,7 +159,7 @@ def test_config_schema_output_constructs_driver(tmp_path):
     config = RsyncDriver.config_schema()(
         {
             "location": tmp_path,
-            "target": target,
+            "ssh": target,
             "extra_options": ["--checksum"],
         }
     )
@@ -167,7 +167,7 @@ def test_config_schema_output_constructs_driver(tmp_path):
     driver = RsyncDriver(**config)
 
     assert driver.location == tmp_path
-    assert driver.target is target
+    assert driver.ssh is target
     assert driver.extra_options == ("--checksum",)
 
 

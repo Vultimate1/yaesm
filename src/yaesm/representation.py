@@ -31,7 +31,7 @@ class PathTree(ReadableTree):
     """A directory tree available at a local or remote path."""
 
     path: ty.Path
-    target: SSHTarget | None = None
+    ssh: SSHTarget | None = None
 
 
 class BlockDevice(Representation):

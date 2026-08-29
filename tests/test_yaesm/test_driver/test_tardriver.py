@@ -27,7 +27,7 @@ from yaesm.representation import (
     Representation,
     UncompressedStream,
 )
-from yaesm.ssh import SSHTarget, command_for_target
+from yaesm.ssh import SSHTarget, command_for_ssh
 
 _TAR_COMMAND = (
     "tar",
@@ -97,8 +97,8 @@ def operation(offset: int = 0) -> BackupOperation:
     )
 
 
-def artifact(path: ty.Path, target: SSHTarget | None = None) -> BackupArtifact[TarArchive]:
-    return BackupArtifact(operation(), TarArchive(path, target))
+def artifact(path: ty.Path, ssh: SSHTarget | None = None) -> BackupArtifact[TarArchive]:
+    return BackupArtifact(operation(), TarArchive(path, ssh))
 
 
 def test_name():
@@ -116,9 +116,9 @@ def test_config_schema_accepts_path_location(tmp_path):
 def test_config_schema_accepts_ssh_target(tmp_path):
     target = SSHTarget("ssh://host", tmp_path / "key")
 
-    assert TarDriver.config_schema()({"location": tmp_path, "target": target}) == {
+    assert TarDriver.config_schema()({"location": tmp_path, "ssh": target}) == {
         "location": tmp_path,
-        "target": target,
+        "ssh": target,
     }
 
 
@@ -140,8 +140,8 @@ def test_config_schema_rejects_invalid_location_type(location):
     [
         {},
         {"location": "relative"},
-        {"location": "/tmp", "target": None},
-        {"location": "/tmp", "target": "ssh://host"},
+        {"location": "/tmp", "ssh": None},
+        {"location": "/tmp", "ssh": "ssh://host"},
         {"location": "/tmp", "one_file_system": None},
         {"location": "/tmp", "one_file_system": 1},
         {"location": "/tmp", "one_file_system": "yes"},
@@ -155,12 +155,12 @@ def test_config_schema_rejects_invalid_configuration(config):
 
 def test_config_schema_output_constructs_driver(tmp_path):
     target = SSHTarget("ssh://host", tmp_path / "key")
-    config = TarDriver.config_schema()({"location": tmp_path, "target": target})
+    config = TarDriver.config_schema()({"location": tmp_path, "ssh": target})
 
     driver = TarDriver(**config)
 
     assert driver.location == tmp_path
-    assert driver.target is target
+    assert driver.ssh is target
 
 
 def test_constructor_rejects_invalid_one_file_system(tmp_path):
@@ -242,7 +242,7 @@ def test_cap_export_runs_tar_on_source_target(tmp_path):
 
     stream = TarDriver(tmp_path).cap_export(source)
 
-    assert stream.commands == (command_for_target(target, _TAR_COMMAND),)
+    assert stream.commands == (command_for_ssh(target, _TAR_COMMAND),)
 
 
 def test_cap_export_excludes_destination_inside_source():
@@ -269,7 +269,7 @@ def test_cap_export_excludes_remote_destination_on_same_endpoint(tmp_path):
         "--exclude=./archives",
         *_TAR_COMMAND[-3:],
     )
-    assert stream.commands == (command_for_target(source_target, expected),)
+    assert stream.commands == (command_for_ssh(source_target, expected),)
 
 
 def test_cap_export_does_not_exclude_destination_on_different_endpoint(tmp_path):
@@ -279,7 +279,7 @@ def test_cap_export_does_not_exclude_destination_on_different_endpoint(tmp_path)
 
     stream = driver.cap_export(PathTree(Path("/source"), source_target))
 
-    assert stream.commands == (command_for_target(source_target, _TAR_COMMAND),)
+    assert stream.commands == (command_for_ssh(source_target, _TAR_COMMAND),)
 
 
 def test_cap_export_rejects_destination_equal_to_source(tmp_path):
@@ -303,7 +303,7 @@ def test_tar_representations(tmp_path):
     assert issubclass(TarStream, UncompressedStream)
     assert issubclass(TarArchive, Representation)
     assert TarStream.suffix == ".tar"
-    assert TarArchive(tmp_path / "archive", target).target is target
+    assert TarArchive(tmp_path / "archive", target).ssh is target
 
 
 def test_cap_import_stores_stream_atomically(tmp_path, monkeypatch):

@@ -207,7 +207,7 @@ class DriverBase(abc.ABC):
             failure = None if artifacts else f"no stored artifacts found for backup {backup.name!r}"
             return CheckResult(description, failure)
 
-        return Check(description, run, self._check_target())
+        return Check(description, run, self._check_ssh())
 
     def format_locator(self, artifact: bckp.BackupArtifact) -> str:
         """Format a stored artifact's location for display."""
@@ -225,8 +225,8 @@ class DriverBase(abc.ABC):
         """Return this driver's additional feasibility checks."""
         return ()
 
-    def _check_target(self) -> SSHTarget | None:
-        """Return the SSH target on which this driver's checks run."""
+    def _check_ssh(self) -> SSHTarget | None:
+        """Return the SSH connection on which this driver's checks run."""
         return None
 
     def _command_check(
@@ -240,7 +240,7 @@ class DriverBase(abc.ABC):
         return Check.command(
             description,
             command,
-            target=self._check_target(),
+            ssh=self._check_ssh(),
             validate=validate,
         )
 

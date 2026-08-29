@@ -22,7 +22,7 @@ from yaesm.driver.btrfsdriver import (
 )
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, DataProperty, PathTree
-from yaesm.ssh import SSHTarget, command_for_target
+from yaesm.ssh import SSHTarget, command_for_ssh
 
 _BTRFS_SEND = ("btrfs", "send", "--compressed-data")
 _SNAPSHOT_UUID = UUID("11111111-1111-1111-1111-111111111111")
@@ -30,12 +30,12 @@ _SNAPSHOT_UUID = UUID("11111111-1111-1111-1111-111111111111")
 
 def _snapshot(
     path: ty.Path,
-    target: SSHTarget | None = None,
+    ssh: SSHTarget | None = None,
     *,
     uuid: UUID = _SNAPSHOT_UUID,
     source_uuid: UUID | None = None,
 ) -> BtrfsSnapshot:
-    return BtrfsSnapshot(path, target, uuid=uuid, source_uuid=source_uuid)
+    return BtrfsSnapshot(path, ssh, uuid=uuid, source_uuid=source_uuid)
 
 
 def _snapshot_output(
@@ -129,9 +129,9 @@ def test_config_schema_accepts_path_location(tmp_path):
 def test_config_schema_accepts_ssh_target(tmp_path):
     target = SSHTarget("ssh://host", tmp_path / "key")
 
-    assert BtrfsDriver.config_schema()({"location": str(tmp_path), "target": target}) == {
+    assert BtrfsDriver.config_schema()({"location": str(tmp_path), "ssh": target}) == {
         "location": tmp_path,
-        "target": target,
+        "ssh": target,
         "bootstrap_refresh_days": 21,
     }
 
@@ -165,8 +165,8 @@ def test_config_schema_rejects_invalid_bootstrap_refresh_type(refresh_days):
 
 
 def test_config_schema_rejects_explicit_none_target():
-    with pytest.raises(vlp.Invalid, match="target must be an SSHTarget"):
-        BtrfsDriver.config_schema()({"location": "/tmp", "target": None})
+    with pytest.raises(vlp.Invalid, match="ssh must be an SSHTarget"):
+        BtrfsDriver.config_schema()({"location": "/tmp", "ssh": None})
 
 
 def test_config_schema_output_constructs_driver(tmp_path):
@@ -175,7 +175,7 @@ def test_config_schema_output_constructs_driver(tmp_path):
     driver = BtrfsDriver(**config)
 
     assert driver.location == tmp_path
-    assert driver.target is None
+    assert driver.ssh is None
     assert driver.bootstrap_refresh_days is None
 
 
@@ -184,7 +184,7 @@ def test_config_schema_output_constructs_driver(tmp_path):
     [
         {},
         {"location": "relative"},
-        {"location": "/tmp", "target": "ssh://host"},
+        {"location": "/tmp", "ssh": "ssh://host"},
         {"location": "/tmp", "bootstrap_refresh_days": -1},
         {"location": "/tmp", "x": 1},
     ],
@@ -355,7 +355,7 @@ def test_cap_snapshot(tmp_path):
 
     assert snapshot.path.parent == source.path
     assert snapshot.path.name.startswith(".yaesm-btrfs-staging-")
-    assert snapshot.target is None
+    assert snapshot.ssh is None
     assert snapshot.uuid == _SNAPSHOT_UUID
     assert runner.commands == [
         ("btrfs", "subvolume", "snapshot", "-r", str(source.path), str(snapshot.path)),
@@ -371,7 +371,7 @@ def test_cap_snapshot_remote(tmp_path):
     snapshot = driver.cap_snapshot(driver.cap_source())
 
     remote_command = ("btrfs", "subvolume", "snapshot", "-r", tmp_path, snapshot.path)
-    assert snapshot.target is target
+    assert snapshot.ssh is target
     assert runner.commands == [
         target.openssh_command(remote_command),
         target.openssh_command(("btrfs", "subvolume", "show", snapshot.path)),
@@ -588,12 +588,12 @@ def test_cap_store_bootstraps_between_different_endpoints(
     )
 
     bootstrap = source.path / ".yaesm-btrfs-bootstrap-example"
-    receive = command_for_target(
+    receive = command_for_ssh(
         destination_target,
         ("btrfs", "receive", destination_dir),
     )
     assert runner.pipelines[0] == (
-        command_for_target(source_target, (*_BTRFS_SEND, bootstrap)),
+        command_for_ssh(source_target, (*_BTRFS_SEND, bootstrap)),
         receive,
     )
     assert runner.pipelines[1][1] == receive
@@ -859,7 +859,7 @@ def test_incremental_base_requires_matching_btrfs_uuid_pair(tmp_path):
         "store",
         source,
         source_base,
-        dataclasses.replace(destination_base, target=source_target),
+        dataclasses.replace(destination_base, ssh=source_target),
     )
     assert not BtrfsDriver(tmp_path, source_target).validate_base(
         "export",
