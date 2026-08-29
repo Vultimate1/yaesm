@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import re
 
 import yaesm.ty as ty
 from yaesm.errors import YaesmError, YaesmValueError
+from yaesm.names import name_valid
 from yaesm.representation import Representation
 from yaesm.schedule import schedule_name_valid
 
@@ -26,11 +26,7 @@ class BackupError(YaesmError):
 
 def backup_name_valid(name: object) -> bool:
     """Return whether a name is safe to use in an artifact name."""
-    return (
-        isinstance(name, str)
-        and name.casefold() != "global_settings"
-        and bool(re.fullmatch(r"[a-z][-_:@a-z0-9]*", name, re.IGNORECASE))
-    )
+    return name_valid(name, reserved=("global_settings",))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -38,6 +34,10 @@ class BackupSource:
     """Artifacts produced by another configured backup."""
 
     backup_name: str
+
+    def __post_init__(self) -> None:
+        if not backup_name_valid(self.backup_name):
+            raise YaesmValueError(f"invalid source backup name: {self.backup_name!r}")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -53,12 +53,21 @@ class BackupOperation:
     )
 
     def __post_init__(self) -> None:
+        if not backup_name_valid(self.backup_name):
+            raise YaesmValueError(f"invalid backup name: {self.backup_name!r}")
         if not schedule_name_valid(self.schedule_name):
             raise YaesmValueError(f"invalid schedule name: {self.schedule_name!r}")
         if self.source_artifact_id is not None and (
             not isinstance(self.source_artifact_id, str) or not self.source_artifact_id
         ):
             raise YaesmValueError(f"invalid source artifact ID: {self.source_artifact_id!r}")
+        seen = {self.backup_name}
+        for name in self.previous_backup_names:
+            if not backup_name_valid(name):
+                raise YaesmValueError(f"invalid previous backup name: {name!r}")
+            if name in seen:
+                raise YaesmValueError(f"duplicate backup name: {name!r}")
+            seen.add(name)
 
     @classmethod
     def from_artifact_name(cls, backup_name: str, artifact_name: str) -> BackupOperation:

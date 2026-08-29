@@ -71,7 +71,7 @@ def test_schedule_rejects_duplicate_name_history(previous_names):
 
 @pytest.mark.parametrize(
     "name",
-    ["hourly", "Every.Six-Hours", "manual_1", "daily@server", "daily:local"],
+    ["hourly", "Every-Six-Hours", "manual_1", "5minute", "_daily"],
 )
 def test_schedule_accepts_safe_name(name):
     assert schedule_name_valid(name)
@@ -80,7 +80,19 @@ def test_schedule_accepts_safe_name(name):
 
 @pytest.mark.parametrize(
     "name",
-    ["", None, 1, "../../../outside", "daily/../../outside", "daily,weekly", "daily backup"],
+    [
+        "",
+        None,
+        1,
+        "-daily",
+        "daily.backup",
+        "daily@server",
+        "daily:local",
+        "../../../outside",
+        "daily/../../outside",
+        "daily,weekly",
+        "daily backup",
+    ],
 )
 def test_schedule_rejects_unsafe_name(name):
     assert not schedule_name_valid(name)

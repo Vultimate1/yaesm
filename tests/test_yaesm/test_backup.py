@@ -266,6 +266,12 @@ def test_backup_source_identifies_configured_backup():
     assert bckp.BackupSource("local-home").backup_name == "local-home"
 
 
+@pytest.mark.parametrize("name", ["", "-local", "global_settings", "local.backup"])
+def test_backup_source_rejects_invalid_name(name):
+    with pytest.raises(YaesmValueError, match="invalid source backup name"):
+        bckp.BackupSource(name)
+
+
 def test_backup_operation():
     created_at = datetime(2026, 8, 27, 12, 30)
     operation = bckp.BackupOperation(
@@ -293,6 +299,23 @@ def test_backup_operation_records_source_artifact():
     assert operation.source_artifact_id == "yaesm-home-hourly.2026_08_27_12:30"
 
 
+@pytest.mark.parametrize("backup_name", ["", "-home", "global_settings", "home.backup"])
+def test_backup_operation_rejects_invalid_backup_name(backup_name):
+    with pytest.raises(YaesmValueError, match="invalid backup name"):
+        bckp.BackupOperation(backup_name, "daily", datetime(2026, 8, 27, 12, 30))
+
+
+@pytest.mark.parametrize("previous_names", [("-home",), ("home",), ("old", "old")])
+def test_backup_operation_rejects_invalid_previous_names(previous_names):
+    with pytest.raises(YaesmValueError, match="invalid previous|duplicate backup"):
+        bckp.BackupOperation(
+            "home",
+            "daily",
+            datetime(2026, 8, 27, 12, 30),
+            previous_backup_names=previous_names,
+        )
+
+
 @pytest.mark.parametrize("source_artifact_id", ["", 1])
 def test_backup_operation_rejects_invalid_source_artifact_id(source_artifact_id):
     with pytest.raises(YaesmValueError, match="invalid source artifact ID"):
@@ -316,10 +339,10 @@ def test_backup_operation_rejects_unsafe_schedule_name(schedule_name):
 def test_backup_operation_from_artifact_name():
     assert bckp.BackupOperation.from_artifact_name(
         "home-backup",
-        "yaesm-home-backup-every.six-hours.2026_08_27_12:30",
+        "yaesm-home-backup-every-six-hours.2026_08_27_12:30",
     ) == bckp.BackupOperation(
         "home-backup",
-        "every.six-hours",
+        "every-six-hours",
         datetime(2026, 8, 27, 12, 30),
     )
 
@@ -372,10 +395,10 @@ def test_backup_artifact():
         "foo-12_",
         "foo-12-",
         "FOO-12-",
-        "FOO@BAR",
-        "FOO@12-",
-        "FOO@@--12-:",
-        "F@-_:",
+        "1",
+        "0foo",
+        "_foo",
+        "_",
     ],
 )
 def test_backup_accepts_valid_name(name):
@@ -391,11 +414,12 @@ def test_backup_accepts_valid_name(name):
         "foo ",
         " foo ",
         "foo bar",
-        "1",
-        "0foo",
         "foo/bar",
         "foo,bar",
         "foo*bar",
+        "foo.bar",
+        "foo@bar",
+        "foo:bar",
         "@foo",
         "-foo",
         ":foo",

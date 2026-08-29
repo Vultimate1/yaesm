@@ -2,18 +2,18 @@
 
 import abc
 import dataclasses
-import re
 
 import voluptuous as vlp
 from apscheduler.triggers.base import BaseTrigger
 from apscheduler.triggers.cron import CronTrigger
 
 from yaesm.errors import YaesmValueError
+from yaesm.names import name_valid
 
 
 def schedule_name_valid(name: object) -> bool:
     """Return whether a name is safe to use in an artifact name."""
-    return isinstance(name, str) and bool(re.fullmatch(r"[a-z][-.@:_a-z0-9]*", name, re.IGNORECASE))
+    return name_valid(name)
 
 
 class ScheduleBase(abc.ABC):

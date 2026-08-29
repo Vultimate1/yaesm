@@ -83,10 +83,10 @@ def backup_config(**settings):
     return config
 
 
-_BACKUP_NAMES = st.from_regex(r"[a-z][a-z0-9_-]{0,12}", fullmatch=True).filter(
+_BACKUP_NAMES = st.from_regex(r"[a-z0-9_][a-z0-9_-]{0,12}", fullmatch=True).filter(
     lambda name: name != "global_settings" and not name.startswith("old-")
 )
-_SCHEDULE_NAMES = st.from_regex(r"[a-z][a-z0-9_-]{0,8}", fullmatch=True).filter(
+_SCHEDULE_NAMES = st.from_regex(r"[a-z0-9_][a-z0-9_-]{0,8}", fullmatch=True).filter(
     lambda name: name != "manual" and not name.startswith("old-")
 )
 _PATHS = st.sampled_from(("/source", "/home", "/srv/data", "/srv/backup data"))
@@ -948,9 +948,15 @@ def test_parse_config_rejects_nonstring_backup_name():
         parse_config({1: backup_config()})
 
 
-def test_parse_config_rejects_invalid_backup_name():
-    with pytest.raises(ConfigError, match="backup '1home': invalid backup name"):
-        parse_config({"1home": backup_config()})
+@pytest.mark.parametrize("name", ["1home", "_home"])
+def test_parse_config_accepts_numeric_or_underscore_backup_name(name):
+    assert parse_config({name: backup_config()}).backups[name].name == name
+
+
+@pytest.mark.parametrize("name", ["-home", "GLOBAL_SETTINGS"])
+def test_parse_config_rejects_invalid_backup_name(name):
+    with pytest.raises(ConfigError, match=rf"backup '{name}': invalid backup name"):
+        parse_config({name: backup_config()})
 
 
 def test_parse_config_rejects_nonmapping_backup_settings():
@@ -1102,9 +1108,19 @@ def test_parse_config_rejects_target_setting():
         parse_config({"home": backup_config(source=source)})
 
 
-@pytest.mark.parametrize("source", [{"backup": ""}, {"backup": None}, {"backup": 1}])
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"backup": ""},
+        {"backup": None},
+        {"backup": 1},
+        {"backup": "-local"},
+        {"backup": "global_settings"},
+        {"backup": "local.backup"},
+    ],
+)
 def test_parse_config_rejects_invalid_backup_source_name(source):
-    with pytest.raises(ConfigError, match="source backup name must be a nonempty string"):
+    with pytest.raises(ConfigError, match="invalid source backup name"):
         parse_config({"home": backup_config(source=source)})
 
 
@@ -1342,6 +1358,20 @@ def test_parse_schedules():
     )
 
 
+def test_parse_schedules_accepts_numeric_leading_name():
+    schedules, retention = parse_schedules(
+        {
+            "5minute": {
+                "cron": "*/5 * * * *",
+                "retention": {"keep-last": 288},
+            }
+        }
+    )
+
+    assert schedules[0] == Schedule("5minute", CronSchedule("*/5 * * * *"))
+    assert retention[0] == KeepLast(288, "5minute")
+
+
 def test_parse_schedules_adds_implicit_manual_schedule():
     schedules, retention = parse_schedules(
         {
@@ -1387,11 +1417,12 @@ def test_parse_schedules_accepts_keep_all():
     assert retention == (KeepAll("manual"),)
 
 
-def test_parse_schedules_reserves_manual_for_on_demand():
-    with pytest.raises(ConfigError, match="schedule 'manual' must be on-demand"):
+@pytest.mark.parametrize("name", ["manual", "MANUAL", "Manual"])
+def test_parse_schedules_reserves_manual_for_on_demand(name):
+    with pytest.raises(ConfigError, match=rf"schedule '{name}' must be on-demand"):
         parse_schedules(
             {
-                "manual": {
+                name: {
                     "cron": "30 4 * * *",
                     "retention": {"keep-last": 1},
                 }

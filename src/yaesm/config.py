@@ -235,10 +235,7 @@ def _parse_source(
     ssh: SSHTarget | None,
 ) -> DriverBase | bckp.BackupSource:
     if isinstance(value, dict) and set(value) == {"backup"}:
-        backup_name = value["backup"]
-        if not isinstance(backup_name, str) or not backup_name:
-            raise ConfigError("source backup name must be a nonempty string")
-        return bckp.BackupSource(backup_name)
+        return bckp.BackupSource(value["backup"])
     return _parse_driver(value, "source", global_settings, ssh)
 
 
@@ -366,10 +363,10 @@ def parse_schedules(
             if not schedule_name_valid(schedule_name):
                 raise ConfigError(f"invalid schedule name: {schedule_name!r}")
             schedule, retention = _parse_schedule(schedule_name, definition)
-            if schedule_name == "manual" and not isinstance(
+            if schedule_name.casefold() == "manual" and not isinstance(
                 schedule.implementation, OnDemandSchedule
             ):
-                raise ConfigError("schedule 'manual' must be on-demand")
+                raise ConfigError(f"schedule {schedule_name!r} must be on-demand")
             schedules.append(schedule)
             policies.extend(retention)
         except YaesmError as error:
