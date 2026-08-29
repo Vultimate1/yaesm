@@ -53,12 +53,14 @@ class RecordingRunner(CommandRunner):
         returncodes: ty.Iterable[int] = (),
         stdouts: ty.Iterable[str | None] = (),
         pipeline_failures: ty.Iterable[BaseException | None] = (),
+        pipeline_stdouts: ty.Iterable[str | None] = (),
     ) -> None:
         self.commands: list[tuple[str, ...]] = []
         self.pipelines: list[tuple[tuple[str, ...], ...]] = []
         self.returncodes = list(returncodes)
         self.stdouts = list(stdouts)
         self.pipeline_failures = list(pipeline_failures)
+        self.pipeline_stdouts = list(pipeline_stdouts)
 
     def run(
         self,
@@ -98,7 +100,8 @@ class RecordingRunner(CommandRunner):
             failure = self.pipeline_failures.pop(0)
             if failure is not None:
                 raise failure
-        return CommandResult(None, "", (0,) * len(pipeline))
+        stdout = self.pipeline_stdouts.pop(0) if self.pipeline_stdouts else None
+        return CommandResult(stdout, "", (0,) * len(pipeline))
 
 
 class BtrfsStateRunner(CommandRunner):
@@ -263,6 +266,7 @@ def test_cap_source(tmp_path):
         "import",
         "list",
         "delete",
+        "unchanged",
         "cleanup",
     }
     assert driver.capability_metadata("store").base == "source"
@@ -1129,6 +1133,137 @@ def test_cap_delete_rejects_different_endpoint(tmp_path):
         BtrfsDriver(tmp_path, driver_target).cap_delete((artifact,))
 
 
+@pytest.mark.parametrize(
+    ("stdout", "expected"),
+    [
+        ("snapshot ./current\nend ./current\n", True),
+        ("snapshot ./current\nupdate_extent ./current/file\nend ./current\n", False),
+        ("snapshot ./current\nunlink ./current/file\nend ./current\n", False),
+    ],
+)
+def test_cap_unchanged_uses_native_incremental_send(tmp_path, stdout, expected):
+    runner = RecordingRunner(pipeline_stdouts=(stdout,))
+    driver = with_runner(BtrfsDriver(tmp_path), runner)
+    source_uuid = UUID(int=2)
+    current = _snapshot(tmp_path / "current", uuid=UUID(int=3), source_uuid=source_uuid)
+    previous_snapshot = _snapshot(
+        tmp_path / "previous",
+        uuid=UUID(int=4),
+        source_uuid=source_uuid,
+    )
+    previous = BackupArtifact(operation(), previous_snapshot)
+
+    assert driver.cap_unchanged(current, previous) is expected
+    assert runner.pipelines == [
+        (
+            ("btrfs", "send", "--no-data", "-p", str(previous_snapshot.path), str(current.path)),
+            ("btrfs", "receive", "--dump"),
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [None, "", "\n", "update_extent ./current/file\n", "snapshot x\n"],
+)
+def test_cap_unchanged_rejects_invalid_change_stream(tmp_path, stdout):
+    source_uuid = UUID(int=2)
+    current = _snapshot(tmp_path / "current", source_uuid=source_uuid)
+    previous = BackupArtifact(
+        operation(),
+        _snapshot(tmp_path / "previous", source_uuid=source_uuid),
+    )
+
+    with pytest.raises(BtrfsDriverError, match="could not read Btrfs change stream"):
+        with_runner(
+            BtrfsDriver(tmp_path),
+            RecordingRunner(pipeline_stdouts=(stdout,)),
+        ).cap_unchanged(current, previous)
+
+
+def test_cap_unchanged_uses_matching_rolling_base(tmp_path):
+    source_target = SSHTarget("ssh://source", tmp_path / "key")
+    destination_target = SSHTarget("ssh://destination", tmp_path / "key")
+    source_uuid = UUID(int=2)
+    current = _snapshot(tmp_path / "source/current", source_target, source_uuid=UUID(int=1))
+    previous = BackupArtifact(
+        operation(),
+        _snapshot(tmp_path / "destination/previous", destination_target, source_uuid=source_uuid),
+    )
+    runner = RecordingRunner(
+        stdouts=(_snapshot_output(source_uuid),),
+        pipeline_stdouts=("snapshot ./current\nend ./current\n",),
+    )
+
+    assert (
+        with_runner(
+            BtrfsDriver(tmp_path / "destination", destination_target), runner
+        ).cap_unchanged(
+            current,
+            previous,
+        )
+        is True
+    )
+
+    base = tmp_path / "source/.yaesm-btrfs-base-example"
+    assert runner.commands == [
+        command_for_ssh(source_target, ("btrfs", "subvolume", "show", base)),
+    ]
+    assert runner.pipelines == [
+        (
+            command_for_ssh(
+                source_target,
+                ("btrfs", "send", "--no-data", "-p", base, current.path),
+            ),
+            command_for_ssh(source_target, ("btrfs", "receive", "--dump")),
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("returncode", "base_uuid"),
+    [(1, _SNAPSHOT_UUID), (0, UUID(int=2))],
+)
+def test_cap_unchanged_treats_missing_or_mismatched_rolling_base_as_changed(
+    tmp_path,
+    returncode,
+    base_uuid,
+):
+    source_target = SSHTarget("ssh://source", tmp_path / "key")
+    destination_target = SSHTarget("ssh://destination", tmp_path / "key")
+    runner = RecordingRunner((returncode,), (_snapshot_output(base_uuid),))
+    current = _snapshot(tmp_path / "source/current", source_target, source_uuid=UUID(int=1))
+    previous = BackupArtifact(
+        operation(),
+        _snapshot(
+            tmp_path / "destination/previous",
+            destination_target,
+            source_uuid=_SNAPSHOT_UUID,
+        ),
+    )
+
+    assert (
+        with_runner(
+            BtrfsDriver(tmp_path / "destination", destination_target), runner
+        ).cap_unchanged(
+            current,
+            previous,
+        )
+        is False
+    )
+    assert runner.pipelines == []
+
+
+def test_cap_unchanged_rejects_artifact_on_different_destination(tmp_path):
+    artifact_target = SSHTarget("ssh://artifact", tmp_path / "key")
+    driver_target = SSHTarget("ssh://driver", tmp_path / "key")
+    current = _snapshot(tmp_path / "current")
+    previous = BackupArtifact(operation(), _snapshot(tmp_path / "previous", artifact_target))
+
+    with pytest.raises(BtrfsDriverError, match="different SSH endpoint"):
+        BtrfsDriver(tmp_path, driver_target).cap_unchanged(current, previous)
+
+
 def test_cap_cleanup_deletes_temporary_snapshot(tmp_path):
     runner = RecordingRunner()
     snapshot = _snapshot(tmp_path / "staging")
@@ -1203,6 +1338,44 @@ def test_btrfs_send_receive_integration(btrfs_filesystem):
                     capture_output=True,
                     check=False,
                 )
+
+
+def test_btrfs_skip_unchanged_integration(btrfs_filesystem):
+    source = btrfs_filesystem / "source"
+    destination = btrfs_filesystem / "destination"
+    create = subprocess.run(
+        ("btrfs", "subvolume", "create", str(source)),
+        capture_output=True,
+        check=False,
+    )
+    if create.returncode != 0:
+        pytest.skip("Btrfs subvolumes cannot be created in the test directory")
+    destination.mkdir()
+    driver = BtrfsDriver(destination)
+    backup = Backup("example", BtrfsDriver(source), driver, skip_unchanged=True)
+    artifacts = ()
+    try:
+        (source / "content").write_text("unchanged")
+        first = backup.execute("manual", operation().created_at)
+        second = backup.execute("manual", datetime(2026, 8, 27, 12, 31))
+        artifacts = driver.cap_list("example")
+
+        assert second == first
+        assert artifacts == (first,)
+
+        (source / "content").write_text("changed content")
+        third = backup.execute("manual", datetime(2026, 8, 27, 12, 32))
+        artifacts = driver.cap_list("example")
+
+        assert third != first
+        assert artifacts == (third, first)
+    finally:
+        driver.cap_delete(artifacts)
+        subprocess.run(
+            ("btrfs", "subvolume", "delete", str(source)),
+            capture_output=True,
+            check=False,
+        )
 
 
 def test_btrfs_representation_types():

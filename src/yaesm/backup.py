@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import re
 
 import yaesm.ty as ty
@@ -11,6 +12,7 @@ from yaesm.representation import Representation
 from yaesm.schedule import schedule_name_valid
 
 _RepresentationT = ty.TypeVar("_RepresentationT", bound=Representation, covariant=True)
+logger = logging.getLogger(__name__)
 
 if ty.TYPE_CHECKING:
     from yaesm.driver.driverbase import DriverBase
@@ -111,12 +113,23 @@ class Backup:
     schedules: tuple[Schedule, ...] = ()
     retention_policies: tuple[RetentionPolicyBase, ...] = ()
     previous_names: tuple[str, ...] = ()
+    skip_unchanged: bool = False
 
     def __post_init__(self) -> None:
         from yaesm.driver.driverbase import DriverBase
 
         if not backup_name_valid(self.name):
             raise YaesmValueError(f"invalid backup name: {self.name!r}")
+        if not isinstance(self.skip_unchanged, bool):
+            raise YaesmValueError("skip_unchanged must be a boolean")
+        if (
+            self.skip_unchanged
+            and not isinstance(self.source, BackupSource)
+            and "unchanged" not in self.destination.capabilities()
+        ):
+            raise YaesmValueError(
+                f"destination driver {self.destination.name()} does not support skip_unchanged"
+            )
 
         configured_drivers = (self.destination, *self.transforms)
         if not isinstance(self.source, BackupSource):
@@ -247,6 +260,42 @@ class Backup:
             raise BackupError(
                 f"backup {self.name!r} already has artifact {operation.artifact_name!r}"
             )
+
+        if self.skip_unchanged and artifacts:
+            if source_artifact is not None:
+                unchanged = source_artifact_id == self.destination.source_artifact_id(artifacts[0])
+            else:
+                temporary = None
+                try:
+                    source_state = source_driver.cap_source()
+                    if "snapshot" in source_driver.capabilities():
+                        source_state = temporary = source_driver.cap_snapshot(source_state)
+                    unchanged = self.destination.cap_unchanged(
+                        source_state,
+                        artifacts[0],
+                    )
+                except YaesmError as error:
+                    logger.warning(
+                        "backup %r: could not determine whether source changed; continuing: %s",
+                        self.name,
+                        error.format(),
+                    )
+                    unchanged = False
+                finally:
+                    if temporary is not None:
+                        try:
+                            source_driver.cap_cleanup(temporary)
+                        except YaesmError as error:
+                            logger.warning(
+                                "backup %r: could not clean up change-detection snapshot; "
+                                "continuing: %s",
+                                self.name,
+                                error.format(),
+                            )
+                            unchanged = False
+            if unchanged:
+                logger.info("backup %r: source unchanged; skipped", self.name)
+                return artifacts[0]
 
         base = None
         if artifacts:

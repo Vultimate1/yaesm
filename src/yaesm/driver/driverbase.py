@@ -88,6 +88,7 @@ class DriverBase(abc.ABC):
     - ``cap_encrypt``: encrypt a byte stream.
     - ``cap_list``: list stored backup artifacts.
     - ``cap_delete``: delete stored backup artifacts.
+    - ``cap_unchanged``: determine whether source matches the previous artifact.
     - ``cap_cleanup``: remove a temporary representation.
     """
 
@@ -315,6 +316,15 @@ class DriverBase(abc.ABC):
     ) -> None:
         """Delete stored backup artifacts."""
         raise NotImplementedError(f"{self.name()} driver does not provide the delete capability")
+
+    @capability("unchanged", pipeline=False)
+    def cap_unchanged(
+        self,
+        source: Representation,
+        previous: bckp.BackupArtifact[Representation],
+    ) -> bool:
+        """Return whether source matches the previous stored artifact."""
+        raise NotImplementedError(f"{self.name()} driver does not provide the unchanged capability")
 
     @capability("cleanup", pipeline=False)
     def cap_cleanup(self, representation: Representation) -> None:

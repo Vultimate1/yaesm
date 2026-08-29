@@ -28,6 +28,23 @@ class SourceDriver(DriverBase):
         return Representation()
 
 
+class SnapshotSourceDriver(SourceDriver):
+    def __init__(self, *, cleanup_failure: bool = False) -> None:
+        super().__init__()
+        self.snapshot = Representation()
+        self.cleaned: Representation | None = None
+        self.cleanup_failure = cleanup_failure
+
+    def cap_snapshot(self, source: Representation) -> Representation:
+        return self.snapshot
+
+    def cap_cleanup(self, representation: Representation) -> None:
+        if self.cleanup_failure:
+            self.cleanup_failure = False
+            raise DriverError("cleanup failed")
+        self.cleaned = representation
+
+
 class DestinationDriver(DriverBase):
     def __init__(
         self,
@@ -111,6 +128,30 @@ class ArtifactDriver(DestinationDriver):
             source_base,
             destination_base,
         )
+
+
+class UnchangedDestinationDriver(DestinationDriver):
+    def __init__(
+        self,
+        artifacts: ty.Sequence[bckp.BackupArtifact] = (),
+        *,
+        unchanged: bool = False,
+        comparison_failure: bool = False,
+    ) -> None:
+        super().__init__(artifacts)
+        self.unchanged = unchanged
+        self.comparison_failure = comparison_failure
+        self.compared: tuple[Representation, bckp.BackupArtifact] | None = None
+
+    def cap_unchanged(
+        self,
+        source: Representation,
+        previous: bckp.BackupArtifact[Representation],
+    ) -> bool:
+        if self.comparison_failure:
+            raise DriverError("comparison failed")
+        self.compared = (source, previous)
+        return self.unchanged
 
 
 class IdentifiedArtifactDriver(ArtifactDriver):
@@ -209,6 +250,7 @@ def test_backup_has_composable_settings():
         "schedules": schedules,
         "retention_policies": retention_policies,
         "previous_names": (),
+        "skip_unchanged": False,
     }
 
 
@@ -598,6 +640,99 @@ def test_backup_execute_without_retention_does_not_delete():
     assert destination.deleted is None
 
 
+def test_backup_execute_skips_unchanged_artifact():
+    previous = artifact("hourly", 11)
+    older = artifact("hourly", 10)
+    destination = UnchangedDestinationDriver((previous, older), unchanged=True)
+    backup = bckp.Backup(
+        "home",
+        SourceDriver(),
+        destination,
+        retention_policies=(KeepLast(1),),
+        skip_unchanged=True,
+    )
+
+    result = backup.execute("hourly", datetime(2026, 8, 27, 12))
+
+    assert result == previous
+    assert destination.compared is not None
+    assert destination.compared[1] == previous
+    assert destination.source is None
+    assert destination.deleted is None
+
+
+def test_backup_execute_keeps_changed_artifact():
+    previous = artifact("hourly", 11)
+    destination = UnchangedDestinationDriver((previous,))
+    backup = bckp.Backup("home", SourceDriver(), destination, skip_unchanged=True)
+
+    result = backup.execute("hourly", datetime(2026, 8, 27, 12))
+
+    assert destination.compared is not None
+    assert result.operation.created_at == datetime(2026, 8, 27, 12)
+    assert destination.compared[1] == previous
+    assert destination.deleted is None
+
+
+def test_backup_execute_without_previous_artifact_does_not_compare():
+    destination = UnchangedDestinationDriver(unchanged=True)
+    backup = bckp.Backup("home", SourceDriver(), destination, skip_unchanged=True)
+
+    backup.execute("hourly", datetime(2026, 8, 27, 12))
+
+    assert destination.compared is None
+
+
+def test_backup_execute_compares_temporary_source_snapshot():
+    previous = artifact("hourly", 11)
+    source = SnapshotSourceDriver()
+    destination = UnchangedDestinationDriver((previous,), unchanged=True)
+    backup = bckp.Backup("home", source, destination, skip_unchanged=True)
+
+    backup.execute("hourly", datetime(2026, 8, 27, 12))
+
+    assert destination.compared is not None
+    assert destination.compared[0] is source.snapshot
+    assert source.cleaned is source.snapshot
+
+
+def test_backup_execute_continues_when_comparison_snapshot_cleanup_fails(caplog):
+    previous = artifact("hourly", 11)
+    source = SnapshotSourceDriver(cleanup_failure=True)
+    destination = UnchangedDestinationDriver((previous,), unchanged=True)
+    backup = bckp.Backup("home", source, destination, skip_unchanged=True)
+
+    result = backup.execute("hourly", datetime(2026, 8, 27, 12))
+
+    assert result.operation.created_at == datetime(2026, 8, 27, 12)
+    assert "could not clean up change-detection snapshot" in caplog.text
+
+
+def test_backup_execute_keeps_artifact_when_comparison_fails(caplog):
+    previous = artifact("hourly", 11)
+    destination = UnchangedDestinationDriver((previous,), comparison_failure=True)
+    backup = bckp.Backup("home", SourceDriver(), destination, skip_unchanged=True)
+
+    result = backup.execute("hourly", datetime(2026, 8, 27, 12))
+
+    assert result.operation.created_at == datetime(2026, 8, 27, 12)
+    assert destination.deleted is None
+    assert "could not determine whether source changed" in caplog.text
+
+
+def test_backup_rejects_skip_unchanged_for_unsupported_destination():
+    with pytest.raises(
+        YaesmValueError,
+        match="destination driver destination does not support skip_unchanged",
+    ):
+        bckp.Backup(
+            "home",
+            SourceDriver(),
+            DestinationDriver(),
+            skip_unchanged=True,
+        )
+
+
 def test_backup_execute_rejects_existing_artifact():
     existing = artifact("hourly", 12)
     destination = DestinationDriver((existing,))
@@ -674,6 +809,38 @@ def test_backup_execute_does_not_replicate_same_artifact_twice():
     )
 
     assert result == existing
+    assert source_driver.export_call is None
+    assert destination.call is None
+
+
+def test_backup_execute_skips_unchanged_replication_across_schedules():
+    source_artifact = artifact("hourly", 12, "local")
+    source_driver = ArtifactDriver((source_artifact,))
+    source_backup = bckp.Backup("local", SourceDriver(), source_driver)
+    previous = bckp.BackupArtifact(
+        bckp.BackupOperation(
+            "offsite",
+            "weekly",
+            source_artifact.operation.created_at,
+            source_artifact.name,
+        ),
+        ByteStream(),
+    )
+    destination = StreamDestinationDriver((previous,))
+    backup = bckp.Backup(
+        "offsite",
+        bckp.BackupSource("local"),
+        destination,
+        skip_unchanged=True,
+    )
+
+    result = backup.execute(
+        "daily",
+        datetime(2026, 8, 27, 13),
+        {"local": source_backup},
+    )
+
+    assert result == previous
     assert source_driver.export_call is None
     assert destination.call is None
 

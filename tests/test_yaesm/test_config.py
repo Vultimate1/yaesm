@@ -279,6 +279,9 @@ def valid_backup_definitions(draw, name, ssh, previous_backups):
         **({"previous_names": previous_names} if previous_names else {}),
         **({"ssh": ssh} if use_ssh else {}),
     }
+    if draw(st.booleans()):
+        supported = "backup" in source or destination_name in {"btrfs", "zfs"}
+        definition["skip_unchanged"] = draw(st.booleans()) if supported else False
     schedules = draw(schedule_definitions())
     if schedules is not None:
         definition["schedules"] = schedules
@@ -306,6 +309,8 @@ _INVALID_MUTATION_NAMES = (
     "missing-destination",
     "missing-source-and-destination",
     "unknown-setting",
+    "invalid-skip-unchanged",
+    "unsupported-skip-unchanged",
     "invalid-previous-names",
     "invalid-ssh",
     "empty-source-selection",
@@ -354,6 +359,13 @@ def invalidate_backup(config, mutation):
         case "unknown-setting":
             config["unexpected"] = True
             return config, "unknown settings: unexpected"
+        case "invalid-skip-unchanged":
+            config["skip_unchanged"] = "yes"
+            return config, "skip_unchanged must be a boolean"
+        case "unsupported-skip-unchanged":
+            config["skip_unchanged"] = True
+            config["destination"] = {"tar": "/destination"}
+            return config, "destination driver tar does not support skip_unchanged"
         case "invalid-previous-names":
             config["previous_names"] = "old-home"
             return config, "previous_names must be a list"
@@ -583,6 +595,34 @@ def test_parse_config_builds_previous_name_lookup():
         "home": backup,
         "old-home": backup,
     }
+
+
+def test_parse_config_accepts_skip_unchanged():
+    backup = parse_config({"home": backup_config(skip_unchanged=True)}).backups["home"]
+
+    assert backup.skip_unchanged is True
+
+
+@pytest.mark.parametrize("value", [None, 1, "yes", []])
+def test_parse_config_rejects_nonboolean_skip_unchanged(value):
+    with pytest.raises(ConfigError, match="skip_unchanged must be a boolean"):
+        parse_config({"home": backup_config(skip_unchanged=value)})
+
+
+@pytest.mark.parametrize("driver", ["rsync", "tar"])
+def test_parse_config_rejects_skip_unchanged_for_unsupported_driver(driver):
+    with pytest.raises(
+        ConfigError,
+        match=rf"destination driver {driver} does not support skip_unchanged",
+    ):
+        parse_config(
+            {
+                "home": backup_config(
+                    destination={driver: "/destination"},
+                    skip_unchanged=True,
+                )
+            }
+        )
 
 
 @pytest.mark.parametrize(
@@ -835,6 +875,7 @@ def test_generated_valid_configs_parse(value):
     for name, backup in parsed.backups.items():
         definition = value[name]
         assert backup.previous_names == tuple(definition.get("previous_names", ()))
+        assert backup.skip_unchanged is definition.get("skip_unchanged", False)
 
         configured_drivers = [(definition["destination"], backup.destination)]
         if isinstance(backup.source, bckp.BackupSource):

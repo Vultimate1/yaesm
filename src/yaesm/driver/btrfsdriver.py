@@ -343,6 +343,55 @@ class BtrfsDriver(DriverBase):
             raise BtrfsDriverError("Btrfs artifact uses a different SSH endpoint")
         self._delete(snapshots)
 
+    def cap_unchanged(
+        self,
+        source: Representation,
+        previous: bckp.BackupArtifact[Representation],
+    ) -> bool:
+        current_snapshot = ty.cast(BtrfsSnapshot, source)
+        previous_snapshot = ty.cast(BtrfsSnapshot, previous.representation)
+        if not same_endpoint(previous_snapshot.ssh, self.ssh):
+            raise BtrfsDriverError("Btrfs artifact uses a different SSH endpoint")
+
+        base = previous_snapshot
+        if not (
+            same_endpoint(current_snapshot.ssh, previous_snapshot.ssh)
+            and current_snapshot.source_uuid is not None
+            and current_snapshot.source_uuid == previous_snapshot.source_uuid
+        ):
+            source = BtrfsSubvolume(current_snapshot.path.parent, current_snapshot.ssh)
+            names = (
+                previous.operation.backup_name,
+                *previous.operation.previous_backup_names,
+            )
+            base = next(
+                (
+                    snapshot
+                    for snapshot in self._named_snapshots(source, names, self._base_name)
+                    if snapshot.uuid == previous_snapshot.source_uuid
+                ),
+                None,
+            )
+            if base is None:
+                return False
+
+        result = self.runner.pipeline(
+            (
+                CommandStage(
+                    ("btrfs", "send", "--no-data", "-p", base.path, current_snapshot.path),
+                    current_snapshot.ssh,
+                ),
+                CommandStage(("btrfs", "receive", "--dump"), current_snapshot.ssh),
+            ),
+            capture_output=True,
+        )
+        commands = tuple(
+            line.split(maxsplit=1)[0] for line in (result.stdout or "").splitlines() if line.strip()
+        )
+        if not commands or commands[0] != "snapshot" or commands[-1] != "end":
+            raise BtrfsDriverError("could not read Btrfs change stream")
+        return all(command in {"snapshot", "end"} for command in commands)
+
     def cap_cleanup(self, representation: BtrfsSnapshot) -> None:
         self._delete((representation,))
 

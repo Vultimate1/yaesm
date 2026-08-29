@@ -451,6 +451,35 @@ class ZFSDriver(DriverBase):
             raise ZFSDriverError("ZFS artifact does not belong to the destination dataset")
         self._destroy(snapshots)
 
+    def cap_unchanged(
+        self,
+        source: Representation,
+        previous: bckp.BackupArtifact[Representation],
+    ) -> bool:
+        current_snapshot = ty.cast(ZFSSnapshot, source)
+        previous_snapshot = ty.cast(ZFSSnapshot, previous.representation)
+        if not self._owns(previous_snapshot):
+            raise ZFSDriverError("ZFS artifact does not belong to the destination dataset")
+        source_base = ZFSSnapshot(
+            current_snapshot.dataset,
+            previous_snapshot.snapshot,
+            current_snapshot.ssh,
+            current_snapshot.encrypted,
+        )
+        if self._snapshot_guid(source_base) != self._snapshot_guid(previous_snapshot):
+            raise ZFSDriverError(
+                f"ZFS snapshots have different GUIDs: {source_base.name} and "
+                f"{previous_snapshot.name}"
+            )
+        result = self.runner.run(
+            command_for_ssh(
+                current_snapshot.ssh,
+                ("zfs", "diff", "-H", source_base.name, current_snapshot.name),
+            ),
+            capture_output=True,
+        )
+        return not bool((result.stdout or "").strip())
+
     def cap_cleanup(self, representation: ZFSSnapshot) -> None:
         self._destroy((representation,))
 

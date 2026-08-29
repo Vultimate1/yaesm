@@ -143,7 +143,13 @@ def _parse_backup(
 
     messages = []
     required = {"source", "destination"}
-    allowed = required | {"previous_names", "schedules", "ssh", "transforms"}
+    allowed = required | {
+        "previous_names",
+        "schedules",
+        "skip_unchanged",
+        "ssh",
+        "transforms",
+    }
     if missing := sorted(required - value.keys()):
         messages.append(f"missing required settings: {', '.join(missing)}")
     if unknown := sorted(value.keys() - allowed, key=str):
@@ -200,6 +206,10 @@ def _parse_backup(
         schedules = ()
         retention = ()
 
+    skip_unchanged = value.get("skip_unchanged", False)
+    if not isinstance(skip_unchanged, bool):
+        messages.append("skip_unchanged must be a boolean")
+
     if messages:
         raise ConfigError(messages)
     assert source is not None and destination is not None
@@ -211,6 +221,7 @@ def _parse_backup(
         schedules,
         retention,
         previous_names=previous_names,
+        skip_unchanged=skip_unchanged,
     )
 
     if isinstance(source, DriverBase):

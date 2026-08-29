@@ -79,6 +79,13 @@ class AllCapabilitiesDriver(DriverBase):
     ) -> None:
         pass
 
+    def cap_unchanged(
+        self,
+        source: Representation,
+        previous: bckp.BackupArtifact[Representation],
+    ) -> bool:
+        return source == previous.representation
+
     def cap_cleanup(self, representation: Representation) -> None:
         pass
 
@@ -162,12 +169,15 @@ def test_capabilities_are_advertised_by_defining_methods():
         "encrypt",
         "list",
         "delete",
+        "unchanged",
         "cleanup",
     }
 
 
 def test_lifecycle_capabilities_are_excluded_from_pipelines():
-    assert {"list", "delete", "cleanup"}.isdisjoint(AllCapabilitiesDriver.pipeline_capabilities())
+    assert {"list", "delete", "unchanged", "cleanup"}.isdisjoint(
+        AllCapabilitiesDriver.pipeline_capabilities()
+    )
 
 
 def test_driver_without_capabilities_advertises_none():
@@ -233,6 +243,7 @@ def test_incremental_bases_can_be_approved():
         "encrypt",
         "list",
         "delete",
+        "unchanged",
         "cleanup",
     ],
 )
@@ -246,6 +257,9 @@ def test_unsupported_capability_error_names_driver(capability):
         args = ("name",)
     elif capability == "delete":
         args = ((),)
+    elif capability == "unchanged":
+        artifact = bckp.BackupArtifact(operation, Representation())
+        args = (Representation(), artifact)
     elif capability in {"store", "import"}:
         args = (Representation(), operation)
     else:

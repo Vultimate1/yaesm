@@ -946,6 +946,60 @@ def test_cap_delete_rejects_snapshot_outside_destination(snapshot):
         ZFSDriver("backup/home").cap_delete((artifact,))
 
 
+@pytest.mark.parametrize(("stdout", "expected"), [("", True), ("M\t/content\n", False)])
+def test_cap_unchanged_compares_source_snapshots(stdout, expected):
+    runner = RecordingRunner(stdouts=("42", stdout))
+    driver = with_runner(ZFSDriver("backup/home"), runner)
+    source = ZFSSnapshot("tank/home", "current")
+    previous = BackupArtifact(
+        operation(11),
+        ZFSSnapshot("backup/home", operation(11).artifact_name, guid=42),
+    )
+
+    assert driver.cap_unchanged(source, previous) is expected
+
+    assert runner.commands == [
+        (
+            "zfs",
+            "get",
+            "-H",
+            "-o",
+            "value",
+            "guid",
+            f"tank/home@{operation(11).artifact_name}",
+        ),
+        (
+            "zfs",
+            "diff",
+            "-H",
+            f"tank/home@{operation(11).artifact_name}",
+            "tank/home@current",
+        ),
+    ]
+
+
+def test_cap_unchanged_rejects_mismatched_snapshot_guid():
+    runner = RecordingRunner(stdouts=("41",))
+    source = ZFSSnapshot("tank/home", "current")
+    previous = BackupArtifact(
+        operation(11),
+        ZFSSnapshot("backup/home", operation(11).artifact_name, guid=42),
+    )
+
+    with pytest.raises(ZFSDriverError, match="snapshots have different GUIDs"):
+        with_runner(ZFSDriver("backup/home"), runner).cap_unchanged(source, previous)
+
+    assert all("diff" not in command for command in runner.commands)
+
+
+def test_cap_unchanged_rejects_artifact_outside_destination():
+    source = ZFSSnapshot("tank/home", "current")
+    previous = BackupArtifact(operation(), ZFSSnapshot("other/home", "previous"))
+
+    with pytest.raises(ZFSDriverError, match="does not belong to the destination"):
+        ZFSDriver("backup/home").cap_unchanged(source, previous)
+
+
 def test_cap_cleanup_destroys_snapshot():
     runner = RecordingRunner()
 
@@ -1094,6 +1148,39 @@ def test_zfs_full_incremental_and_lifecycle(
 
     destination_driver.cap_delete((first, second))
     assert destination_driver.cap_list("example") == ()
+
+
+def test_zfs_skip_unchanged_integration(
+    tmp_path: ty.Path,
+    zfs_pools: tuple[str, str],
+) -> None:
+    source_pool, destination_pool = zfs_pools
+    source_dataset = f"{source_pool}/source"
+    destination_dataset = f"{destination_pool}/backup"
+    source_path = tmp_path / "source"
+    _run("zfs", "create", "-o", f"mountpoint={source_path}", source_dataset)
+
+    destination_driver = ZFSDriver(destination_dataset)
+    backup = Backup(
+        "example",
+        ZFSDriver(source_dataset),
+        destination_driver,
+        skip_unchanged=True,
+    )
+    created_at = datetime(2026, 8, 27, 12, 30)
+    (source_path / "content").write_text("unchanged")
+
+    first = backup.execute("manual", created_at)
+    second = backup.execute("manual", created_at + timedelta(minutes=1))
+
+    assert second == first
+    assert destination_driver.cap_list("example") == (first,)
+
+    (source_path / "content").write_text("changed content")
+    third = backup.execute("manual", created_at + timedelta(minutes=2))
+
+    assert third != first
+    assert destination_driver.cap_list("example") == (third, first)
 
 
 def test_zfs_checks_existing_source_and_new_destination(

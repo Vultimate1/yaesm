@@ -714,6 +714,10 @@ def test_cap_delete_rejects_different_endpoint(tmp_path):
         RsyncDriver(tmp_path, driver_target).cap_delete((artifact,))
 
 
+def test_rsync_does_not_support_unchanged(tmp_path):
+    assert "unchanged" not in RsyncDriver(tmp_path).capabilities()
+
+
 def test_pipeline_uses_rsync_store(tmp_path):
     source = RsyncDriver(tmp_path / "source")
     destination = RsyncDriver(tmp_path / "destination")
