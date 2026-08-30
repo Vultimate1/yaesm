@@ -1611,6 +1611,35 @@ def test_parse_config_rejects_invalid_ssh_target(ssh):
         parse_config({"home": backup_config(ssh=ssh)})
 
 
+def test_invalid_ssh_stops_backup_validation():
+    definition = backup_config(
+        ssh={},
+        source={"btrfs": "/source", "remote": True},
+        destination={"btrfs": "/destination", "remote": True},
+        transforms=[{"zstd": {}, "remote": True}],
+    )
+
+    with pytest.raises(ConfigError) as error:
+        parse_config({"home": definition})
+
+    assert len(error.value.messages) == 1
+    assert "invalid SSH configuration" in error.value.messages[0]
+    assert "remote requires backup SSH configuration" not in error.value.format()
+
+
+def test_invalid_backup_suppresses_dependent_group_errors():
+    value = {
+        "home": backup_config(ssh={}),
+        "local": {"group": ["home"]},
+    }
+
+    with pytest.raises(ConfigError) as error:
+        parse_config(value)
+
+    assert "invalid SSH configuration" in error.value.format()
+    assert "references unknown target" not in error.value.format()
+
+
 @pytest.mark.parametrize(
     ("setting", "value"),
     [

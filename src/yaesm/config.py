@@ -256,22 +256,25 @@ def parse_config(value: object) -> Config:
         except YaesmError as error:
             _collect_messages(messages, error, f"{kind} {name!r}: ")
 
-    config = None
-    try:
-        config = Config(global_settings, backups, groups)
-    except ConfigError as error:
-        messages.extend(error.messages)
     if not backup_names:
         messages.append("at least one backup is required")
-    try:
-        _validate_backup_sources(
-            backups,
-            backup_names,
-            group_names,
-            {} if config is None else config.backups_by_name,
-        )
-    except ConfigError as error:
-        messages.extend(error.messages)
+
+    config = None
+    if not messages:
+        try:
+            config = Config(global_settings, backups, groups)
+        except ConfigError as error:
+            messages.extend(error.messages)
+    if config is not None:
+        try:
+            _validate_backup_sources(
+                backups,
+                backup_names,
+                group_names,
+                config.backups_by_name,
+            )
+        except ConfigError as error:
+            messages.extend(error.messages)
     if messages:
         raise ConfigError(messages)
     assert config is not None
@@ -366,6 +369,7 @@ def _parse_backup(
             ssh = SSHTarget.from_config(value["ssh"], ssh_defaults)
         except SSHTargetError as error:
             messages.append(error.format())
+            raise ConfigError(messages) from error
 
     source = None
     if "source" in value:
