@@ -5,10 +5,13 @@ from unittest import mock
 
 import pytest
 
+import yaesm.command as command_module
 import yaesm.subcommand.checksubcommand as check_module
 from yaesm.backup import Backup, BackupSource
 from yaesm.check import Check, CheckResult, CheckRole
+from yaesm.command import CommandResult
 from yaesm.config import Config
+from yaesm.driver.btrfsdriver import BtrfsDriver
 from yaesm.errors import YaesmError
 from yaesm.ssh import SSHTarget
 from yaesm.subcommand.checksubcommand import CheckError, CheckSubcommand
@@ -120,6 +123,72 @@ def test_check_assigns_driver_roles():
     source.check.assert_called_once_with(CheckRole.SOURCE)
     transform.check.assert_called_once_with(CheckRole.TRANSFORM)
     destination.check.assert_called_once_with(CheckRole.DESTINATION)
+
+
+def test_identical_checks_run_and_print_once(monkeypatch, capsys):
+    run = mock.Mock(return_value=CommandResult(None, "", (0,)))
+    monkeypatch.setattr(command_module, "run", run)
+    source = mock.Mock()
+    source.check.return_value = (Check.command("btrfs is installed", ("btrfs", "--version")),)
+    destination = mock.Mock()
+    destination.check.return_value = (Check.command("btrfs is installed", ("btrfs", "--version")),)
+    backup = configured_backup("home", source, destination)
+
+    assert CheckSubcommand().main(Config({}, {"home": backup}), arguments()) == 0
+
+    run.assert_called_once_with(("btrfs", "--version"), capture_output=True, check=False)
+    assert capsys.readouterr().out == ("backup: home\n    PASS  btrfs is installed\n")
+
+
+def test_remote_btrfs_prerequisite_is_checked_once(tmp_path):
+    target = SSHTarget("ssh://server", tmp_path / "key")
+    backup = Backup(
+        "home",
+        BtrfsDriver(tmp_path / "source", target),
+        BtrfsDriver(tmp_path / "destination", target),
+    )
+    checks = CheckSubcommand._unique_checks(CheckSubcommand._backup_checks(backup, {}))
+
+    assert (
+        tuple(check.description for check in checks).count(f"btrfs is installed on {target}") == 1
+    )
+
+
+def test_remote_endpoints_have_distinct_check_descriptions(tmp_path):
+    first = Check.command(
+        "btrfs is installed",
+        ("btrfs", "--version"),
+        ssh=SSHTarget("ssh://first", tmp_path / "key"),
+    )
+    second = Check.command(
+        "btrfs is installed",
+        ("btrfs", "--version"),
+        ssh=SSHTarget("ssh://second", tmp_path / "key"),
+    )
+
+    assert CheckSubcommand._unique_checks((first, second)) == (first, second)
+
+
+def test_check_rejects_one_description_for_different_checks():
+    source = mock.Mock()
+    source.check.return_value = (Check.command("storage is ready", ("first",)),)
+    destination = mock.Mock()
+    destination.check.return_value = (Check.command("storage is ready", ("second",)),)
+    backup = configured_backup("home", source, destination)
+
+    with pytest.raises(CheckError, match="ambiguous check description: 'storage is ready'"):
+        CheckSubcommand().main(Config({}, {"home": backup}), arguments("-q"))
+
+
+def test_check_rejects_different_descriptions_for_one_check():
+    source = mock.Mock()
+    source.check.return_value = (Check.command("first description", ("tool",)),)
+    destination = mock.Mock()
+    destination.check.return_value = (Check.command("second description", ("tool",)),)
+    backup = configured_backup("home", source, destination)
+
+    with pytest.raises(CheckError, match="check has conflicting descriptions"):
+        CheckSubcommand().main(Config({}, {"home": backup}), arguments("-q"))
 
 
 def test_replication_checks_source_backup_destination():

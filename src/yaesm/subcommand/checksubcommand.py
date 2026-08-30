@@ -27,7 +27,7 @@ class CheckSubcommand(SubcommandBase):
         for backup in backups:
             if not arguments.quiet:
                 print(f"backup: {backup.name}", flush=True)
-            checks = self._backup_checks(backup, config.backups_by_name)
+            checks = self._unique_checks(self._backup_checks(backup, config.backups_by_name))
             ssh_connections = tuple(
                 dict.fromkeys(check.ssh for check in checks if check.ssh is not None)
             )
@@ -99,6 +99,22 @@ class CheckSubcommand(SubcommandBase):
             ),
             *backup.destination.check(CheckRole.DESTINATION),
         )
+
+    @staticmethod
+    def _unique_checks(checks: ty.Iterable[Check]) -> tuple[Check, ...]:
+        unique: dict[Check, Check] = {}
+        descriptions: dict[str, Check] = {}
+        for check in checks:
+            if check.description in descriptions and descriptions[check.description] != check:
+                raise CheckError(f"ambiguous check description: {check.description!r}")
+            if check in unique and unique[check].description != check.description:
+                raise CheckError(
+                    f"check has conflicting descriptions: "
+                    f"{unique[check].description!r} and {check.description!r}"
+                )
+            descriptions.setdefault(check.description, check)
+            unique.setdefault(check, check)
+        return tuple(unique)
 
     @staticmethod
     def _print_result(result: CheckResult) -> None:

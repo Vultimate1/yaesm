@@ -61,6 +61,82 @@ def test_check_is_deferred_and_returns_its_result():
     assert calls == [True]
 
 
+def test_direct_checks_have_unique_identities():
+    def function():
+        return CheckResult("tool works")
+
+    assert Check("tool works", function) != Check("tool works", function)
+
+
+def test_equivalent_command_checks_compare_equal():
+    first = Check.command("first description", ("tool", "argument"))
+    second = Check.command("second description", ("tool", "argument"))
+
+    assert first == second
+    assert hash(first) == hash(second)
+
+
+def test_command_check_identity_includes_all_behavior(tmp_path):
+    def validate(_result):
+        return None
+
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    first = Check.command(
+        "tool works",
+        ("tool", "argument"),
+        failure_message="failed",
+        validate=validate,
+    )
+
+    assert first != Check.command(
+        "tool works",
+        ("other", "argument"),
+        failure_message="failed",
+        validate=validate,
+    )
+    assert first != Check.command(
+        "tool works",
+        ("tool", "argument"),
+        failure_message="different failure",
+        validate=validate,
+    )
+    assert first != Check.command(
+        "tool works",
+        ("tool", "argument"),
+        failure_message="failed",
+        validate=lambda result: None,
+    )
+    assert first != Check.command(
+        "tool works",
+        ("tool", "argument"),
+        ssh=target,
+        failure_message="failed",
+        validate=validate,
+    )
+
+    remote = Check.command(
+        "tool works",
+        ("tool", "argument"),
+        ssh=target,
+        failure_message="failed",
+        validate=validate,
+    )
+    assert remote == Check.command(
+        "tool works",
+        ("tool", "argument"),
+        ssh=SSHTarget("ssh://host", tmp_path / "key"),
+        failure_message="failed",
+        validate=validate,
+    )
+    assert remote != Check.command(
+        "tool works",
+        ("tool", "argument"),
+        ssh=SSHTarget("ssh://other", tmp_path / "key"),
+        failure_message="failed",
+        validate=validate,
+    )
+
+
 def test_command_check_is_deferred_and_captures_output(tmp_path, monkeypatch):
     calls = []
 

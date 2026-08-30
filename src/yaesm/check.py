@@ -43,9 +43,10 @@ class CheckResult:
 class Check:
     """A named feasibility check that can be run later."""
 
-    description: str
-    function: ty.Callable[[], CheckResult]
-    ssh: SSHTarget | None = None
+    description: str = dataclasses.field(compare=False)
+    function: ty.Callable[[], CheckResult] = dataclasses.field(compare=False, repr=False)
+    ssh: SSHTarget | None = dataclasses.field(default=None, compare=False)
+    _identity: object = dataclasses.field(default_factory=object, repr=False, kw_only=True)
 
     @classmethod
     def command(
@@ -90,7 +91,12 @@ class Check:
                 result.stderr or None,
             )
 
-        return cls(description, run, ssh)
+        return cls(
+            description,
+            run,
+            ssh,
+            _identity=("command", execution_command, failure_message, id(validate)),
+        )
 
     def run(self) -> CheckResult:
         """Run the check and return its result."""
