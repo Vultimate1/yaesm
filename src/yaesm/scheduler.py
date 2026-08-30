@@ -29,6 +29,7 @@ if ty.TYPE_CHECKING:
     from yaesm.config import Config
 
 logger = logging.getLogger(__name__)
+_backend_logger = logging.getLogger(f"{__name__}.backend")
 
 
 def _positive_integer(value: object) -> int:
@@ -87,6 +88,7 @@ class Scheduler:
         self._scheduler = BlockingScheduler(
             executors={"default": ThreadPoolExecutor(max_workers=max_workers)},
             job_defaults={"max_instances": 1},
+            logger=_backend_logger,
         )
         self.replace_config(config)
 

@@ -3,11 +3,14 @@
 import logging
 import queue
 from datetime import datetime, timezone
+from threading import Event
 from unittest import mock
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import pytest
+from apscheduler.events import EVENT_JOB_MAX_INSTANCES
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
@@ -54,7 +57,47 @@ def test_scheduler_configures_max_concurrent_backups(monkeypatch, workers):
     scheduler_constructor.assert_called_once_with(
         executors={"default": executor},
         job_defaults={"max_instances": 1},
+        logger=scheduler_module._backend_logger,
     )
+
+
+def test_scheduler_logs_overlapping_job_skip(monkeypatch, caplog):
+    monkeypatch.setattr(scheduler_module, "BlockingScheduler", BackgroundScheduler)
+    config, _backup = configured_backup()
+    started = Event()
+    release = Event()
+    skipped = Event()
+
+    def execute_backup(*_args):
+        started.set()
+        assert release.wait(5)
+        return mock.Mock()
+
+    execute = mock.Mock(side_effect=execute_backup)
+    monkeypatch.setattr(Backup, "execute", execute)
+    scheduler = Scheduler(config)
+    implementation = scheduler._scheduler
+    implementation.reschedule_job("home:hourly:0", trigger="interval", seconds=0.05)
+
+    def skipped_listener(event):
+        implementation.pause_job(event.job_id)
+        skipped.set()
+
+    implementation.add_listener(skipped_listener, EVENT_JOB_MAX_INSTANCES)
+    with caplog.at_level(logging.WARNING):
+        scheduler.start()
+        try:
+            assert started.wait(5)
+            assert skipped.wait(5)
+        finally:
+            release.set()
+            implementation.shutdown(wait=True)
+
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert warnings[0].name == "yaesm.scheduler.backend"
+    assert "skipped: maximum number of running instances reached (1)" in warnings[0].getMessage()
+    assert execute.call_count == 1
 
 
 def test_scheduler_adds_timer_jobs():
@@ -160,7 +203,9 @@ def test_scheduler_enqueues_backup(monkeypatch, caplog):
         "type": "log",
         "message": "backup 'home' (manual) queued",
     }
-    assert caplog.messages == ["backup 'home' (manual) queued"]
+    assert [
+        record.getMessage() for record in caplog.records if record.name == "yaesm.scheduler"
+    ] == ["backup 'home' (manual) queued"]
 
 
 def test_scheduler_accepts_previous_backup_and_schedule_names():

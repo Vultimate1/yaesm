@@ -37,6 +37,37 @@ def test_configure_defaults_to_info():
     assert basic_config.call_args.kwargs["level"] == logging.INFO
 
 
+def test_configure_reports_logger_names_under_yaesm_namespace():
+    with (
+        mock.patch.object(logging, "basicConfig"),
+        mock.patch.object(logging, "setLogRecordFactory") as set_record_factory,
+    ):
+        configure()
+
+    factory = set_record_factory.call_args.args[0]
+    external = factory(
+        "apscheduler.scheduler",
+        logging.WARNING,
+        "",
+        0,
+        "message",
+        (),
+        None,
+    )
+    internal = factory(
+        "yaesm.scheduler",
+        logging.WARNING,
+        "",
+        0,
+        "message",
+        (),
+        None,
+    )
+
+    assert external.name == "yaesm.apscheduler.scheduler"
+    assert internal.name == "yaesm.scheduler"
+
+
 def test_configure_formats_interactive_stderr():
     with mock.patch.object(logging, "basicConfig") as basic_config:
         configure(message_only_stderr=True)

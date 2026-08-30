@@ -10,12 +10,23 @@ import logging.handlers
 from pathlib import Path
 from uuid import UUID
 
+import yaesm.ty as ty
+
 request_id: contextvars.ContextVar[UUID | None] = contextvars.ContextVar(
     "yaesm_request_id", default=None
 )
 current_backup: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "yaesm_current_backup", default=None
 )
+_record_factory = logging.getLogRecordFactory()
+
+
+def _yaesm_record_factory(*args: ty.Any, **kwargs: ty.Any) -> logging.LogRecord:
+    """Create a log record whose logger name is under the yaesm namespace."""
+    record = _record_factory(*args, **kwargs)
+    if not record.name.startswith("yaesm."):
+        record.name = f"yaesm.{record.name}"
+    return record
 
 
 def format_duration(seconds: float) -> str:
@@ -59,6 +70,7 @@ def configure(
         handlers.append(logging.FileHandler(logfile, encoding="utf-8"))
     if syslog_address:
         handlers.append(logging.handlers.SysLogHandler(address=syslog_address))
+    logging.setLogRecordFactory(_yaesm_record_factory)
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
