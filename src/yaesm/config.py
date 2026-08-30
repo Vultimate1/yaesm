@@ -352,6 +352,14 @@ def _validate_backup_sources(
             source_backup = backups_by_name.get(source_name)
             if source_backup is not None:
                 visit(source_backup.name)
+                try:
+                    Pipeline.validate_replication(
+                        source_backup.destination,
+                        backups[name].destination,
+                        backups[name].transforms,
+                    )
+                except YaesmError as error:
+                    _collect_messages(messages, error, f"backup {name!r}: ")
                 source_ssh = source_backup.destination.ssh
                 backup_ssh = next(
                     (

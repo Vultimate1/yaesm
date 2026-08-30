@@ -126,8 +126,6 @@ def test_replication_checks_source_backup_destination():
     original_source = mock.Mock()
     original_destination = mock.Mock()
     original_destination.check.return_value = ()
-    artifact_check, artifact_run = deferred_result("stored artifacts exist")
-    original_destination.check_artifacts.return_value = artifact_check
     original = configured_backup("original", original_source, original_destination)
     destination = mock.Mock()
     destination.check.return_value = ()
@@ -138,8 +136,7 @@ def test_replication_checks_source_backup_destination():
 
     original_source.check.assert_not_called()
     original_destination.check.assert_called_once_with(CheckRole.ARTIFACT_SOURCE)
-    original_destination.check_artifacts.assert_called_once_with(original)
-    artifact_run.assert_called_once_with()
+    original_destination.cap_list.assert_not_called()
     destination.check.assert_called_once_with(CheckRole.DESTINATION)
 
 

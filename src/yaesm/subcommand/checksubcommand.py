@@ -89,10 +89,7 @@ class CheckSubcommand(SubcommandBase):
         else:
             source_backup = backups[backup.source.backup_name]
             source = source_backup.destination
-            source_checks = (
-                *source.check(CheckRole.ARTIFACT_SOURCE),
-                source.check_artifacts(source_backup),
-            )
+            source_checks = source.check(CheckRole.ARTIFACT_SOURCE)
         return (
             *source_checks,
             *(

@@ -157,7 +157,7 @@ class DestinationDriver(DriverBase):
         source: ByteStream,
         operation: BackupOperation,
         base: Representation | None = None,
-    ) -> BackupArtifact:
+    ) -> BackupArtifact[ByteStream]:
         self.call = (source, operation, base)
         return BackupArtifact(operation, source)
 
@@ -177,7 +177,7 @@ class BrokenDestinationDriver(DestinationDriver):
         source: ByteStream,
         operation: BackupOperation,
         base: Representation | None = None,
-    ) -> BackupArtifact:
+    ) -> BackupArtifact[ByteStream]:
         return ty.cast(BackupArtifact, ReadableTree())
 
 
@@ -187,7 +187,7 @@ class FailingDestinationDriver(DestinationDriver):
         source: ByteStream,
         operation: BackupOperation,
         base: Representation | None = None,
-    ) -> BackupArtifact:
+    ) -> BackupArtifact[ByteStream]:
         raise CommandError(("import",), 1, "failed")
 
 
@@ -198,7 +198,7 @@ class CompressionRequiredDestinationDriver(DestinationDriver):
         source: ByteStream,
         operation: BackupOperation,
         base: Representation | None = None,
-    ) -> BackupArtifact:
+    ) -> BackupArtifact[ByteStream]:
         return BackupArtifact(operation, source)
 
 
@@ -343,6 +343,24 @@ def test_pipeline_uses_source_driver_only_when_needed_for_existing_artifact():
         PipelineStep(destination, "import"),
     )
     assert skipped.steps == (PipelineStep(destination, "import"),)
+
+
+def test_pipeline_validates_replication_without_existing_artifact():
+    Pipeline.validate_replication(
+        BtrfsDriver(Path("/source")),
+        BtrfsDriver(Path("/destination")),
+    )
+
+
+def test_pipeline_rejects_incompatible_replication_without_existing_artifact():
+    with pytest.raises(PipelineError) as error:
+        Pipeline.validate_replication(
+            TarDriver(Path("/archives")),
+            BtrfsDriver(Path("/destination")),
+        )
+
+    assert "produced: TarArchive" in str(error.value)
+    assert "destination accepts: BtrfsStream via btrfs.import" in str(error.value)
 
 
 def test_pipeline_passes_each_side_of_incremental_base():

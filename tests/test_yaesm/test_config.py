@@ -802,6 +802,25 @@ def test_parse_config_accepts_forward_backup_source_reference():
     assert backups["offsite"].source == bckp.BackupSource("local")
 
 
+def test_parse_config_rejects_incompatible_replication_without_artifacts():
+    with pytest.raises(ConfigError) as error:
+        parse_config(
+            {
+                "archive": backup_config(
+                    source={"rsync": "/source"},
+                    destination={"tar": "/archives"},
+                ),
+                "replica": backup_config(
+                    source={"backup": "archive"},
+                    destination={"btrfs": "/destination"},
+                ),
+            }
+        )
+
+    assert "backup 'replica': cannot build backup pipeline" in str(error.value)
+    assert "produced: TarArchive" in str(error.value)
+
+
 @pytest.mark.parametrize("value", [None, [], 1])
 def test_parse_config_rejects_nonmapping(value):
     with pytest.raises(ConfigError, match="configuration must be a mapping"):

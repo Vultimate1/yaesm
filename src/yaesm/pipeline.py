@@ -60,20 +60,28 @@ class Pipeline:
         *,
         source_artifact: BackupArtifact | None = None,
     ) -> None:
-        steps = _resolve(source_driver, destination, transforms, source_artifact)
-        for step in steps:
-            if (
-                step.driver.capability_metadata(step.capability).temporary
-                and "cleanup" not in step.driver.capabilities()
-            ):
-                raise PipelineError(
-                    f"{step.driver.name()}.{step.capability} produces a temporary "
-                    "representation but the driver provides no cleanup capability"
-                )
+        source_type = None if source_artifact is None else type(source_artifact.representation)
+        steps = _resolve(source_driver, destination, transforms, source_type)
+        _validate_steps(steps)
         object.__setattr__(self, "source_driver", source_driver)
         object.__setattr__(self, "destination", destination)
         object.__setattr__(self, "source_artifact", source_artifact)
         object.__setattr__(self, "steps", steps)
+
+    @staticmethod
+    def validate_replication(
+        source_driver: DriverBase,
+        destination: DriverBase,
+        transforms: ty.Sequence[DriverBase] = (),
+    ) -> None:
+        """Validate a replication pipeline without requiring a stored artifact."""
+        steps = _resolve(
+            source_driver,
+            destination,
+            transforms,
+            _stored_representation_type(source_driver),
+        )
+        _validate_steps(steps)
 
     def execute(
         self,
@@ -154,11 +162,23 @@ class Pipeline:
                     ) from error
 
 
+def _validate_steps(steps: ty.Sequence[PipelineStep]) -> None:
+    for step in steps:
+        if (
+            step.driver.capability_metadata(step.capability).temporary
+            and "cleanup" not in step.driver.capabilities()
+        ):
+            raise PipelineError(
+                f"{step.driver.name()}.{step.capability} produces a temporary "
+                "representation but the driver provides no cleanup capability"
+            )
+
+
 def _resolve(
     source_driver: DriverBase,
     destination: DriverBase,
     transforms: ty.Sequence[DriverBase],
-    source_artifact: BackupArtifact | None,
+    source_type: type[Representation] | None,
 ) -> tuple[PipelineStep, ...]:
     storage_steps = _storage_steps(destination)
     if not storage_steps:
@@ -168,12 +188,15 @@ def _resolve(
         )
 
     required_properties: frozenset[DataProperty] = frozenset()
-    if source_artifact is None:
+    properties: frozenset[DataProperty]
+    steps: tuple[PipelineStep, ...]
+    used: frozenset[tuple[int, str]]
+    if source_type is None:
         if "source" not in source_driver.pipeline_capabilities():
             raise PipelineError(f"{source_driver.name()} driver cannot provide a backup source")
         first = PipelineStep(source_driver, "source")
-        source_type = _output_type(first)
-        if not issubclass(source_type, Representation):
+        resolved_source_type = _output_type(first)
+        if not issubclass(resolved_source_type, Representation):
             raise PipelineError("source capability does not produce a representation")
         properties = source_driver.capability_metadata("source").adds
         if "snapshot" in source_driver.pipeline_capabilities():
@@ -181,7 +204,7 @@ def _resolve(
         steps = (first,)
         used = frozenset({(id(source_driver), "source")})
     else:
-        source_type = type(source_artifact.representation)
+        resolved_source_type = source_type
         properties = frozenset()
         steps = ()
         used = frozenset()
@@ -200,7 +223,7 @@ def _resolve(
     ] = collections.deque(
         [
             (
-                source_type,
+                resolved_source_type,
                 properties,
                 steps,
                 used,
@@ -208,7 +231,7 @@ def _resolve(
             )
         ]
     )
-    furthest = (source_type, properties, steps)
+    furthest = (resolved_source_type, properties, steps)
     complete_route: _Route | None = None
     rejected_route: (
         tuple[
@@ -320,6 +343,26 @@ def _storage_steps(driver: DriverBase) -> tuple[PipelineStep, ...]:
         if issubclass(_output_type(step), BackupArtifact):
             steps.append(step)
     return tuple(steps)
+
+
+def _stored_representation_type(driver: DriverBase) -> type[Representation]:
+    annotation = typing.get_type_hints(driver.capability_method("list"))["return"]
+    artifact_type = next(
+        (
+            argument
+            for argument in typing.get_args(annotation)
+            if typing.get_origin(argument) is BackupArtifact
+        ),
+        None,
+    )
+    arguments = typing.get_args(artifact_type)
+    if (
+        len(arguments) != 1
+        or not isinstance(arguments[0], type)
+        or not issubclass(arguments[0], Representation)
+    ):
+        raise PipelineError(f"{driver.name()}.list must declare its stored representation type")
+    return arguments[0]
 
 
 def _format_steps(steps: ty.Sequence[PipelineStep]) -> str:
