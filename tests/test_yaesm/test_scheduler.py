@@ -5,6 +5,7 @@ import queue
 from datetime import datetime
 from unittest import mock
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import pytest
 from apscheduler.triggers.cron import CronTrigger
@@ -37,6 +38,25 @@ def configured_backup(
     return Config({}, {name: backup}), backup
 
 
+@pytest.mark.parametrize("workers", [None, 25])
+def test_scheduler_configures_max_concurrent_backups(monkeypatch, workers):
+    executor = mock.Mock()
+    executor_constructor = mock.Mock(return_value=executor)
+    implementation = mock.Mock()
+    scheduler_constructor = mock.Mock(return_value=implementation)
+    monkeypatch.setattr(scheduler_module, "ThreadPoolExecutor", executor_constructor)
+    monkeypatch.setattr(scheduler_module, "BlockingScheduler", scheduler_constructor)
+    settings = {} if workers is None else {"scheduler": {"max_concurrent_backups": workers}}
+
+    Scheduler(Config(settings, {}))
+
+    executor_constructor.assert_called_once_with(max_workers=10 if workers is None else workers)
+    scheduler_constructor.assert_called_once_with(
+        executors={"default": executor},
+        job_defaults={"max_instances": 1},
+    )
+
+
 def test_scheduler_adds_timer_jobs():
     config, backup = configured_backup()
 
@@ -50,6 +70,22 @@ def test_scheduler_adds_timer_jobs():
     assert jobs[0].args[:4] == (backup, "hourly", config.backups_by_name, None)
     assert jobs[0].args[4] is None
     assert hasattr(jobs[0].args[5], "acquire")
+
+
+def test_scheduler_applies_reloaded_timezone():
+    config, backup = configured_backup()
+    timezone = ZoneInfo("UTC")
+    config = Config({"scheduler": {"timezone": timezone}}, {"home": backup})
+    scheduler = Scheduler(config)
+
+    assert scheduler._scheduler.get_job("home:hourly:0").trigger.timezone is timezone
+
+    reloaded_timezone = ZoneInfo("America/New_York")
+    scheduler.replace_config(
+        Config({"scheduler": {"timezone": reloaded_timezone}}, {"home": backup})
+    )
+
+    assert scheduler._scheduler.get_job("home:hourly:0").trigger.timezone is reloaded_timezone
 
 
 def test_scheduler_ignores_on_demand_schedules():

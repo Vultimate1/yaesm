@@ -2,6 +2,7 @@
 
 import abc
 import dataclasses
+from datetime import tzinfo
 
 import voluptuous as vlp
 from apscheduler.triggers.base import BaseTrigger
@@ -29,7 +30,7 @@ class ScheduleBase(abc.ABC):
     def config_schema() -> vlp.Schema:
         """Return the complete schema for this schedule's configuration."""
 
-    def timer_triggers(self) -> tuple[BaseTrigger, ...]:
+    def timer_triggers(self, timezone: tzinfo | None = None) -> tuple[BaseTrigger, ...]:
         """Return timer triggers, or none for externally activated schedules."""
         return ()
 
@@ -81,9 +82,9 @@ class CronSchedule(ScheduleBase):
             lambda value: mapping({"expression": value} if isinstance(value, str) else value)
         )
 
-    def timer_triggers(self) -> tuple[BaseTrigger, ...]:
+    def timer_triggers(self, timezone: tzinfo | None = None) -> tuple[BaseTrigger, ...]:
         """Return the cron trigger."""
-        return (CronTrigger.from_crontab(self.expression),)
+        return (CronTrigger.from_crontab(self.expression, timezone=timezone),)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -110,6 +111,6 @@ class Schedule:
         """Return the current and previous schedule names."""
         return (self.name, *self.previous_names)
 
-    def timer_triggers(self) -> tuple[BaseTrigger, ...]:
+    def timer_triggers(self, timezone: tzinfo | None = None) -> tuple[BaseTrigger, ...]:
         """Return this schedule's timer triggers."""
-        return self.implementation.timer_triggers()
+        return self.implementation.timer_triggers(timezone)

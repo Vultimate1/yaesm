@@ -15,6 +15,7 @@ from yaesm.errors import YaesmError
 from yaesm.pipeline import Pipeline
 from yaesm.retention import KeepAll, RetentionPolicyBase
 from yaesm.schedule import OnDemandSchedule, Schedule, ScheduleBase, schedule_name_valid
+from yaesm.scheduler import Scheduler
 from yaesm.ssh import SSHTarget, SSHTargetError
 
 
@@ -23,7 +24,18 @@ class _Named(ty.Protocol):
     def name(cls) -> str: ...
 
 
+class GlobalSettingsComponent(ty.Protocol):
+    """A component that owns a section of global configuration."""
+
+    global_settings_key: ty.ClassVar[str]
+    global_settings_schema: ty.ClassVar[vlp.Schema]
+
+
 _NamedType = ty.TypeVar("_NamedType", bound=_Named)
+_GLOBAL_SETTINGS_COMPONENTS: tuple[type[GlobalSettingsComponent], ...] = (
+    SSHTarget,
+    Scheduler,
+)
 
 load_drivers()
 
@@ -87,16 +99,11 @@ def parse_config(value: object) -> Config:
         raise ConfigError("configuration must be a mapping")
 
     messages = []
-    raw_global_settings = value.get("global_settings", {})
-    if not isinstance(raw_global_settings, dict):
-        messages.append("global_settings must be a mapping")
+    try:
+        global_settings = _parse_global_settings(value.get("global_settings", {}))
+    except ConfigError as error:
+        messages.extend(error.messages)
         global_settings = {}
-    else:
-        if any(not isinstance(name, str) for name in raw_global_settings):
-            messages.append("global setting names must be strings")
-        global_settings = {
-            name: setting for name, setting in raw_global_settings.items() if isinstance(name, str)
-        }
 
     backups = {}
     backup_names = {name for name in value if isinstance(name, str) and name != "global_settings"}
@@ -131,6 +138,26 @@ def parse_config(value: object) -> Config:
         raise ConfigError(messages)
     assert config is not None
     return config
+
+
+def _parse_global_settings(value: object) -> GlobalSettings:
+    if not isinstance(value, dict):
+        raise ConfigError("global_settings must be a mapping")
+    if any(not isinstance(name, str) for name in value):
+        raise ConfigError("global setting names must be strings")
+
+    schema = vlp.Schema(
+        {
+            vlp.Optional(component.global_settings_key): component.global_settings_schema
+            for component in _GLOBAL_SETTINGS_COMPONENTS
+        }
+    )
+    try:
+        return ty.cast(GlobalSettings, schema(value))
+    except vlp.MultipleInvalid as error:
+        raise ConfigError(
+            [f"invalid global settings: {message}" for message in error.errors]
+        ) from error
 
 
 def _parse_backup(
@@ -169,7 +196,9 @@ def _parse_backup(
     ssh = None
     if "ssh" in value:
         try:
-            ssh = SSHTarget.from_config(value["ssh"])
+            ssh_defaults = global_settings.get(SSHTarget.global_settings_key, {})
+            assert isinstance(ssh_defaults, dict)
+            ssh = SSHTarget.from_config(value["ssh"], ssh_defaults)
         except SSHTargetError as error:
             messages.append(error.format())
 

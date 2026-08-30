@@ -3,6 +3,7 @@
 import inspect
 from datetime import timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 import voluptuous as vlp
@@ -181,18 +182,35 @@ _SSH_CONFIGS = st.builds(
     st.sampled_from(("/root/.ssh/id_ed25519", "/root/.ssh/backup key")),
     st.none() | st.just("/root/.ssh/config"),
 )
-_GLOBAL_VALUES = st.recursive(
-    st.none() | st.booleans() | st.integers() | st.text(max_size=20),
-    lambda values: (
-        st.lists(values, max_size=3)
-        | st.dictionaries(st.text(min_size=1, max_size=10), values, max_size=3)
-    ),
-    max_leaves=5,
+_SSH_DEFAULTS = st.builds(
+    lambda identity_file, config_file: {
+        **({} if identity_file is None else {"identity_file": identity_file}),
+        **({} if config_file is None else {"config_file": config_file}),
+    },
+    st.none() | st.just("/root/.ssh/id_ed25519"),
+    st.none() | st.just("/root/.ssh/config"),
 )
-_GLOBAL_SETTINGS = st.dictionaries(
-    st.sampled_from(("timezone", "max_concurrent_backups", "notifications", "custom")),
-    _GLOBAL_VALUES,
-    max_size=4,
+_GLOBAL_SETTINGS = st.builds(
+    lambda max_concurrent_backups, timezone, defaults: {
+        **(
+            {}
+            if max_concurrent_backups is None and timezone is None
+            else {
+                "scheduler": {
+                    **(
+                        {}
+                        if max_concurrent_backups is None
+                        else {"max_concurrent_backups": max_concurrent_backups}
+                    ),
+                    **({} if timezone is None else {"timezone": timezone}),
+                }
+            }
+        ),
+        **({} if defaults is None else {"ssh": defaults}),
+    },
+    st.none() | st.integers(min_value=1, max_value=100),
+    st.none() | st.sampled_from(("UTC", "America/New_York")),
+    st.none() | _SSH_DEFAULTS,
 )
 
 
@@ -798,8 +816,14 @@ def test_parse_config_rejects_empty_mapping():
 def test_parse_config_accepts_global_settings():
     value = {
         "global_settings": {
-            "max_concurrent_backups": 15,
-            "timezone": "America/New_York",
+            "scheduler": {
+                "max_concurrent_backups": 15,
+                "timezone": "America/New_York",
+            },
+            "ssh": {
+                "identity_file": "/root/.ssh/id_ed25519",
+                "config_file": "/root/.ssh/config",
+            },
         },
         "home": backup_config(
             destination={"tar": {"location": "/destination"}},
@@ -811,11 +835,120 @@ def test_parse_config_accepts_global_settings():
     backup = config.backups["home"]
     assert isinstance(backup.source, BtrfsDriver)
 
-    assert config.global_settings == value["global_settings"]
+    assert config.global_settings == {
+        "scheduler": {
+            "max_concurrent_backups": 15,
+            "timezone": ZoneInfo("America/New_York"),
+        },
+        "ssh": {
+            "identity_file": Path("/root/.ssh/id_ed25519"),
+            "config_file": Path("/root/.ssh/config"),
+        },
+    }
     assert tuple(config.backups) == ("home",)
     assert backup.source.global_settings is config.global_settings
     assert backup.destination.global_settings is config.global_settings
     assert backup.transforms[0].global_settings is config.global_settings
+
+
+def test_parse_config_applies_global_ssh_defaults():
+    config = parse_config(
+        {
+            "global_settings": {
+                "ssh": {
+                    "identity_file": "/root/.ssh/id_ed25519",
+                    "config_file": "/root/.ssh/config",
+                }
+            },
+            "home": backup_config(
+                ssh={"endpoint": "ssh://server"},
+                source={"btrfs": "/source", "remote": True},
+            ),
+        }
+    )
+
+    source = config.backups["home"].source
+    assert isinstance(source, BtrfsDriver)
+    assert source.ssh == SSHTarget(
+        "ssh://server",
+        Path("/root/.ssh/id_ed25519"),
+        Path("/root/.ssh/config"),
+    )
+
+
+def test_backup_ssh_settings_override_global_defaults():
+    config = parse_config(
+        {
+            "global_settings": {
+                "ssh": {
+                    "identity_file": "/default-key",
+                    "config_file": "/default-config",
+                }
+            },
+            "home": backup_config(
+                ssh={
+                    "endpoint": "ssh://server",
+                    "identity_file": "/backup-key",
+                    "config_file": "/backup-config",
+                },
+                source={"btrfs": "/source", "remote": True},
+            ),
+        }
+    )
+
+    source = config.backups["home"].source
+    assert isinstance(source, BtrfsDriver)
+    assert source.ssh == SSHTarget(
+        "ssh://server",
+        Path("/backup-key"),
+        Path("/backup-config"),
+    )
+
+
+@pytest.mark.parametrize(
+    "defaults",
+    [
+        None,
+        {"identity_file": "relative"},
+        {"config_file": "relative"},
+        {"unknown": "/value"},
+    ],
+)
+def test_parse_config_rejects_invalid_global_ssh_defaults(defaults):
+    with pytest.raises(ConfigError, match="invalid global settings"):
+        parse_config(
+            {
+                "global_settings": {"ssh": defaults},
+                "home": backup_config(),
+            }
+        )
+
+
+@pytest.mark.parametrize("value", [0, -1, True, "10"])
+def test_parse_config_rejects_invalid_max_concurrent_backups(value):
+    with pytest.raises(ConfigError, match="must be a positive integer"):
+        parse_config(
+            {
+                "global_settings": {"scheduler": {"max_concurrent_backups": value}},
+                "home": backup_config(),
+            }
+        )
+
+
+@pytest.mark.parametrize("value", [None, 1, "Not/A_Timezone"])
+def test_parse_config_rejects_invalid_timezone(value):
+    with pytest.raises(ConfigError, match="timezone"):
+        parse_config(
+            {
+                "global_settings": {"scheduler": {"timezone": value}},
+                "home": backup_config(),
+            }
+        )
+
+
+def test_parse_config_rejects_unknown_global_setting():
+    with pytest.raises(ConfigError, match="extra keys not allowed"):
+        parse_config({"global_settings": {"unknown": {}}, "home": backup_config()})
 
 
 def test_parse_config_rejects_nonmapping_global_settings():
@@ -871,7 +1004,17 @@ def test_generated_valid_configs_parse(value):
     parsed = parse_config(value)
 
     assert set(parsed.backups) == set(value) - {"global_settings"}
-    assert parsed.global_settings == value.get("global_settings", {})
+    expected_global_settings = value.get("global_settings", {}).copy()
+    if scheduler := expected_global_settings.get("scheduler"):
+        expected_global_settings["scheduler"] = {
+            **scheduler,
+            **(
+                {} if "timezone" not in scheduler else {"timezone": ZoneInfo(scheduler["timezone"])}
+            ),
+        }
+    if ssh := expected_global_settings.get("ssh"):
+        expected_global_settings["ssh"] = {name: Path(path) for name, path in ssh.items()}
+    assert parsed.global_settings == expected_global_settings
     for name, backup in parsed.backups.items():
         definition = value[name]
         assert backup.previous_names == tuple(definition.get("previous_names", ()))

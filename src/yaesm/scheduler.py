@@ -1,27 +1,64 @@
 """Scheduling of configured backups."""
 
+from __future__ import annotations
+
 import contextlib
 import logging
 import queue
 import time
 from _thread import LockType
-from datetime import datetime
+from datetime import datetime, tzinfo
 from threading import Lock
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import voluptuous as vlp
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.base import BaseTrigger
 
 import yaesm.ty as ty
 from yaesm.backup import Backup
-from yaesm.config import Config
 from yaesm.control import ControlMessage
 from yaesm.errors import YaesmError
 from yaesm.logging import RequestFilter, current_backup, format_duration, request_id
 from yaesm.schedule import OnDemandSchedule
 
+if ty.TYPE_CHECKING:
+    from yaesm.config import Config
+
 logger = logging.getLogger(__name__)
+
+
+def _positive_integer(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise vlp.Invalid("must be a positive integer")
+    return value
+
+
+def _timezone(value: object) -> ZoneInfo:
+    if not isinstance(value, str):
+        raise vlp.Invalid("must be a timezone name")
+    try:
+        return ZoneInfo(value)
+    except (ValueError, ZoneInfoNotFoundError) as error:
+        raise vlp.Invalid(f"unknown timezone: {value!r}") from error
+
+
+_GLOBAL_SETTINGS_SCHEMA = vlp.Schema(
+    {
+        vlp.Optional("max_concurrent_backups"): _positive_integer,
+        vlp.Optional("timezone"): _timezone,
+    }
+)
+
+
+def _configured_timezone(config: Config) -> tzinfo | None:
+    settings = config.global_settings.get(Scheduler.global_settings_key, {})
+    assert isinstance(settings, dict)
+    timezone = settings.get("timezone")
+    assert timezone is None or isinstance(timezone, tzinfo)
+    return timezone
 
 
 class SchedulerError(YaesmError):
@@ -31,13 +68,20 @@ class SchedulerError(YaesmError):
 class Scheduler:
     """Schedule and run configured backup jobs."""
 
+    global_settings_key: ty.ClassVar[str] = "scheduler"
+    global_settings_schema: ty.ClassVar[vlp.Schema] = _GLOBAL_SETTINGS_SCHEMA
+
     def __init__(self, config: Config) -> None:
         self._lock = Lock()
         self._backup_locks: dict[str, LockType] = {}
         self._request_messages: dict[UUID, queue.Queue[ControlMessage]] = {}
         self._timer_job_ids: set[str] = set()
+        settings = config.global_settings.get(self.global_settings_key, {})
+        assert isinstance(settings, dict)
+        max_workers = settings.get("max_concurrent_backups", 10)
+        assert isinstance(max_workers, int)
         self._scheduler = BlockingScheduler(
-            executors={"default": ThreadPoolExecutor(max_workers=10)},
+            executors={"default": ThreadPoolExecutor(max_workers=max_workers)},
             job_defaults={"max_instances": 1},
         )
         self.replace_config(config)
@@ -50,9 +94,10 @@ class Scheduler:
                 if self._scheduler.get_job(job_id) is not None:
                     self._scheduler.remove_job(job_id)
             self._timer_job_ids.clear()
+            timezone = _configured_timezone(config)
             for backup in config.backups.values():
                 for schedule in backup.schedules:
-                    for index, trigger in enumerate(schedule.timer_triggers()):
+                    for index, trigger in enumerate(schedule.timer_triggers(timezone)):
                         job_id = f"{backup.name}:{schedule.name}:{index}"
                         self._add_job(
                             backup,

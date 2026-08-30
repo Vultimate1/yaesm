@@ -6,6 +6,7 @@ import dataclasses
 import shlex
 import urllib.parse
 from pathlib import Path
+from typing import ClassVar
 
 import voluptuous as vlp
 
@@ -18,9 +19,36 @@ class SSHTargetError(YaesmValueError):
     """Raised when an SSH target is invalid."""
 
 
+def _absolute_path(value: object) -> Path:
+    if not isinstance(value, str | Path):
+        raise vlp.Invalid("must be a path")
+    path = Path(value)
+    if not path.is_absolute():
+        raise vlp.Invalid("must be an absolute path")
+    return path
+
+
+_SSH_DEFAULTS_SCHEMA = vlp.Schema(
+    {
+        vlp.Optional("identity_file"): _absolute_path,
+        vlp.Optional("config_file"): _absolute_path,
+    }
+)
+_SSH_TARGET_SCHEMA = vlp.Schema(
+    {
+        vlp.Required("endpoint"): str,
+        vlp.Required("identity_file"): _absolute_path,
+        vlp.Optional("config_file"): _absolute_path,
+    }
+)
+
+
 @dataclasses.dataclass(frozen=True)
 class SSHTarget:
     """An SSH endpoint and its OpenSSH configuration."""
+
+    global_settings_key: ClassVar[str] = "ssh"
+    global_settings_schema: ClassVar[vlp.Schema] = _SSH_DEFAULTS_SCHEMA
 
     endpoint: dataclasses.InitVar[str]
     identity_file: ty.Path
@@ -52,26 +80,18 @@ class SSHTarget:
         return True
 
     @classmethod
-    def from_config(cls, value: object) -> SSHTarget:
-        """Construct an SSH target from configuration data."""
-
-        def absolute_path(value: object) -> Path:
-            if not isinstance(value, str | Path):
-                raise vlp.Invalid("must be a path")
-            path = Path(value)
-            if not path.is_absolute():
-                raise vlp.Invalid("must be an absolute path")
-            return path
-
-        schema = vlp.Schema(
-            {
-                vlp.Required("endpoint"): str,
-                vlp.Required("identity_file"): absolute_path,
-                vlp.Optional("config_file"): absolute_path,
-            }
-        )
+    def from_config(
+        cls,
+        value: object,
+        defaults: ty.Mapping[str, object] | None = None,
+    ) -> SSHTarget:
+        """Construct an SSH target using optional global defaults."""
         try:
-            return cls(**schema(value))
+            if defaults:
+                if not isinstance(value, dict):
+                    raise vlp.Invalid("must be a mapping")
+                value = {**defaults, **value}
+            return cls(**_SSH_TARGET_SCHEMA(value))
         except (vlp.Invalid, SSHTargetError, TypeError) as error:
             raise SSHTargetError(f"invalid SSH configuration: {error}") from error
 

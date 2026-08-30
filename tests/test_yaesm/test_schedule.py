@@ -1,5 +1,7 @@
 """Tests for yaesm.schedule."""
 
+from zoneinfo import ZoneInfo
+
 import pytest
 import voluptuous as vlp
 from apscheduler.triggers.cron import CronTrigger
@@ -44,6 +46,15 @@ def test_schedule():
     assert schedule.implementation is implementation
     assert len(schedule.timer_triggers()) == 1
     assert isinstance(schedule.timer_triggers()[0], CronTrigger)
+
+
+def test_cron_schedule_uses_configured_timezone():
+    timezone = ZoneInfo("UTC")
+
+    trigger = CronSchedule("0 * * * *").timer_triggers(timezone)[0]
+
+    assert isinstance(trigger, CronTrigger)
+    assert trigger.timezone is timezone
 
 
 def test_schedule_accepts_previous_names():
