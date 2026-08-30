@@ -1,6 +1,7 @@
 """Tests for yaesm.retention."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 import voluptuous as vlp
@@ -34,6 +35,10 @@ def artifact(schedule_name: str, day: int) -> BackupArtifact:
     return BackupArtifact(operation, Representation())
 
 
+def artifact_at(created_at: datetime) -> BackupArtifact:
+    return BackupArtifact(BackupOperation("home", "hourly", created_at), Representation())
+
+
 def test_keep_last():
     older = artifact("hourly", 1)
     newer = artifact("hourly", 3)
@@ -42,11 +47,27 @@ def test_keep_last():
     assert KeepLast(2).retain([newer, older, newest], datetime(2026, 8, 6)) == [newest, newer]
 
 
+def test_keep_last_sorts_repeated_dst_time_by_instant():
+    zone = ZoneInfo("America/New_York")
+    first = artifact_at(datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=0))
+    second = artifact_at(datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=1))
+
+    assert KeepLast(1).retain([first, second], datetime(2026, 11, 2)) == [second]
+
+
 def test_keep_all():
     older = artifact("hourly", 1)
     newer = artifact("hourly", 3)
 
     assert KeepAll().retain([older, newer], datetime(2026, 8, 6)) == [newer, older]
+
+
+def test_keep_all_sorts_repeated_dst_time_by_instant():
+    zone = ZoneInfo("America/New_York")
+    first = artifact_at(datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=0))
+    second = artifact_at(datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=1))
+
+    assert KeepAll().retain([first, second], datetime(2026, 11, 2)) == [second, first]
 
 
 def test_keep_all_name():
@@ -144,6 +165,26 @@ def test_keep_for():
         [boundary, newest, expired],
         datetime(2026, 8, 6),
     ) == [newest, boundary]
+
+
+def test_keep_for_uses_elapsed_time_across_dst():
+    zone = ZoneInfo("America/New_York")
+    first = artifact_at(datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=0))
+    second = artifact_at(datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=1))
+    now = datetime(2026, 11, 1, 1, 45, tzinfo=zone, fold=1)
+
+    assert KeepFor(timedelta(minutes=30)).retain([first, second], now) == [second]
+
+
+def test_keep_for_accepts_utc_now_with_local_artifacts():
+    artifact = artifact_at(
+        datetime(2026, 8, 20, 12, tzinfo=timezone(timedelta(hours=5, minutes=30)))
+    )
+
+    assert KeepFor(timedelta(minutes=1)).retain(
+        [artifact],
+        datetime(2026, 8, 20, 6, 31, tzinfo=timezone.utc),
+    ) == [artifact]
 
 
 def test_keep_for_name():

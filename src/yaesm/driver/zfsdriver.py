@@ -387,7 +387,7 @@ class ZFSDriver(DriverBase):
                 )
             )
         return tuple(
-            sorted(artifacts, key=lambda artifact: artifact.operation.created_at, reverse=True)
+            sorted(artifacts, key=lambda artifact: artifact.operation.instant, reverse=True)
         )
 
     def artifact_id(self, artifact: bckp.BackupArtifact) -> str:

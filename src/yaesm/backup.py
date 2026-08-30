@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+from datetime import timedelta, timezone
 
 import yaesm.ty as ty
 from yaesm.errors import YaesmError, YaesmValueError
@@ -57,6 +58,28 @@ class BackupOperation:
             raise YaesmValueError(f"invalid backup name: {self.backup_name!r}")
         if not schedule_name_valid(self.schedule_name):
             raise YaesmValueError(f"invalid schedule name: {self.schedule_name!r}")
+        if not isinstance(self.created_at, ty.datetime):
+            raise YaesmValueError(f"invalid created_at: {self.created_at!r}")
+        if self.created_at.tzinfo is None:
+            object.__setattr__(
+                self,
+                "created_at",
+                self.created_at.replace(tzinfo=timezone.utc),
+            )
+        offset = self.created_at.utcoffset()
+        if offset is None:
+            raise YaesmValueError(f"invalid created_at timezone: {self.created_at.tzinfo!r}")
+        if offset % timedelta(minutes=1):
+            raise YaesmValueError("created_at UTC offset must use whole minutes")
+        object.__setattr__(
+            self,
+            "created_at",
+            self.created_at.replace(
+                second=0,
+                microsecond=0,
+                tzinfo=timezone(offset),
+            ),
+        )
         if self.source_artifact_id is not None and (
             not isinstance(self.source_artifact_id, str) or not self.source_artifact_id
         ):
@@ -77,8 +100,20 @@ class BackupOperation:
             raise YaesmValueError(f"invalid artifact name: {artifact_name!r}")
 
         try:
-            schedule_name, timestamp = artifact_name.removeprefix(prefix).rsplit(".", 1)
-            created_at = ty.datetime.strptime(timestamp, "%Y_%m_%d_%H:%M")
+            schedule_name, timestamp, offset = artifact_name.removeprefix(prefix).rsplit(".", 2)
+            if (
+                len(offset) != 5
+                or offset[0] not in "pm"
+                or not offset[1:].isascii()
+                or not offset[1:].isdecimal()
+                or offset == "m0000"
+            ):
+                raise ValueError
+            sign = "+" if offset[0] == "p" else "-"
+            created_at = ty.datetime.strptime(
+                timestamp + sign + offset[1:],
+                "%Y_%m_%d_%H:%M%z",
+            )
         except ValueError as error:
             raise YaesmValueError(f"invalid artifact name: {artifact_name!r}") from error
         if not schedule_name:
@@ -88,9 +123,15 @@ class BackupOperation:
     @property
     def artifact_name(self) -> str:
         """Return the canonical name for the resulting artifact."""
-        return self.created_at.strftime(
-            f"yaesm-{self.backup_name}-{self.schedule_name}.%Y_%m_%d_%H:%M"
-        )
+        offset = self.created_at.strftime("%z")
+        encoded_offset = ("p" if offset[0] == "+" else "m") + offset[1:]
+        timestamp = self.created_at.strftime("%Y_%m_%d_%H:%M")
+        return f"yaesm-{self.backup_name}-{self.schedule_name}.{timestamp}.{encoded_offset}"
+
+    @property
+    def instant(self) -> ty.datetime:
+        """Return the creation time normalized to UTC."""
+        return self.created_at.astimezone(timezone.utc)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -199,7 +240,7 @@ class Backup:
                 seen.add(normalized.name)
                 artifacts.append(normalized)
         return tuple(
-            sorted(artifacts, key=lambda artifact: artifact.operation.created_at, reverse=True)
+            sorted(artifacts, key=lambda artifact: artifact.operation.instant, reverse=True)
         )
 
     def execute(

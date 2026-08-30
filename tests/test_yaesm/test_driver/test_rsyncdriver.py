@@ -84,7 +84,7 @@ def replicated_operation() -> BackupOperation:
         "example",
         "manual",
         datetime(2026, 8, 27, 12, 30),
-        "yaesm-local-hourly.2026_08_27_12:30",
+        "yaesm-local-hourly.2026_08_27_12:30.p0000",
     )
 
 
@@ -571,7 +571,7 @@ def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
                 (
                     str(destination / older.artifact_name),
                     str(destination / "unrelated"),
-                    str(destination / "yaesm-other-manual.2026_08_27_12:32"),
+                    str(destination / "yaesm-other-manual.2026_08_27_12:32.p0000"),
                     str(destination / newer.artifact_name),
                     str(destination / unmarked.artifact_name),
                     str(marker(destination / older.artifact_name)),

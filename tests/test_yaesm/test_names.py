@@ -7,7 +7,7 @@ from yaesm.names import name_valid
 
 @pytest.mark.parametrize(
     "name",
-    ["home", "HOME", "5minute", "5-minute", "_temporary", "home_backup", "_"],
+    ["home", "HOME", "5minute", "5-minute", "_temporary", "home_backup", "_", "a" * 64],
 )
 def test_name_valid_accepts_safe_names(name):
     assert name_valid(name)
@@ -30,6 +30,7 @@ def test_name_valid_accepts_safe_names(name):
         "İ",
         "ſ",
         "K",
+        "a" * 65,
     ],
 )
 def test_name_valid_rejects_unsafe_names(name):

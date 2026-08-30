@@ -1,8 +1,9 @@
 """Tests for yaesm.subcommand.findsubcommand."""
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from unittest import mock
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -17,6 +18,10 @@ from yaesm.subcommand.findsubcommand import (
     FindQueryError,
     FindSubcommand,
 )
+
+
+def find_config(backups: dict[str, Backup]) -> Config:
+    return Config({"scheduler": {"timezone": ZoneInfo("UTC")}}, backups)
 
 
 def arguments(*values: str) -> argparse.Namespace:
@@ -136,16 +141,36 @@ def test_find_query_without_times(tokens, query_type):
 @pytest.mark.parametrize(
     ("tokens", "query_type", "expected"),
     [
-        (["after", "now-2h"], FindQuery.Type.AFTER, datetime(2026, 8, 20, 10, 34)),
-        (["before", "now-30m"], FindQuery.Type.BEFORE, datetime(2026, 8, 20, 12, 4)),
-        (["closest", "now-7d"], FindQuery.Type.CLOSEST, datetime(2026, 8, 13, 12, 34)),
+        (
+            ["after", "now-2h"],
+            FindQuery.Type.AFTER,
+            datetime(2026, 8, 20, 10, 34, tzinfo=timezone.utc),
+        ),
+        (
+            ["before", "now-30m"],
+            FindQuery.Type.BEFORE,
+            datetime(2026, 8, 20, 12, 4, tzinfo=timezone.utc),
+        ),
+        (
+            ["closest", "now-7d"],
+            FindQuery.Type.CLOSEST,
+            datetime(2026, 8, 13, 12, 34, tzinfo=timezone.utc),
+        ),
         (
             ["after", "2026-07-04T14:30"],
             FindQuery.Type.AFTER,
-            datetime(2026, 7, 4, 14, 30),
+            datetime(2026, 7, 4, 14, 30, tzinfo=timezone.utc),
         ),
-        (["before", "2026-07-04"], FindQuery.Type.BEFORE, datetime(2026, 7, 4)),
-        (["closest", "08:15"], FindQuery.Type.CLOSEST, datetime(2026, 8, 20, 8, 15)),
+        (
+            ["before", "2026-07-04"],
+            FindQuery.Type.BEFORE,
+            datetime(2026, 7, 4, tzinfo=timezone.utc),
+        ),
+        (
+            ["closest", "08:15"],
+            FindQuery.Type.CLOSEST,
+            datetime(2026, 8, 20, 8, 15, tzinfo=timezone.utc),
+        ),
     ],
 )
 def test_find_query_with_target(tokens, query_type, expected):
@@ -162,8 +187,60 @@ def test_find_query_between_normalizes_endpoints():
     )
 
     assert query.type is FindQuery.Type.BETWEEN
-    assert query.start == datetime(2026, 8, 17, 12)
-    assert query.end == datetime(2026, 8, 20, 10)
+    assert query.start == datetime(2026, 8, 17, 12, tzinfo=timezone.utc)
+    assert query.end == datetime(2026, 8, 20, 10, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (
+            "2026-11-01T01:30-04:00",
+            datetime(2026, 11, 1, 5, 30, tzinfo=timezone.utc),
+        ),
+        (
+            "2026-11-01T01:30-0500",
+            datetime(2026, 11, 1, 6, 30, tzinfo=timezone.utc),
+        ),
+        ("2026-11-01T05:30Z", datetime(2026, 11, 1, 5, 30, tzinfo=timezone.utc)),
+    ],
+)
+def test_find_query_accepts_explicit_utc_offsets(value, expected):
+    query = FindQuery(["after", value], zone=ZoneInfo("America/New_York"))
+
+    assert query.target == expected
+
+
+def test_find_query_rejects_ambiguous_local_time():
+    with pytest.raises(FindQueryError, match="ambiguous; include a UTC offset"):
+        FindQuery(
+            ["after", "2026-11-01T01:30"],
+            zone=ZoneInfo("America/New_York"),
+        )
+
+
+def test_find_query_rejects_nonexistent_local_time():
+    with pytest.raises(FindQueryError, match="does not exist"):
+        FindQuery(
+            ["after", "2026-03-08T02:30"],
+            zone=ZoneInfo("America/New_York"),
+        )
+
+
+def test_find_query_supports_non_hour_timezone_offsets():
+    query = FindQuery(
+        ["after", "2026-08-20T12:00"],
+        zone=ZoneInfo("Asia/Kathmandu"),
+    )
+
+    assert query.target == datetime(2026, 8, 20, 6, 15, tzinfo=timezone.utc)
+
+
+def test_find_query_relative_time_is_elapsed_time_across_dst():
+    now = datetime(2026, 3, 9, 4, 30, tzinfo=timezone.utc)
+    query = FindQuery(["after", "now-1d"], now, ZoneInfo("America/New_York"))
+
+    assert query.target == now - timedelta(days=1)
 
 
 @pytest.mark.parametrize(
@@ -244,7 +321,7 @@ def test_find_defaults_to_all_and_formats_locators(capsys):
     artifacts = (artifact(12), artifact(10, schedule="daily"))
     backup, destination = configured_backup("home", artifacts)
 
-    assert FindSubcommand().main(Config({}, {"home": backup}), arguments("home")) == 0
+    assert FindSubcommand().main(find_config({"home": backup}), arguments("home")) == 0
 
     assert capsys.readouterr().out.splitlines() == [
         f"locator:{artifacts[0].name}",
@@ -261,7 +338,7 @@ def test_find_can_separate_locators_with_null_bytes(capsys):
     artifacts = (artifact(12), artifact(10))
     backup, _destination = configured_backup("home", artifacts)
 
-    assert FindSubcommand().main(Config({}, {"home": backup}), arguments("home", "-0")) == 0
+    assert FindSubcommand().main(find_config({"home": backup}), arguments("home", "-0")) == 0
 
     assert capsys.readouterr().out == (
         f"locator:{artifacts[0].name}\0locator:{artifacts[1].name}\0"
@@ -289,7 +366,7 @@ def test_find_includes_artifacts_under_previous_names(capsys):
 
     assert (
         FindSubcommand().main(
-            Config({}, {"home": backup}),
+            find_config({"home": backup}),
             arguments("home,old-home", "--schedule", "daily"),
         )
         == 0
@@ -314,12 +391,25 @@ def test_find_combines_queries_without_duplicates(capsys):
         "2026-08-20T10:00",
     )
 
-    assert FindSubcommand().main(Config({}, {"home": backup}), parsed) == 0
+    assert FindSubcommand().main(find_config({"home": backup}), parsed) == 0
 
     assert capsys.readouterr().out.splitlines() == [
         f"locator:{artifacts[0].name}",
         f"locator:{artifacts[1].name}",
     ]
+
+
+def test_find_uses_configured_timezone(capsys):
+    artifacts = (artifact(16), artifact(15))
+    backup, _destination = configured_backup("home", artifacts)
+    config = Config(
+        {"scheduler": {"timezone": ZoneInfo("America/New_York")}},
+        {"home": backup},
+    )
+
+    FindSubcommand().main(config, arguments("home", "after", "2026-08-20T11:30"))
+
+    assert capsys.readouterr().out.splitlines() == [f"locator:{artifacts[0].name}"]
 
 
 def test_optional_queries_do_not_implicitly_add_all(capsys):
@@ -334,7 +424,7 @@ def test_optional_queries_do_not_implicitly_add_all(capsys):
         "2026-08-20T11:00",
     )
 
-    assert FindSubcommand().main(Config({}, {"home": backup}), parsed) == 0
+    assert FindSubcommand().main(find_config({"home": backup}), parsed) == 0
 
     assert capsys.readouterr().out.splitlines() == [
         f"locator:{artifacts[1].name}",
@@ -347,7 +437,7 @@ def test_find_supports_multiple_backup_names_in_requested_order(capsys):
     root_artifact = artifact(11, backup_name="root")
     home, _ = configured_backup("home", (home_artifact,))
     root, _ = configured_backup("root", (root_artifact,))
-    config = Config({}, {"root": root, "home": home})
+    config = find_config({"root": root, "home": home})
 
     assert FindSubcommand().main(config, arguments("home,root")) == 0
 
@@ -365,7 +455,7 @@ def test_find_filters_schedules(capsys):
 
     assert (
         FindSubcommand().main(
-            Config({}, {"home": backup}),
+            find_config({"home": backup}),
             arguments("home", "--schedules", "daily,weekly"),
         )
         == 0
@@ -382,7 +472,7 @@ def test_find_returns_success_without_matches(capsys):
 
     assert (
         FindSubcommand().main(
-            Config({}, {"home": backup}),
+            find_config({"home": backup}),
             arguments("home", "after", "2026-08-21"),
         )
         == 0
@@ -396,7 +486,7 @@ def test_find_returns_success_without_matches(capsys):
 )
 def test_find_rejects_invalid_backup_selection(value, error):
     with pytest.raises(FindError, match=error):
-        FindSubcommand().main(Config({}, {}), arguments(value))
+        FindSubcommand().main(find_config({}), arguments(value))
 
 
 def test_find_rejects_invalid_query_before_listing():
@@ -404,7 +494,7 @@ def test_find_rejects_invalid_query_before_listing():
 
     with pytest.raises(FindQueryError, match="invalid query"):
         FindSubcommand().main(
-            Config({}, {"home": backup}),
+            find_config({"home": backup}),
             arguments("home", "after"),
         )
 

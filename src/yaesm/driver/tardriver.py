@@ -208,7 +208,7 @@ class TarDriver(DriverBase):
                 continue
             artifacts.append(bckp.BackupArtifact(operation, TarArchive(path, self.ssh)))
         return tuple(
-            sorted(artifacts, key=lambda artifact: artifact.operation.created_at, reverse=True)
+            sorted(artifacts, key=lambda artifact: artifact.operation.instant, reverse=True)
         )
 
     def format_locator(self, artifact: bckp.BackupArtifact[TarArchive]) -> str:

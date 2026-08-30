@@ -2,7 +2,7 @@
 
 import logging
 import queue
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest import mock
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -69,7 +69,15 @@ def test_scheduler_adds_timer_jobs():
     assert isinstance(jobs[0].trigger, CronTrigger)
     assert jobs[0].args[:4] == (backup, "hourly", config.backups_by_name, None)
     assert jobs[0].args[4] is None
-    assert hasattr(jobs[0].args[5], "acquire")
+    assert jobs[0].args[5] == Scheduler.timezone(config)
+    assert hasattr(jobs[0].args[6], "acquire")
+
+
+def test_scheduler_defaults_to_system_timezone(monkeypatch):
+    timezone = ZoneInfo("Asia/Kathmandu")
+    monkeypatch.setattr(scheduler_module, "get_localzone", mock.Mock(return_value=timezone))
+
+    assert Scheduler.timezone(Config({}, {})) is timezone
 
 
 def test_scheduler_applies_reloaded_timezone():
@@ -146,7 +154,8 @@ def test_scheduler_enqueues_backup(monkeypatch, caplog):
     assert isinstance(job.trigger, DateTrigger)
     assert job.args[:4] == (backup, "manual", config.backups_by_name, request_id)
     assert isinstance(job.args[4], queue.Queue)
-    assert hasattr(job.args[5], "acquire")
+    assert job.args[5] == Scheduler.timezone(config)
+    assert hasattr(job.args[6], "acquire")
     assert job.args[4].get_nowait() == {
         "type": "log",
         "message": "backup 'home' (manual) queued",
@@ -285,7 +294,9 @@ def test_scheduler_enqueues_from_replaced_config():
 
 
 def test_scheduler_reload_preserves_queued_backup():
-    first, _first_backup = configured_backup("first", Schedule("manual", OnDemandSchedule()))
+    first, first_backup = configured_backup("first", Schedule("manual", OnDemandSchedule()))
+    first_timezone = ZoneInfo("UTC")
+    first = Config({"scheduler": {"timezone": first_timezone}}, {"first": first_backup})
     second, _second_backup = configured_backup("second")
     scheduler = Scheduler(first)
     request_id = scheduler.enqueue_backup("first", "manual")
@@ -296,6 +307,7 @@ def test_scheduler_reload_preserves_queued_backup():
         str(request_id),
         "second:hourly:0",
     }
+    assert scheduler._scheduler.get_job(str(request_id)).args[5] is first_timezone
 
 
 def test_scheduler_reload_preserves_backup_lock():
@@ -313,10 +325,11 @@ def test_scheduler_reload_preserves_backup_lock():
 
 def test_scheduled_job_executes_backup(monkeypatch):
     config, backup = configured_backup()
-    now = datetime(2026, 8, 28, 12, 30)
+    now = datetime(2026, 8, 28, 16, 30, tzinfo=timezone.utc)
+    configured_timezone = ZoneInfo("America/New_York")
     execute = mock.Mock()
     monkeypatch.setattr(Backup, "execute", execute)
-    monkeypatch.setattr(scheduler_module, "datetime", mock.Mock(now=lambda: now))
+    monkeypatch.setattr(scheduler_module, "datetime", mock.Mock(now=lambda _timezone: now))
 
     backup_lock = mock.MagicMock()
     backup_lock.acquire.return_value = True
@@ -326,10 +339,15 @@ def test_scheduled_job_executes_backup(monkeypatch):
         config.backups,
         None,
         None,
+        configured_timezone,
         backup_lock,
     )
 
-    execute.assert_called_once_with("hourly", now, config.backups)
+    execute.assert_called_once_with(
+        "hourly",
+        datetime(2026, 8, 28, 12, 30, tzinfo=configured_timezone),
+        config.backups,
+    )
     assert backup_lock.mock_calls == [mock.call.acquire(blocking=False), mock.call.release()]
 
 
@@ -346,6 +364,7 @@ def test_job_reports_waiting_for_another_execution(monkeypatch, caplog):
             config.backups,
             None,
             None,
+            ZoneInfo("UTC"),
             backup_lock,
         )
 
@@ -376,6 +395,7 @@ def test_requested_job_streams_logs_and_result(monkeypatch, caplog):
             config.backups,
             _REQUEST_ID,
             messages,
+            ZoneInfo("UTC"),
             mock.MagicMock(),
         )
 
@@ -413,6 +433,7 @@ def test_job_exposes_and_restores_backup_context(monkeypatch):
         config.backups,
         None,
         None,
+        ZoneInfo("UTC"),
         mock.MagicMock(),
     )
 
@@ -436,6 +457,7 @@ def test_requested_job_streams_expected_failure(monkeypatch, caplog):
             config.backups,
             _REQUEST_ID,
             messages,
+            ZoneInfo("UTC"),
             mock.MagicMock(),
         )
 
@@ -474,6 +496,7 @@ def test_requested_job_hides_unexpected_failure(monkeypatch, caplog):
             config.backups,
             _REQUEST_ID,
             messages,
+            ZoneInfo("UTC"),
             mock.MagicMock(),
         )
 

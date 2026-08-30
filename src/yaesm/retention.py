@@ -2,6 +2,7 @@
 
 import abc
 import dataclasses
+from datetime import timezone
 
 import voluptuous as vlp
 
@@ -55,7 +56,7 @@ class KeepAll(RetentionPolicyBase):
                 if self.schedule_name is None
                 or artifact.operation.schedule_name == self.schedule_name
             ),
-            key=lambda artifact: artifact.operation.created_at,
+            key=lambda artifact: artifact.operation.instant,
             reverse=True,
         )
 
@@ -100,7 +101,7 @@ class KeepLast(RetentionPolicyBase):
             for artifact in artifacts
             if self.schedule_name is None or artifact.operation.schedule_name == self.schedule_name
         )
-        return sorted(matching, key=lambda artifact: artifact.operation.created_at, reverse=True)[
+        return sorted(matching, key=lambda artifact: artifact.operation.instant, reverse=True)[
             : self.count
         ]
 
@@ -154,13 +155,17 @@ class KeepFor(RetentionPolicyBase):
         self, artifacts: ty.Sequence[BackupArtifact], now: ty.datetime
     ) -> list[BackupArtifact]:
         """Return matching artifacts created within the duration."""
-        cutoff = now - self.duration
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        if now.utcoffset() is None:
+            raise YaesmValueError("now has an invalid timezone")
+        cutoff = now.astimezone(timezone.utc) - self.duration
         matching = (
             artifact
             for artifact in artifacts
-            if artifact.operation.created_at >= cutoff
+            if artifact.operation.instant >= cutoff
             and (
                 self.schedule_name is None or artifact.operation.schedule_name == self.schedule_name
             )
         )
-        return sorted(matching, key=lambda artifact: artifact.operation.created_at, reverse=True)
+        return sorted(matching, key=lambda artifact: artifact.operation.instant, reverse=True)

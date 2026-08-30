@@ -102,7 +102,7 @@ def replicated_operation() -> BackupOperation:
         "example",
         "hourly",
         datetime(2026, 8, 27, 12, 30),
-        "yaesm-local-hourly.2026_08_27_12:30",
+        "yaesm-local-hourly.2026_08_27_12:30.p0000",
     )
 
 
@@ -801,7 +801,7 @@ def test_cap_import_preserves_encryption_state():
 
 def test_cap_list_returns_matching_artifacts_newest_first():
     older = operation(11)
-    source = "yaesm-local-hourly.2026_08_27_12:30"
+    source = "yaesm-local-hourly.2026_08_27_12:30.p0000"
     newer = BackupOperation("example", "hourly", datetime(2026, 8, 27, 12, 30), source)
     runner = RecordingRunner(
         stdouts=(

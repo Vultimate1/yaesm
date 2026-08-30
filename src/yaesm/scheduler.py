@@ -7,7 +7,7 @@ import logging
 import queue
 import time
 from _thread import LockType
-from datetime import datetime, tzinfo
+from datetime import datetime, timezone, tzinfo
 from threading import Lock
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -16,6 +16,7 @@ import voluptuous as vlp
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.base import BaseTrigger
+from tzlocal import get_localzone
 
 import yaesm.ty as ty
 from yaesm.backup import Backup
@@ -53,14 +54,6 @@ _GLOBAL_SETTINGS_SCHEMA = vlp.Schema(
 )
 
 
-def _configured_timezone(config: Config) -> tzinfo | None:
-    settings = config.global_settings.get(Scheduler.global_settings_key, {})
-    assert isinstance(settings, dict)
-    timezone = settings.get("timezone")
-    assert timezone is None or isinstance(timezone, tzinfo)
-    return timezone
-
-
 class SchedulerError(YaesmError):
     """Raised when a backup cannot be scheduled."""
 
@@ -70,6 +63,17 @@ class Scheduler:
 
     global_settings_key: ty.ClassVar[str] = "scheduler"
     global_settings_schema: ty.ClassVar[vlp.Schema] = _GLOBAL_SETTINGS_SCHEMA
+
+    @classmethod
+    def timezone(cls, config: Config) -> tzinfo:
+        """Return the configured timezone or the system timezone."""
+        settings = config.global_settings.get(cls.global_settings_key, {})
+        assert isinstance(settings, dict)
+        timezone = settings.get("timezone")
+        if timezone is None:
+            timezone = get_localzone()
+        assert isinstance(timezone, tzinfo)
+        return timezone
 
     def __init__(self, config: Config) -> None:
         self._lock = Lock()
@@ -94,7 +98,7 @@ class Scheduler:
                 if self._scheduler.get_job(job_id) is not None:
                     self._scheduler.remove_job(job_id)
             self._timer_job_ids.clear()
-            timezone = _configured_timezone(config)
+            timezone = self.timezone(config)
             for backup in config.backups.values():
                 for schedule in backup.schedules:
                     for index, trigger in enumerate(schedule.timer_triggers(timezone)):
@@ -103,6 +107,7 @@ class Scheduler:
                             backup,
                             schedule.name,
                             config.backups_by_name,
+                            timezone,
                             trigger=trigger,
                             job_id=job_id,
                         )
@@ -152,6 +157,7 @@ class Scheduler:
                     backup,
                     schedule_name,
                     config.backups_by_name,
+                    self.timezone(config),
                     request_id=request_id,
                     job_id=str(request_id),
                 )
@@ -183,6 +189,7 @@ class Scheduler:
         backup: Backup,
         schedule_name: str,
         backups: ty.Mapping[str, Backup],
+        timezone: tzinfo,
         *,
         job_id: str,
         trigger: BaseTrigger | None = None,
@@ -193,7 +200,7 @@ class Scheduler:
         self._scheduler.add_job(
             _execute_backup,
             trigger=trigger,
-            args=(backup, schedule_name, backups, request_id, messages, backup_lock),
+            args=(backup, schedule_name, backups, request_id, messages, timezone, backup_lock),
             id=job_id,
             name=f"{backup.name} ({schedule_name})",
         )
@@ -215,6 +222,7 @@ def _execute_backup(
     backups: ty.Mapping[str, Backup],
     backup_request_id: UUID | None,
     messages: queue.Queue[ControlMessage] | None,
+    scheduler_timezone: tzinfo,
     backup_lock: LockType,
 ) -> None:
     serialized_request_id = None if backup_request_id is None else str(backup_request_id)
@@ -232,7 +240,11 @@ def _execute_backup(
             try:
                 logger.info("backup %r (%s) started", backup.name, schedule_name)
                 started = time.monotonic()
-                artifact = backup.execute(schedule_name, datetime.now(), backups)
+                artifact = backup.execute(
+                    schedule_name,
+                    datetime.now(timezone.utc).astimezone(scheduler_timezone),
+                    backups,
+                )
                 logger.info(
                     "backup %r (%s) completed in %s: %s",
                     backup.name,
