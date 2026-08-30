@@ -63,25 +63,122 @@ def _collect_messages(messages: list[str], error: YaesmError, prefix: str = "") 
 
 
 @dataclasses.dataclass(frozen=True)
+class BackupGroup:
+    """A named, ordered collection of backup targets."""
+
+    name: str
+    members: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not bckp.backup_name_valid(self.name):
+            raise ConfigError(f"invalid group name: {self.name!r}")
+        if not self.members:
+            raise ConfigError("group must contain at least one target")
+        for member in self.members:
+            if not bckp.backup_name_valid(member):
+                raise ConfigError(f"invalid group member name: {member!r}")
+
+
+BackupTarget: ty.TypeAlias = bckp.Backup | BackupGroup
+
+
+@dataclasses.dataclass(frozen=True)
 class Config:
-    """Parsed global settings and backups."""
+    """Parsed global settings, backups, and backup groups."""
 
     global_settings: GlobalSettings
     backups: dict[str, bckp.Backup]
+    groups: dict[str, BackupGroup] = dataclasses.field(default_factory=dict)
     backups_by_name: dict[str, bckp.Backup] = dataclasses.field(
+        init=False, repr=False, compare=False
+    )
+    targets_by_name: dict[str, BackupTarget] = dataclasses.field(
         init=False, repr=False, compare=False
     )
 
     def __post_init__(self) -> None:
-        backups_by_name = {}
+        messages = []
+        backups_by_name: dict[str, bckp.Backup] = {}
         for backup in self.backups.values():
             for name in backup.names:
                 if owner := backups_by_name.get(name):
-                    raise ConfigError(
+                    messages.append(
                         f"backup name {name!r} is used by both {owner.name!r} and {backup.name!r}"
                     )
-                backups_by_name[name] = backup
+                else:
+                    backups_by_name[name] = backup
+
+        targets_by_name: dict[str, BackupTarget] = dict(backups_by_name)
+        for group in self.groups.values():
+            if owner := targets_by_name.get(group.name):
+                messages.append(
+                    f"target name {group.name!r} is used by both "
+                    f"{_describe_target(owner)} and group {group.name!r}"
+                )
+            else:
+                targets_by_name[group.name] = group
+
+        messages.extend(_validate_backup_groups(self.groups, targets_by_name))
+        if messages:
+            raise ConfigError(messages)
         object.__setattr__(self, "backups_by_name", backups_by_name)
+        object.__setattr__(self, "targets_by_name", targets_by_name)
+
+    def expand_targets(self, *names: str) -> tuple[bckp.Backup, ...]:
+        """Expand named backup targets in order, removing duplicate backups."""
+        backups: dict[str, bckp.Backup] = {}
+
+        def expand(name: str) -> None:
+            target = self.targets_by_name.get(name)
+            if target is None:
+                raise ConfigError(f"unknown backup target: {name!r}")
+            if isinstance(target, bckp.Backup):
+                backups.setdefault(target.name, target)
+                return
+            for member in target.members:
+                expand(member)
+
+        for name in names:
+            expand(name)
+        return tuple(backups.values())
+
+
+def _describe_target(target: BackupTarget) -> str:
+    kind = "backup" if isinstance(target, bckp.Backup) else "group"
+    return f"{kind} {target.name!r}"
+
+
+def _validate_backup_groups(
+    groups: ty.Mapping[str, BackupGroup],
+    targets_by_name: ty.Mapping[str, BackupTarget],
+) -> tuple[str, ...]:
+    messages = []
+    visiting: list[str] = []
+    visited = set()
+
+    for group in groups.values():
+        for member in group.members:
+            if member not in targets_by_name:
+                messages.append(f"group {group.name!r} references unknown target {member!r}")
+
+    def visit(group: BackupGroup) -> None:
+        if group.name in visiting:
+            cycle = (*visiting[visiting.index(group.name) :], group.name)
+            messages.append(f"backup group cycle: {' -> '.join(cycle)}")
+            return
+        if group.name in visited:
+            return
+        visiting.append(group.name)
+        for member in group.members:
+            target = targets_by_name.get(member)
+            if isinstance(target, BackupGroup):
+                visit(target)
+        visiting.pop()
+        visited.add(group.name)
+
+    for group in groups.values():
+        visit(group)
+    return tuple(dict.fromkeys(messages))
 
 
 def parse_config(value: object) -> Config:
@@ -106,8 +203,19 @@ def parse_config(value: object) -> Config:
         global_settings = {}
 
     backups = {}
-    backup_names = {name for name in value if isinstance(name, str) and name != "global_settings"}
-    has_backup_definition = any(name != "global_settings" for name in value)
+    groups = {}
+    backup_names = {
+        name
+        for name, definition in value.items()
+        if isinstance(name, str)
+        and name != "global_settings"
+        and not _is_group_definition(definition)
+    }
+    group_names = {
+        name
+        for name, definition in value.items()
+        if isinstance(name, str) and name != "global_settings" and _is_group_definition(definition)
+    }
     for name, definition in value.items():
         if name == "global_settings":
             continue
@@ -115,21 +223,26 @@ def parse_config(value: object) -> Config:
             messages.append("backup names must be strings")
             continue
         try:
-            backups[name] = _parse_backup(name, definition, global_settings)
+            if _is_group_definition(definition):
+                groups[name] = _parse_backup_group(name, definition)
+            else:
+                backups[name] = _parse_backup(name, definition, global_settings)
         except YaesmError as error:
-            _collect_messages(messages, error, f"backup {name!r}: ")
+            kind = "group" if _is_group_definition(definition) else "backup"
+            _collect_messages(messages, error, f"{kind} {name!r}: ")
 
     config = None
     try:
-        config = Config(global_settings, backups)
+        config = Config(global_settings, backups, groups)
     except ConfigError as error:
         messages.extend(error.messages)
-    if not has_backup_definition:
+    if not backup_names:
         messages.append("at least one backup is required")
     try:
         _validate_backup_sources(
             backups,
             backup_names,
+            group_names,
             {} if config is None else config.backups_by_name,
         )
     except ConfigError as error:
@@ -138,6 +251,36 @@ def parse_config(value: object) -> Config:
         raise ConfigError(messages)
     assert config is not None
     return config
+
+
+def _is_group_definition(value: object) -> bool:
+    return isinstance(value, dict) and "group" in value
+
+
+def _parse_backup_group(name: str, value: object) -> BackupGroup:
+    assert isinstance(value, dict) and "group" in value
+    messages = []
+    if unknown := sorted(value.keys() - {"group"}, key=str):
+        messages.append(f"unknown settings: {', '.join(str(item) for item in unknown)}")
+
+    members = value["group"]
+    if not isinstance(members, list):
+        messages.append("group must be a list")
+    elif not members:
+        messages.append("group must contain at least one target")
+    else:
+        for member in members:
+            if not isinstance(member, str):
+                messages.append("group members must be strings")
+                break
+            if not bckp.backup_name_valid(member):
+                messages.append(f"invalid group member name: {member!r}")
+
+    if not bckp.backup_name_valid(name):
+        messages.append(f"invalid group name: {name!r}")
+    if messages:
+        raise ConfigError(messages)
+    return BackupGroup(name, tuple(members))
 
 
 def _parse_global_settings(value: object) -> GlobalSettings:
@@ -332,6 +475,7 @@ def _validate_destination(driver: DriverBase) -> None:
 def _validate_backup_sources(
     backups: ty.Mapping[str, bckp.Backup],
     declared_names: set[str],
+    declared_group_names: set[str],
     backups_by_name: ty.Mapping[str, bckp.Backup],
 ) -> None:
     messages = []
@@ -374,6 +518,11 @@ def _validate_backup_sources(
                         f"backup {name!r} and source backup {source_backup.name!r} "
                         "use different SSH configurations"
                     )
+            elif source_name in declared_group_names:
+                messages.append(
+                    f"backup {name!r} references group {source_name!r} as its source; "
+                    "backup sources must reference a backup"
+                )
             elif source_name not in declared_names:
                 messages.append(f"backup {name!r} references unknown source backup {source_name!r}")
         visiting.pop()

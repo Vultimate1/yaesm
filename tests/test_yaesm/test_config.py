@@ -13,7 +13,7 @@ from hypothesis import strategies as st
 import yaesm.backup as bckp
 import yaesm.config as config_module
 import yaesm.ty as ty
-from yaesm.config import ConfigError, parse_config, parse_schedules
+from yaesm.config import BackupGroup, ConfigError, parse_config, parse_schedules
 from yaesm.driver.btrfsdriver import BtrfsDriver
 from yaesm.driver.driverbase import DriverBase
 from yaesm.driver.gpgdriver import GPGDriver
@@ -308,17 +308,41 @@ def valid_backup_definitions(draw, name, ssh, previous_backups):
 
 @st.composite
 def valid_configs(draw):
-    names = draw(st.lists(_BACKUP_NAMES, min_size=1, max_size=5, unique=True))
+    backup_count = draw(st.integers(min_value=1, max_value=5))
+    group_count = draw(st.integers(min_value=0, max_value=4))
+    names = draw(
+        st.lists(
+            _BACKUP_NAMES,
+            min_size=backup_count + group_count,
+            max_size=backup_count + group_count,
+            unique=True,
+        )
+    )
+    backup_names = names[:backup_count]
+    group_names = names[backup_count:]
     ssh = draw(_SSH_CONFIGS)
     config = {}
     previous_backups = []
-    for name in names:
+    for name in backup_names:
         definition, backup = draw(valid_backup_definitions(name, ssh, previous_backups))
         config[name] = definition
         previous_backups.append(backup)
+
+    available_targets = [alias for aliases, _driver in previous_backups for alias in aliases]
+    for name in group_names:
+        members = draw(
+            st.lists(
+                st.sampled_from(available_targets),
+                min_size=1,
+                max_size=min(6, len(available_targets) + 2),
+            )
+        )
+        config[name] = {"group": members}
+        available_targets.append(name)
     if draw(st.booleans()):
         config["global_settings"] = draw(_GLOBAL_SETTINGS)
-    return config
+    entry_order = draw(st.permutations(tuple(config)))
+    return {name: config[name] for name in entry_order}
 
 
 _INVALID_MUTATION_NAMES = (
@@ -488,6 +512,88 @@ def invalid_configs(draw):
     return config, tuple(messages)
 
 
+_INVALID_GROUP_MUTATION_NAMES = (
+    "nonlist-group",
+    "empty-group",
+    "unknown-setting",
+    "nonstring-member",
+    "invalid-member",
+    "unknown-member",
+    "invalid-name",
+    "cycle",
+    "backup-alias-collision",
+    "group-source",
+    "no-backups",
+)
+_INVALID_GROUP_MUTATIONS = st.sampled_from(_INVALID_GROUP_MUTATION_NAMES)
+
+
+def invalid_group_config(names, mutation):
+    backup_name, group_name, other_group_name, unknown_name = names
+    config = {backup_name: backup_config()}
+
+    match mutation:
+        case "nonlist-group":
+            config[group_name] = {"group": backup_name}
+            message = "group must be a list"
+        case "empty-group":
+            config[group_name] = {"group": []}
+            message = "group must contain at least one target"
+        case "unknown-setting":
+            config[group_name] = {"group": [backup_name], "unexpected": True}
+            message = "unknown settings: unexpected"
+        case "nonstring-member":
+            config[group_name] = {"group": [1]}
+            message = "group members must be strings"
+        case "invalid-member":
+            config[group_name] = {"group": ["bad/name"]}
+            message = "invalid group member name: 'bad/name'"
+        case "unknown-member":
+            config[group_name] = {"group": [unknown_name]}
+            message = f"group {group_name!r} references unknown target {unknown_name!r}"
+        case "invalid-name":
+            invalid_name = f"-{group_name}"
+            config[invalid_name] = {"group": [backup_name]}
+            message = f"invalid group name: {invalid_name!r}"
+        case "cycle":
+            config[group_name] = {"group": [other_group_name]}
+            config[other_group_name] = {"group": [group_name]}
+            message = f"backup group cycle: {group_name} -> {other_group_name} -> {group_name}"
+        case "backup-alias-collision":
+            alias = f"old-{backup_name}"
+            config[backup_name] = backup_config(previous_names=[alias])
+            config[alias] = {"group": [backup_name]}
+            message = (
+                f"target name {alias!r} is used by both backup {backup_name!r} and group {alias!r}"
+            )
+        case "group-source":
+            config[group_name] = {"group": [backup_name]}
+            config[other_group_name] = backup_config(source={"backup": group_name})
+            message = (
+                f"backup {other_group_name!r} references group {group_name!r} as its source; "
+                "backup sources must reference a backup"
+            )
+        case "no-backups":
+            config = {group_name: {"group": [group_name]}}
+            message = "at least one backup is required"
+        case _:
+            raise AssertionError(f"unknown group mutation: {mutation}")
+    return config, message
+
+
+@st.composite
+def invalid_group_configs(draw):
+    names = draw(
+        st.lists(
+            _BACKUP_NAMES,
+            min_size=4,
+            max_size=4,
+            unique=True,
+        )
+    )
+    return invalid_group_config(names, draw(_INVALID_GROUP_MUTATIONS))
+
+
 def test_config_types_are_discovered_from_subclasses():
     backup = parse_config(
         {
@@ -613,6 +719,167 @@ def test_parse_config_builds_previous_name_lookup():
         "home": backup,
         "old-home": backup,
     }
+
+
+def test_parse_config_builds_backup_group():
+    config = parse_config(
+        {
+            "local": {"group": ["root", "home"]},
+            "root": backup_config(),
+            "home": backup_config(),
+        }
+    )
+    group = BackupGroup("local", ("root", "home"))
+
+    assert config.groups == {"local": group}
+    assert config.targets_by_name == {
+        "root": config.backups["root"],
+        "home": config.backups["home"],
+        "local": group,
+    }
+    assert config.expand_targets("local") == (
+        config.backups["root"],
+        config.backups["home"],
+    )
+
+
+def test_backup_groups_expand_recursively_in_order_without_duplicates():
+    config = parse_config(
+        {
+            "local": {"group": ["root", "home"]},
+            "everything": {"group": ["local", "remote", "root"]},
+            "root": backup_config(),
+            "home": backup_config(),
+            "remote": backup_config(),
+        }
+    )
+
+    assert config.expand_targets("home", "everything", "local") == (
+        config.backups["home"],
+        config.backups["root"],
+        config.backups["remote"],
+    )
+
+
+def test_backup_group_definition_order_does_not_matter():
+    config = parse_config(
+        {
+            "everything": {"group": ["local", "remote"]},
+            "local": {"group": ["home"]},
+            "remote": backup_config(),
+            "home": backup_config(),
+        }
+    )
+
+    assert config.expand_targets("everything") == (
+        config.backups["home"],
+        config.backups["remote"],
+    )
+
+
+def test_backup_group_members_may_use_previous_backup_names():
+    config = parse_config(
+        {
+            "local": {"group": ["old-home"]},
+            "home": backup_config(previous_names=["old-home"]),
+        }
+    )
+
+    assert config.expand_targets("local") == (config.backups["home"],)
+
+
+def test_expand_targets_rejects_unknown_name():
+    config = parse_config({"home": backup_config()})
+
+    with pytest.raises(ConfigError, match="unknown backup target: 'missing'"):
+        config.expand_targets("missing")
+
+
+@pytest.mark.parametrize("members", [None, "home", {}, 1])
+def test_parse_config_rejects_nonlist_backup_group(members):
+    with pytest.raises(ConfigError, match="group 'local': group must be a list"):
+        parse_config({"local": {"group": members}, "home": backup_config()})
+
+
+def test_parse_config_rejects_empty_backup_group():
+    with pytest.raises(ConfigError, match="group must contain at least one target"):
+        parse_config({"local": {"group": []}, "home": backup_config()})
+
+
+@pytest.mark.parametrize(
+    ("members", "message"),
+    [
+        ([1], "group members must be strings"),
+        (["bad/name"], "invalid group member name: 'bad/name'"),
+    ],
+)
+def test_parse_config_rejects_invalid_backup_group_member(members, message):
+    with pytest.raises(ConfigError, match=message):
+        parse_config({"local": {"group": members}, "home": backup_config()})
+
+
+def test_parse_config_rejects_unknown_backup_group_member():
+    with pytest.raises(ConfigError, match="group 'local' references unknown target 'missing'"):
+        parse_config({"local": {"group": ["missing"]}, "home": backup_config()})
+
+
+def test_parse_config_rejects_backup_group_cycle():
+    with pytest.raises(
+        ConfigError,
+        match="backup group cycle: everything -> local -> everything",
+    ):
+        parse_config(
+            {
+                "everything": {"group": ["local"]},
+                "local": {"group": ["everything"]},
+                "home": backup_config(),
+            }
+        )
+
+
+def test_parse_config_rejects_invalid_backup_group_name():
+    with pytest.raises(ConfigError, match="group '-local': invalid group name: '-local'"):
+        parse_config({"-local": {"group": ["home"]}, "home": backup_config()})
+
+
+def test_parse_config_rejects_unknown_backup_group_setting():
+    with pytest.raises(ConfigError, match="group 'local': unknown settings: description"):
+        parse_config(
+            {
+                "local": {"group": ["home"], "description": "Local backups"},
+                "home": backup_config(),
+            }
+        )
+
+
+def test_parse_config_rejects_group_name_that_is_a_previous_backup_name():
+    with pytest.raises(
+        ConfigError,
+        match="target name 'old-home' is used by both backup 'home' and group 'old-home'",
+    ):
+        parse_config(
+            {
+                "old-home": {"group": ["home"]},
+                "home": backup_config(previous_names=["old-home"]),
+            }
+        )
+
+
+def test_parse_config_rejects_group_as_backup_source():
+    with pytest.raises(
+        ConfigError,
+        match=(
+            "backup 'replica' references group 'local' as its source; "
+            "backup sources must reference a backup"
+        ),
+    ):
+        parse_config(
+            {
+                "local": {"group": ["home"]},
+                "home": backup_config(),
+                "replica": backup_config(source={"backup": "local"}),
+            }
+        )
 
 
 def test_parse_config_accepts_skip_unchanged():
@@ -1018,11 +1285,52 @@ def test_parse_config_collects_independent_errors():
     )
 
 
+def _expand_config_targets(value, *target_names):
+    group_members = {
+        name: definition["group"]
+        for name, definition in value.items()
+        if name != "global_settings" and "group" in definition
+    }
+    backup_aliases = {
+        alias: name
+        for name, definition in value.items()
+        if name != "global_settings" and "group" not in definition
+        for alias in (name, *definition.get("previous_names", ()))
+    }
+    expanded = {}
+
+    def expand(name):
+        if name in group_members:
+            for member in group_members[name]:
+                expand(member)
+        else:
+            canonical_name = backup_aliases[name]
+            expanded.setdefault(canonical_name, None)
+
+    for name in target_names:
+        expand(name)
+    return tuple(expanded)
+
+
 @given(value=valid_configs())
 def test_generated_valid_configs_parse(value):
     parsed = parse_config(value)
+    backup_definitions = {
+        name: definition
+        for name, definition in value.items()
+        if name != "global_settings" and "group" not in definition
+    }
+    group_definitions = {
+        name: definition
+        for name, definition in value.items()
+        if name != "global_settings" and "group" in definition
+    }
 
-    assert set(parsed.backups) == set(value) - {"global_settings"}
+    assert set(parsed.backups) == set(backup_definitions)
+    assert parsed.groups == {
+        name: BackupGroup(name, tuple(definition["group"]))
+        for name, definition in group_definitions.items()
+    }
     expected_global_settings = value.get("global_settings", {}).copy()
     if scheduler := expected_global_settings.get("scheduler"):
         expected_global_settings["scheduler"] = {
@@ -1035,7 +1343,7 @@ def test_generated_valid_configs_parse(value):
         expected_global_settings["ssh"] = {name: Path(path) for name, path in ssh.items()}
     assert parsed.global_settings == expected_global_settings
     for name, backup in parsed.backups.items():
-        definition = value[name]
+        definition = backup_definitions[name]
         assert backup.previous_names == tuple(definition.get("previous_names", ()))
         assert backup.skip_unchanged is definition.get("skip_unchanged", False)
 
@@ -1077,6 +1385,20 @@ def test_generated_valid_configs_parse(value):
             for policy in backup.retention_policies
         )
 
+    expected_target_names = {
+        alias
+        for name, definition in backup_definitions.items()
+        for alias in (name, *definition.get("previous_names", ()))
+    } | set(group_definitions)
+    assert set(parsed.targets_by_name) == expected_target_names
+    for target_name in parsed.targets_by_name:
+        assert tuple(backup.name for backup in parsed.expand_targets(target_name)) == (
+            _expand_config_targets(value, target_name)
+        )
+    assert tuple(
+        backup.name for backup in parsed.expand_targets(*parsed.targets_by_name)
+    ) == _expand_config_targets(value, *parsed.targets_by_name)
+
 
 @pytest.mark.parametrize("mutation", _INVALID_MUTATION_NAMES)
 def test_invalid_config_generator_covers_every_mutation(mutation):
@@ -1103,6 +1425,26 @@ def test_generated_invalid_configs_report_all_errors(case):
     assert str(error.value) == (
         "configuration errors:\n" + "\n".join(f"  - {message}" for message in error.value.messages)
     )
+
+
+@pytest.mark.parametrize("mutation", _INVALID_GROUP_MUTATION_NAMES)
+def test_invalid_group_generator_covers_every_mutation(mutation):
+    value, message = invalid_group_config(("home", "local", "remote", "missing"), mutation)
+
+    with pytest.raises(ConfigError) as error:
+        parse_config(value)
+
+    assert message in error.value.format()
+
+
+@given(case=invalid_group_configs())
+def test_generated_invalid_backup_groups_are_rejected(case):
+    value, message = case
+
+    with pytest.raises(ConfigError) as error:
+        parse_config(value)
+
+    assert message in error.value.format()
 
 
 def test_parse_config_rejects_nonstring_backup_name():
