@@ -52,9 +52,18 @@ def test_check_error_is_expected_error():
 def test_check_arguments():
     assert CheckSubcommand.target_selection is TargetSelectionMode.DEFAULT_ALL
     assert arguments().targets.all
+    assert arguments().config_only is False
     assert arguments().quiet is False
     assert arguments("home,,root, home", "--quiet").targets == TargetSelection(("home", "root"))
+    assert arguments("--config-only").config_only is True
     assert arguments("home", "--quiet").quiet is True
+
+
+def test_config_only_skips_backup_checks():
+    config = mock.Mock()
+
+    assert CheckSubcommand().main(config, arguments("--config-only")) == 0
+    config.backups_for_targets.assert_not_called()
 
 
 def test_check_reports_all_results_by_default(capsys):

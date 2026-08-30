@@ -21,6 +21,9 @@ class CheckSubcommand(SubcommandBase):
     target_selection = TargetSelectionMode.DEFAULT_ALL
 
     def main(self, config: Config, arguments: argparse.Namespace) -> int:
+        if arguments.config_only:
+            return 0
+
         backups = config.backups_for_targets(*arguments.targets.names)
         openssh_result = None
         connection_results: dict[SSHTarget, CheckResult] = {}
@@ -123,6 +126,11 @@ class CheckSubcommand(SubcommandBase):
 
     @classmethod
     def add_argparser_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--config-only",
+            action="store_true",
+            help="only validate the configuration",
+        )
         parser.add_argument(
             "-q",
             "--quiet",
