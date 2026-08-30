@@ -12,6 +12,7 @@ import yaesm.ty as ty
 from yaesm.driver import load_drivers
 from yaesm.driver.driverbase import DriverBase, GlobalSettings
 from yaesm.errors import YaesmError
+from yaesm.names import ALL_TARGET_NAME
 from yaesm.pipeline import Pipeline
 from yaesm.retention import KeepAll, RetentionPolicyBase
 from yaesm.schedule import OnDemandSchedule, Schedule, ScheduleBase, schedule_name_valid
@@ -68,11 +69,15 @@ class BackupGroup:
 
     name: str
     members: tuple[str, ...]
+    _system: dataclasses.InitVar[bool] = False
 
-    def __post_init__(self) -> None:
-        if not bckp.backup_name_valid(self.name):
+    def __post_init__(self, _system: bool) -> None:
+        if _system:
+            if self.name != ALL_TARGET_NAME:
+                raise ConfigError(f"invalid system group name: {self.name!r}")
+        elif not bckp.backup_name_valid(self.name):
             raise ConfigError(f"invalid group name: {self.name!r}")
-        if not self.members:
+        if not _system and not self.members:
             raise ConfigError("group must contain at least one target")
         for member in self.members:
             if not bckp.backup_name_valid(member):
@@ -108,8 +113,14 @@ class Config:
                 else:
                     backups_by_name[name] = backup
 
+        groups = dict(self.groups)
+        groups[ALL_TARGET_NAME] = BackupGroup(
+            ALL_TARGET_NAME,
+            tuple(backup.name for backup in self.backups.values()),
+            _system=True,
+        )
         targets_by_name: dict[str, BackupTarget] = dict(backups_by_name)
-        for group in self.groups.values():
+        for group in groups.values():
             if owner := targets_by_name.get(group.name):
                 messages.append(
                     f"target name {group.name!r} is used by both "
@@ -118,9 +129,10 @@ class Config:
             else:
                 targets_by_name[group.name] = group
 
-        messages.extend(_validate_backup_groups(self.groups, targets_by_name))
+        messages.extend(_validate_backup_groups(groups, targets_by_name))
         if messages:
             raise ConfigError(messages)
+        object.__setattr__(self, "groups", groups)
         object.__setattr__(self, "backups_by_name", backups_by_name)
         object.__setattr__(self, "targets_by_name", targets_by_name)
 

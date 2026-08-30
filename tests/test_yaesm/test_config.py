@@ -13,7 +13,7 @@ from hypothesis import strategies as st
 import yaesm.backup as bckp
 import yaesm.config as config_module
 import yaesm.ty as ty
-from yaesm.config import BackupGroup, ConfigError, parse_config, parse_schedules
+from yaesm.config import BackupGroup, Config, ConfigError, parse_config, parse_schedules
 from yaesm.driver.btrfsdriver import BtrfsDriver
 from yaesm.driver.driverbase import DriverBase
 from yaesm.driver.gpgdriver import GPGDriver
@@ -21,6 +21,7 @@ from yaesm.driver.rsyncdriver import RsyncDriver
 from yaesm.driver.tardriver import TarDriver
 from yaesm.driver.zfsdriver import ZFSDriver
 from yaesm.driver.zstddriver import ZstdDriver
+from yaesm.names import ALL_TARGET_NAME
 from yaesm.pipeline import Pipeline
 from yaesm.representation import Representation
 from yaesm.retention import KeepAll, KeepFor, KeepLast, RetentionPolicyBase
@@ -730,12 +731,16 @@ def test_parse_config_builds_backup_group():
         }
     )
     group = BackupGroup("local", ("root", "home"))
+    all_group = config.groups[ALL_TARGET_NAME]
 
-    assert config.groups == {"local": group}
+    assert all_group.name == ALL_TARGET_NAME
+    assert all_group.members == ("root", "home")
+    assert config.groups == {"local": group, ALL_TARGET_NAME: all_group}
     assert config.targets_by_name == {
         "root": config.backups["root"],
         "home": config.backups["home"],
         "local": group,
+        ALL_TARGET_NAME: all_group,
     }
     assert config.expand_targets("local") == (
         config.backups["root"],
@@ -759,6 +764,27 @@ def test_backup_groups_expand_recursively_in_order_without_duplicates():
         config.backups["root"],
         config.backups["remote"],
     )
+
+
+def test_all_target_expands_every_backup_in_definition_order():
+    config = parse_config(
+        {
+            "root": backup_config(),
+            "home": backup_config(),
+            "remote": backup_config(),
+        }
+    )
+
+    assert config.groups[ALL_TARGET_NAME].members == ("root", "home", "remote")
+    assert config.targets_by_name[ALL_TARGET_NAME] is config.groups[ALL_TARGET_NAME]
+    assert config.expand_targets(ALL_TARGET_NAME) == tuple(config.backups.values())
+
+
+def test_all_target_exists_when_config_has_no_backups():
+    config = Config({}, {})
+
+    assert config.groups[ALL_TARGET_NAME].members == ()
+    assert config.expand_targets(ALL_TARGET_NAME) == ()
 
 
 def test_backup_group_definition_order_does_not_matter():
@@ -1286,17 +1312,18 @@ def test_parse_config_collects_independent_errors():
 
 
 def _expand_config_targets(value, *target_names):
-    group_members = {
-        name: definition["group"]
-        for name, definition in value.items()
-        if name != "global_settings" and "group" in definition
-    }
     backup_aliases = {
         alias: name
         for name, definition in value.items()
         if name != "global_settings" and "group" not in definition
         for alias in (name, *definition.get("previous_names", ()))
     }
+    group_members = {
+        name: definition["group"]
+        for name, definition in value.items()
+        if name != "global_settings" and "group" in definition
+    }
+    group_members[ALL_TARGET_NAME] = tuple(dict.fromkeys(backup_aliases.values()))
     expanded = {}
 
     def expand(name):
@@ -1327,10 +1354,14 @@ def test_generated_valid_configs_parse(value):
     }
 
     assert set(parsed.backups) == set(backup_definitions)
-    assert parsed.groups == {
+    expected_groups = {
         name: BackupGroup(name, tuple(definition["group"]))
         for name, definition in group_definitions.items()
     }
+    assert parsed.groups[ALL_TARGET_NAME].members == tuple(backup_definitions)
+    assert {
+        name: group for name, group in parsed.groups.items() if name != ALL_TARGET_NAME
+    } == expected_groups
     expected_global_settings = value.get("global_settings", {}).copy()
     if scheduler := expected_global_settings.get("scheduler"):
         expected_global_settings["scheduler"] = {
@@ -1385,11 +1416,15 @@ def test_generated_valid_configs_parse(value):
             for policy in backup.retention_policies
         )
 
-    expected_target_names = {
-        alias
-        for name, definition in backup_definitions.items()
-        for alias in (name, *definition.get("previous_names", ()))
-    } | set(group_definitions)
+    expected_target_names = (
+        {
+            alias
+            for name, definition in backup_definitions.items()
+            for alias in (name, *definition.get("previous_names", ()))
+        }
+        | set(group_definitions)
+        | {ALL_TARGET_NAME}
+    )
     assert set(parsed.targets_by_name) == expected_target_names
     for target_name in parsed.targets_by_name:
         assert tuple(backup.name for backup in parsed.expand_targets(target_name)) == (

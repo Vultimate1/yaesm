@@ -4,6 +4,8 @@ import re
 
 import yaesm.ty as ty
 
+ALL_TARGET_NAME = "@all"
+
 
 def name_valid(name: object, *, reserved: ty.Iterable[str] = ()) -> bool:
     """Return whether a name is safe, at most 64 characters, and not reserved."""
