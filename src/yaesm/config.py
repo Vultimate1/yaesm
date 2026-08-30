@@ -12,7 +12,7 @@ import yaesm.ty as ty
 from yaesm.driver import load_drivers
 from yaesm.driver.driverbase import DriverBase, GlobalSettings
 from yaesm.errors import YaesmError, YaesmValueError
-from yaesm.names import ALL_TARGET_NAME
+from yaesm.names import ALL_TARGET_NAME, SETTINGS_NAME
 from yaesm.pipeline import Pipeline
 from yaesm.retention import KeepAll, RetentionPolicyBase
 from yaesm.schedule import OnDemandSchedule, Schedule, ScheduleBase, schedule_name_valid
@@ -225,7 +225,7 @@ def parse_config(value: object) -> Config:
 
     messages = []
     try:
-        global_settings = _parse_global_settings(value.get("global_settings", {}))
+        global_settings = _parse_global_settings(value.get(SETTINGS_NAME, {}))
     except ConfigError as error:
         messages.extend(error.messages)
         global_settings = {}
@@ -233,7 +233,7 @@ def parse_config(value: object) -> Config:
     definition_is_group = {
         name: _is_group_definition(definition)
         for name, definition in value.items()
-        if isinstance(name, str) and name != "global_settings"
+        if isinstance(name, str) and name != SETTINGS_NAME
     }
     group_names = {name for name, is_group in definition_is_group.items() if is_group}
     backup_names = set(definition_is_group) - group_names
@@ -241,7 +241,7 @@ def parse_config(value: object) -> Config:
     backups = {}
     groups = {}
     for name, definition in value.items():
-        if name == "global_settings":
+        if name == SETTINGS_NAME:
             continue
         if not isinstance(name, str):
             messages.append("backup names must be strings")
@@ -306,9 +306,9 @@ def _parse_backup_group(name: str, value: object) -> BackupGroup:
 
 def _parse_global_settings(value: object) -> GlobalSettings:
     if not isinstance(value, dict):
-        raise ConfigError("global_settings must be a mapping")
+        raise ConfigError("settings must be a mapping")
     if any(not isinstance(name, str) for name in value):
-        raise ConfigError("global setting names must be strings")
+        raise ConfigError("setting names must be strings")
 
     schema = vlp.Schema(
         {
@@ -319,9 +319,7 @@ def _parse_global_settings(value: object) -> GlobalSettings:
     try:
         return ty.cast(GlobalSettings, schema(value))
     except vlp.MultipleInvalid as error:
-        raise ConfigError(
-            [f"invalid global settings: {message}" for message in error.errors]
-        ) from error
+        raise ConfigError([f"invalid settings: {message}" for message in error.errors]) from error
 
 
 # Backup parsing

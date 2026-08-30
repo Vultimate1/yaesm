@@ -5,6 +5,7 @@ import re
 import yaesm.ty as ty
 
 ALL_TARGET_NAME = "@all"
+SETTINGS_NAME = "settings"
 
 
 def name_valid(name: object, *, reserved: ty.Iterable[str] = ()) -> bool:

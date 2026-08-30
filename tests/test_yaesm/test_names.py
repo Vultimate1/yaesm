@@ -2,7 +2,7 @@
 
 import pytest
 
-from yaesm.names import ALL_TARGET_NAME, name_valid
+from yaesm.names import ALL_TARGET_NAME, SETTINGS_NAME, name_valid
 
 
 @pytest.mark.parametrize(
@@ -40,6 +40,10 @@ def test_name_valid_rejects_unsafe_names(name):
 def test_all_target_name_is_outside_the_user_name_namespace():
     assert ALL_TARGET_NAME == "@all"
     assert not name_valid(ALL_TARGET_NAME)
+
+
+def test_settings_name():
+    assert SETTINGS_NAME == "settings"
 
 
 @pytest.mark.parametrize("name", ["reserved", "RESERVED", "Reserved"])

@@ -8,7 +8,7 @@ from datetime import timedelta, timezone
 
 import yaesm.ty as ty
 from yaesm.errors import YaesmError, YaesmValueError
-from yaesm.names import name_valid
+from yaesm.names import SETTINGS_NAME, name_valid
 from yaesm.representation import Representation
 from yaesm.schedule import schedule_name_valid
 
@@ -27,7 +27,7 @@ class BackupError(YaesmError):
 
 def backup_name_valid(name: object) -> bool:
     """Return whether a name is safe to use in an artifact name."""
-    return name_valid(name, reserved=("global_settings",))
+    return name_valid(name, reserved=(SETTINGS_NAME,))
 
 
 @dataclasses.dataclass(frozen=True)

@@ -275,7 +275,7 @@ def test_backup_source_identifies_configured_backup():
     assert bckp.BackupSource("local-home").backup_name == "local-home"
 
 
-@pytest.mark.parametrize("name", ["", "-local", "global_settings", "local.backup"])
+@pytest.mark.parametrize("name", ["", "-local", "settings", "local.backup"])
 def test_backup_source_rejects_invalid_name(name):
     with pytest.raises(YaesmValueError, match="invalid source backup name"):
         bckp.BackupSource(name)
@@ -365,7 +365,7 @@ def test_backup_operation_records_source_artifact():
     assert operation.source_artifact_id == "yaesm-home-hourly.2026_08_27_12:30"
 
 
-@pytest.mark.parametrize("backup_name", ["", "-home", "global_settings", "home.backup"])
+@pytest.mark.parametrize("backup_name", ["", "-home", "settings", "home.backup"])
 def test_backup_operation_rejects_invalid_backup_name(backup_name):
     with pytest.raises(YaesmValueError, match="invalid backup name"):
         bckp.BackupOperation(backup_name, "daily", datetime(2026, 8, 27, 12, 30))
@@ -475,6 +475,8 @@ def test_backup_artifact():
         "0foo",
         "_foo",
         "_",
+        "global_settings",
+        "GLOBAL_SETTINGS",
     ],
 )
 def test_backup_accepts_valid_name(name):
@@ -500,8 +502,8 @@ def test_backup_accepts_valid_name(name):
         "-foo",
         ":foo",
         "f^oo",
-        "global_settings",
-        "GLOBAL_SETTINGS",
+        "settings",
+        "SETTINGS",
     ],
 )
 def test_backup_rejects_invalid_name(name):
@@ -521,7 +523,7 @@ def test_backup_accepts_previous_names():
     assert backup.names == ("laptop-home", "home", "old-home")
 
 
-@pytest.mark.parametrize("name", ["", "global_settings", "old/home", 1])
+@pytest.mark.parametrize("name", ["", "settings", "old/home", 1])
 def test_backup_rejects_invalid_previous_name(name):
     with pytest.raises(YaesmValueError, match="invalid previous backup name"):
         bckp.Backup(

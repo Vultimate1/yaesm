@@ -93,7 +93,7 @@ def backup_config(**settings):
 
 
 _BACKUP_NAMES = st.from_regex(r"[a-z0-9_][a-z0-9_-]{0,12}", fullmatch=True).filter(
-    lambda name: name != "global_settings" and not name.startswith("old-")
+    lambda name: name != "settings" and not name.startswith("old-")
 )
 _SCHEDULE_NAMES = st.from_regex(r"[a-z0-9_][a-z0-9_-]{0,8}", fullmatch=True).filter(
     lambda name: name != "manual" and not name.startswith("old-")
@@ -348,7 +348,7 @@ def valid_configs(draw):
         config[name] = {"group": members}
         available_targets.append(name)
     if draw(st.booleans()):
-        config["global_settings"] = draw(_GLOBAL_SETTINGS)
+        config["settings"] = draw(_GLOBAL_SETTINGS)
     entry_order = draw(st.permutations(tuple(config)))
     return {name: config[name] for name in entry_order}
 
@@ -508,11 +508,11 @@ def invalid_configs(draw):
     messages = []
     global_error = draw(st.sampled_from((None, "nonmapping", "nonstring-name")))
     if global_error == "nonmapping":
-        config["global_settings"] = []
-        messages.append("global_settings must be a mapping")
+        config["settings"] = []
+        messages.append("settings must be a mapping")
     elif global_error == "nonstring-name":
-        config["global_settings"] = {1: "value"}
-        messages.append("global setting names must be strings")
+        config["settings"] = {1: "value"}
+        messages.append("setting names must be strings")
     for name in names:
         definition, message = invalidate_backup(backup_config(), draw(_INVALID_MUTATIONS))
         config[name] = definition
@@ -945,7 +945,7 @@ def test_parse_config_rejects_skip_unchanged_for_unsupported_driver(driver):
 
 @pytest.mark.parametrize(
     "previous_names",
-    ["home", None, {}, ["global_settings"], ["GLOBAL_SETTINGS"], ["old/home"], [1]],
+    ["home", None, {}, ["settings"], ["SETTINGS"], ["old/home"], [1]],
 )
 def test_parse_config_rejects_invalid_previous_backup_names(previous_names):
     with pytest.raises(ConfigError, match="previous_names|invalid previous backup name"):
@@ -1132,9 +1132,9 @@ def test_parse_config_rejects_empty_mapping():
         parse_config({})
 
 
-def test_parse_config_accepts_global_settings():
+def test_parse_config_accepts_settings():
     value = {
-        "global_settings": {
+        "settings": {
             "scheduler": {
                 "max_concurrent_backups": 15,
                 "timezone": "America/New_York",
@@ -1173,7 +1173,7 @@ def test_parse_config_accepts_global_settings():
 def test_parse_config_applies_global_ssh_defaults():
     config = parse_config(
         {
-            "global_settings": {
+            "settings": {
                 "ssh": {
                     "identity_file": "/root/.ssh/id_ed25519",
                     "config_file": "/root/.ssh/config",
@@ -1198,7 +1198,7 @@ def test_parse_config_applies_global_ssh_defaults():
 def test_backup_ssh_settings_override_global_defaults():
     config = parse_config(
         {
-            "global_settings": {
+            "settings": {
                 "ssh": {
                     "identity_file": "/default-key",
                     "config_file": "/default-config",
@@ -1234,10 +1234,10 @@ def test_backup_ssh_settings_override_global_defaults():
     ],
 )
 def test_parse_config_rejects_invalid_global_ssh_defaults(defaults):
-    with pytest.raises(ConfigError, match="invalid global settings"):
+    with pytest.raises(ConfigError, match="invalid settings"):
         parse_config(
             {
-                "global_settings": {"ssh": defaults},
+                "settings": {"ssh": defaults},
                 "home": backup_config(),
             }
         )
@@ -1248,7 +1248,7 @@ def test_parse_config_rejects_invalid_max_concurrent_backups(value):
     with pytest.raises(ConfigError, match="must be a positive integer"):
         parse_config(
             {
-                "global_settings": {"scheduler": {"max_concurrent_backups": value}},
+                "settings": {"scheduler": {"max_concurrent_backups": value}},
                 "home": backup_config(),
             }
         )
@@ -1259,7 +1259,7 @@ def test_parse_config_rejects_invalid_timezone(value):
     with pytest.raises(ConfigError, match="timezone"):
         parse_config(
             {
-                "global_settings": {"scheduler": {"timezone": value}},
+                "settings": {"scheduler": {"timezone": value}},
                 "home": backup_config(),
             }
         )
@@ -1267,27 +1267,27 @@ def test_parse_config_rejects_invalid_timezone(value):
 
 def test_parse_config_rejects_unknown_global_setting():
     with pytest.raises(ConfigError, match="extra keys not allowed"):
-        parse_config({"global_settings": {"unknown": {}}, "home": backup_config()})
+        parse_config({"settings": {"unknown": {}}, "home": backup_config()})
 
 
-def test_parse_config_rejects_nonmapping_global_settings():
-    with pytest.raises(ConfigError, match="global_settings must be a mapping"):
-        parse_config({"global_settings": [], "home": backup_config()})
+def test_parse_config_rejects_nonmapping_settings():
+    with pytest.raises(ConfigError, match="settings must be a mapping"):
+        parse_config({"settings": [], "home": backup_config()})
 
 
-def test_parse_config_rejects_nonstring_global_setting_name():
-    with pytest.raises(ConfigError, match="global setting names must be strings"):
-        parse_config({"global_settings": {1: "value"}, "home": backup_config()})
+def test_parse_config_rejects_nonstring_setting_name():
+    with pytest.raises(ConfigError, match="setting names must be strings"):
+        parse_config({"settings": {1: "value"}, "home": backup_config()})
 
 
-def test_parse_config_requires_backup_with_global_settings():
+def test_parse_config_requires_backup_with_settings():
     with pytest.raises(ConfigError, match="at least one backup is required"):
-        parse_config({"global_settings": {}})
+        parse_config({"settings": {}})
 
 
 def test_parse_config_collects_independent_errors():
     value = {
-        "global_settings": [],
+        "settings": [],
         "first": backup_config(
             source={"unknown": {}},
             unexpected=True,
@@ -1302,7 +1302,7 @@ def test_parse_config_collects_independent_errors():
         parse_config(value)
 
     assert error.value.messages == (
-        "global_settings must be a mapping",
+        "settings must be a mapping",
         "backup 'first': unknown settings: unexpected",
         "backup 'first': source uses unknown driver 'unknown'",
         "backup 'second': destination uses unknown driver 'unknown'",
@@ -1310,7 +1310,7 @@ def test_parse_config_collects_independent_errors():
     )
     assert error.value.format() == (
         "configuration errors:\n"
-        "  - global_settings must be a mapping\n"
+        "  - settings must be a mapping\n"
         "  - backup 'first': unknown settings: unexpected\n"
         "  - backup 'first': source uses unknown driver 'unknown'\n"
         "  - backup 'second': destination uses unknown driver 'unknown'\n"
@@ -1322,13 +1322,13 @@ def _expand_config_targets(value, *target_names):
     backup_aliases = {
         alias: name
         for name, definition in value.items()
-        if name != "global_settings" and "group" not in definition
+        if name != "settings" and "group" not in definition
         for alias in (name, *definition.get("previous_names", ()))
     }
     group_members = {
         name: definition["group"]
         for name, definition in value.items()
-        if name != "global_settings" and "group" in definition
+        if name != "settings" and "group" in definition
     }
     group_members[ALL_TARGET_NAME] = tuple(dict.fromkeys(backup_aliases.values()))
     expanded = {}
@@ -1352,12 +1352,12 @@ def test_generated_valid_configs_parse(value):
     backup_definitions = {
         name: definition
         for name, definition in value.items()
-        if name != "global_settings" and "group" not in definition
+        if name != "settings" and "group" not in definition
     }
     group_definitions = {
         name: definition
         for name, definition in value.items()
-        if name != "global_settings" and "group" in definition
+        if name != "settings" and "group" in definition
     }
 
     assert set(parsed.backups) == set(backup_definitions)
@@ -1369,7 +1369,7 @@ def test_generated_valid_configs_parse(value):
     assert {
         name: group for name, group in parsed.groups.items() if name != ALL_TARGET_NAME
     } == expected_groups
-    expected_global_settings = value.get("global_settings", {}).copy()
+    expected_global_settings = value.get("settings", {}).copy()
     if scheduler := expected_global_settings.get("scheduler"):
         expected_global_settings["scheduler"] = {
             **scheduler,
@@ -1494,12 +1494,12 @@ def test_parse_config_rejects_nonstring_backup_name():
         parse_config({1: backup_config()})
 
 
-@pytest.mark.parametrize("name", ["1home", "_home"])
+@pytest.mark.parametrize("name", ["1home", "_home", "global_settings"])
 def test_parse_config_accepts_numeric_or_underscore_backup_name(name):
     assert parse_config({name: backup_config()}).backups[name].name == name
 
 
-@pytest.mark.parametrize("name", ["-home", "GLOBAL_SETTINGS"])
+@pytest.mark.parametrize("name", ["-home", "SETTINGS"])
 def test_parse_config_rejects_invalid_backup_name(name):
     with pytest.raises(ConfigError, match=rf"backup '{name}': invalid backup name"):
         parse_config({name: backup_config()})
@@ -1661,7 +1661,7 @@ def test_parse_config_rejects_target_setting():
         {"backup": None},
         {"backup": 1},
         {"backup": "-local"},
-        {"backup": "global_settings"},
+        {"backup": "settings"},
         {"backup": "local.backup"},
     ],
 )
