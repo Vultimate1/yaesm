@@ -5,11 +5,11 @@ import enum
 from datetime import datetime, time, timedelta, timezone, tzinfo
 
 import yaesm.ty as ty
-from yaesm.backup import Backup, BackupArtifact
+from yaesm.backup import BackupArtifact
 from yaesm.config import Config
 from yaesm.errors import YaesmValueError
 from yaesm.scheduler import Scheduler
-from yaesm.subcommand.subcommandbase import SubcommandBase
+from yaesm.subcommand.subcommandbase import SubcommandBase, TargetSelectionMode
 
 
 class FindError(YaesmValueError):
@@ -23,8 +23,10 @@ class FindQueryError(FindError):
 class FindSubcommand(SubcommandBase):
     """Find existing backups by name, schedule, and time."""
 
+    target_selection = TargetSelectionMode.REQUIRED
+
     def main(self, config: Config, arguments: argparse.Namespace) -> int:
-        backups = self._select_backups(config, arguments.backup_names)
+        backups = config.backups_for_targets(*arguments.targets.names)
         raw_queries = ([arguments.query] if arguments.query else []) + arguments.additional_queries
         now = datetime.now(timezone.utc)
         zone = Scheduler.timezone(config)
@@ -51,23 +53,8 @@ class FindSubcommand(SubcommandBase):
                     )
         return 0
 
-    @staticmethod
-    def _select_backups(config: Config, names: tuple[str, ...]) -> tuple[Backup, ...]:
-        if not names:
-            raise FindError("no backup names specified")
-        if unknown := tuple(name for name in names if name not in config.backups_by_name):
-            label = "backup" if len(unknown) == 1 else "backups"
-            raise FindError(f"unknown {label}: {', '.join(repr(name) for name in unknown)}")
-        selected = (config.backups_by_name[name] for name in names)
-        return tuple({backup.name: backup for backup in selected}.values())
-
     @classmethod
     def add_argparser_arguments(cls, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument(
-            "backup_names",
-            metavar="BACKUP[,BACKUP...]",
-            type=lambda value: tuple(dict.fromkeys(filter(None, map(str.strip, value.split(","))))),
-        )
         parser.add_argument("query", nargs="*", metavar="QUERY")
         parser.add_argument(
             "--query",

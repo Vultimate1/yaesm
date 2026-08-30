@@ -15,6 +15,7 @@ from yaesm.config import Config, ConfigError
 from yaesm.control import ControlError
 from yaesm.errors import YaesmError
 from yaesm.subcommand.runsubcommand import RunError, RunSubcommand
+from yaesm.subcommand.subcommandbase import TargetSelectionMode
 
 _REQUEST_ID = UUID("11111111-1111-1111-1111-111111111111")
 
@@ -22,7 +23,7 @@ _REQUEST_ID = UUID("11111111-1111-1111-1111-111111111111")
 def arguments(tmp_path: Path) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=tmp_path / "config.yaml")
-    RunSubcommand.add_argparser_arguments(parser)
+    RunSubcommand.configure_argparser(parser)
     return parser.parse_args(
         [
             "--lockfile",
@@ -40,13 +41,14 @@ def test_run_error_is_expected_error():
 def test_run_arguments(tmp_path):
     parsed = arguments(tmp_path)
 
+    assert RunSubcommand.target_selection is TargetSelectionMode.NONE
     assert parsed.lockfile == tmp_path / "yaesm.lock"
     assert parsed.control_socket == tmp_path / "control.sock"
 
 
 def test_run_uses_default_lockfile():
     parser = argparse.ArgumentParser()
-    RunSubcommand.add_argparser_arguments(parser)
+    RunSubcommand.configure_argparser(parser)
 
     assert parser.parse_args([]).lockfile == Path("/run/lock/yaesm-run.lock")
     assert parser.parse_args([]).control_socket == Path("/run/yaesm/control.sock")
@@ -54,7 +56,7 @@ def test_run_uses_default_lockfile():
 
 def test_control_request_enqueues_backup():
     scheduler = mock.Mock()
-    scheduler.enqueue_backup.return_value = _REQUEST_ID
+    scheduler.enqueue_targets.return_value = _REQUEST_ID
     scheduler.request_messages.return_value = iter(
         ({"type": "result", "ok": True, "request_id": str(_REQUEST_ID)},)
     )
@@ -62,34 +64,38 @@ def test_control_request_enqueues_backup():
     messages = RunSubcommand._control_request(
         scheduler,
         Path("config.yaml"),
-        {"command": "backup", "backup": "home", "schedule": "manual"},
+        {"command": "backup", "targets": ["local", "home", "local"], "schedule": "manual"},
     )
 
-    scheduler.enqueue_backup.assert_called_once_with("home", "manual")
+    scheduler.enqueue_targets.assert_called_once_with(("local", "home"), "manual")
     scheduler.request_messages.assert_called_once_with(_REQUEST_ID)
     assert tuple(messages) == ({"type": "result", "ok": True, "request_id": str(_REQUEST_ID)},)
 
 
 def test_control_request_uses_default_on_demand_schedule():
     scheduler = mock.Mock()
-    scheduler.enqueue_backup.return_value = _REQUEST_ID
+    scheduler.enqueue_targets.return_value = _REQUEST_ID
 
     RunSubcommand._control_request(
         scheduler,
         Path("config.yaml"),
-        {"command": "backup", "backup": "home"},
+        {"command": "backup", "targets": ["home"]},
     )
 
-    scheduler.enqueue_backup.assert_called_once_with("home", None)
+    scheduler.enqueue_targets.assert_called_once_with(("home",), None)
 
 
 @pytest.mark.parametrize(
     ("control_request", "error"),
     [
-        ({"command": "backup", "schedule": "manual"}, "requires a backup name"),
-        ({"command": "backup", "backup": "home", "schedule": ""}, "nonempty string"),
+        ({"command": "backup", "schedule": "manual"}, "requires backup targets"),
+        ({"command": "backup", "targets": []}, "requires backup targets"),
+        ({"command": "backup", "targets": "home"}, "requires backup targets"),
+        ({"command": "backup", "targets": [""]}, "requires backup targets"),
+        ({"command": "backup", "targets": ["@all", "home"]}, "cannot be combined"),
+        ({"command": "backup", "targets": ["home"], "schedule": ""}, "nonempty string"),
         (
-            {"command": "backup", "backup": "home", "schedule": "manual", "extra": True},
+            {"command": "backup", "targets": ["home"], "schedule": "manual", "extra": True},
             "unknown fields: extra",
         ),
         ({"command": "reload-config", "extra": True}, "unknown fields: extra"),
@@ -141,7 +147,7 @@ def test_control_request_reports_reload_error(monkeypatch):
 
 def test_run_starts_and_stops_scheduler(monkeypatch, tmp_path):
     scheduler = mock.Mock()
-    scheduler.enqueue_backup.return_value = _REQUEST_ID
+    scheduler.enqueue_targets.return_value = _REQUEST_ID
     scheduler.request_messages.return_value = (
         {"type": "result", "ok": True, "request_id": str(_REQUEST_ID)},
     )
@@ -159,7 +165,7 @@ def test_run_starts_and_stops_scheduler(monkeypatch, tmp_path):
     control_type.assert_called_once()
     path, handler = control_type.call_args.args
     assert path == tmp_path / "control.sock"
-    assert tuple(handler({"command": "backup", "backup": "home", "schedule": "manual"})) == (
+    assert tuple(handler({"command": "backup", "targets": ["home"], "schedule": "manual"})) == (
         {"type": "result", "ok": True, "request_id": str(_REQUEST_ID)},
     )
     scheduler.start.assert_called_once_with()

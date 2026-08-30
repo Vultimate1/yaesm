@@ -4,7 +4,7 @@ import pytest
 
 from yaesm.backup import BackupError
 from yaesm.command import CommandError
-from yaesm.config import ConfigError
+from yaesm.config import BackupTargetError, ConfigError
 from yaesm.control import ControlError
 from yaesm.driver.btrfsdriver import BtrfsDriverError
 from yaesm.driver.driverbase import DriverError
@@ -27,6 +27,7 @@ from yaesm.subcommand.runsubcommand import RunError
         (PipelineError, (BackupError, YaesmError)),
         (CommandError, (YaesmError,)),
         (ConfigError, (YaesmError,)),
+        (BackupTargetError, (YaesmValueError, YaesmError, ValueError)),
         (ControlError, (YaesmError,)),
         (SchedulerError, (YaesmError,)),
         (CheckError, (YaesmError,)),
@@ -52,6 +53,7 @@ def test_error_hierarchy(error_type, parents):
         PipelineError("pipeline"),
         CommandError(("false",), 1, ""),
         ConfigError("config"),
+        BackupTargetError("target"),
         ControlError("control"),
         SchedulerError("scheduler"),
         CheckError("check"),
@@ -78,6 +80,7 @@ def test_all_expected_errors_can_be_caught_together(error):
         (BackupError, "yaesm.backup"),
         (CommandError, "yaesm.command"),
         (ConfigError, "yaesm.config"),
+        (BackupTargetError, "yaesm.config"),
         (ControlError, "yaesm.control"),
         (SchedulerError, "yaesm.scheduler"),
         (CheckError, "yaesm.subcommand.checksubcommand"),

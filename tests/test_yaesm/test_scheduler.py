@@ -16,7 +16,7 @@ from apscheduler.triggers.date import DateTrigger
 
 import yaesm.scheduler as scheduler_module
 from yaesm.backup import Backup, BackupError
-from yaesm.config import Config
+from yaesm.config import BackupGroup, Config
 from yaesm.control import ControlMessage
 from yaesm.logging import current_backup
 from yaesm.schedule import CronSchedule, OnDemandSchedule, Schedule
@@ -208,6 +208,37 @@ def test_scheduler_enqueues_backup(monkeypatch, caplog):
     ] == ["backup 'home' (manual) queued"]
 
 
+def test_scheduler_enqueues_group_once_in_member_order(monkeypatch, caplog):
+    schedule = Schedule("manual", OnDemandSchedule())
+    _first_config, first = configured_backup("first", schedule)
+    _second_config, second = configured_backup("second", schedule)
+    config = Config(
+        {},
+        {"first": first, "second": second},
+        {"selected": BackupGroup("selected", ("second", "first"))},
+    )
+    monkeypatch.setattr(scheduler_module, "uuid4", mock.Mock(return_value=_REQUEST_ID))
+    scheduler = Scheduler(config)
+
+    with caplog.at_level(logging.INFO, logger="yaesm.scheduler"):
+        request_id = scheduler.enqueue_targets(("selected", "second"), "manual")
+
+    assert request_id == _REQUEST_ID
+    jobs = tuple(scheduler._scheduler.get_job(f"{request_id}:{index}") for index in range(2))
+    assert all(job is not None for job in jobs)
+    assert tuple(job.args[0] for job in jobs if job is not None) == (second, first)
+    assert jobs[0].args[4] is jobs[1].args[4]
+    messages = jobs[0].args[4]
+    assert messages.get_nowait() == {
+        "type": "log",
+        "message": "backup 'second' (manual) queued",
+    }
+    assert messages.get_nowait() == {
+        "type": "log",
+        "message": "backup 'first' (manual) queued",
+    }
+
+
 def test_scheduler_accepts_previous_backup_and_schedule_names():
     schedule = Schedule("manual", OnDemandSchedule(), previous_names=("old-manual",))
     backup = Backup(
@@ -239,7 +270,7 @@ def test_scheduler_cleans_up_request_when_queueing_fails(monkeypatch):
     with pytest.raises(RuntimeError, match="failed"):
         scheduler.enqueue_backup("home")
 
-    assert scheduler._request_messages == {}
+    assert scheduler._requests == {}
 
 
 def test_scheduler_selects_on_demand_schedule():
@@ -285,12 +316,42 @@ def test_scheduler_requires_explicit_name_for_multiple_on_demand_schedules():
         scheduler.enqueue_backup("home")
 
 
-def test_scheduler_rejects_unknown_backup():
+def test_scheduler_rejects_unknown_backup_target():
     config, _backup = configured_backup()
     scheduler = Scheduler(config)
 
-    with pytest.raises(SchedulerError, match="unknown backup: 'missing'"):
+    with pytest.raises(SchedulerError) as error:
         scheduler.enqueue_backup("missing", "hourly")
+
+    assert error.value.format() == "unknown backup target: 'missing'"
+
+
+def test_scheduler_rejects_empty_target_selection():
+    config, _backup = configured_backup()
+
+    with pytest.raises(SchedulerError, match="no backup targets specified"):
+        Scheduler(config).enqueue_targets(())
+
+
+def test_scheduler_validates_group_schedules_before_queueing():
+    manual = Schedule("manual", OnDemandSchedule())
+    hourly = Schedule("hourly", CronSchedule("0 * * * *"))
+    _first_config, first = configured_backup("first", manual)
+    _second_config, second = configured_backup("second", hourly)
+    scheduler = Scheduler(
+        Config(
+            {},
+            {"first": first, "second": second},
+            {"selected": BackupGroup("selected", ("first", "second"))},
+        )
+    )
+    original_job_ids = {job.id for job in scheduler._scheduler.get_jobs()}
+
+    with pytest.raises(SchedulerError, match="backup 'second' has no schedule 'manual'"):
+        scheduler.enqueue_targets(("selected",), "manual")
+
+    assert scheduler._requests == {}
+    assert {job.id for job in scheduler._scheduler.get_jobs()} == original_job_ids
 
 
 def test_scheduler_rejects_unknown_schedule():
@@ -577,10 +638,102 @@ def test_scheduler_yields_request_messages(caplog):
     assert tuple(scheduler.request_messages(request_id)) == (
         {"type": "log", "message": "backup 'home' (manual) queued"},
         {"type": "log", "message": "starting"},
-        {"type": "result", "ok": True, "request_id": None},
+        {"type": "result", "ok": True, "request_id": str(request_id)},
     )
     with pytest.raises(SchedulerError, match="unknown backup request"):
         next(scheduler.request_messages(request_id))
+
+
+def test_request_logs_are_not_duplicated_by_overlapping_group_jobs(caplog):
+    messages: queue.Queue[ControlMessage] = queue.Queue()
+
+    with (
+        caplog.at_level(logging.INFO, logger="yaesm.scheduler"),
+        scheduler_module._stream_request_logs(_REQUEST_ID, messages),
+    ):
+        scheduler_module.logger.info("first")
+        with scheduler_module._stream_request_logs(_REQUEST_ID, messages):
+            scheduler_module.logger.info("overlap")
+        scheduler_module.logger.info("last")
+
+    assert tuple(messages.get_nowait() for _index in range(messages.qsize())) == (
+        {"type": "log", "message": "first"},
+        {"type": "log", "message": "overlap"},
+        {"type": "log", "message": "last"},
+    )
+    assert scheduler_module._active_request_log_streams == {}
+
+
+def test_scheduler_combines_group_results():
+    schedule = Schedule("manual", OnDemandSchedule())
+    _first_config, first = configured_backup("first", schedule)
+    _second_config, second = configured_backup("second", schedule)
+    scheduler = Scheduler(
+        Config(
+            {},
+            {"first": first, "second": second},
+            {"selected": BackupGroup("selected", ("first", "second"))},
+        )
+    )
+    request_id = scheduler.enqueue_targets(("selected",))
+    messages = scheduler._requests[request_id].messages
+    while not messages.empty():
+        messages.get_nowait()
+    messages.put({"type": "log", "message": "first finished"})
+    messages.put({"type": "result", "ok": True, "request_id": str(request_id)})
+    messages.put({"type": "log", "message": "second finished"})
+    messages.put({"type": "result", "ok": True, "request_id": str(request_id)})
+
+    assert tuple(scheduler.request_messages(request_id)) == (
+        {"type": "log", "message": "first finished"},
+        {"type": "log", "message": "second finished"},
+        {"type": "result", "ok": True, "request_id": str(request_id)},
+    )
+
+
+def test_scheduler_combines_multiple_group_failures():
+    schedule = Schedule("manual", OnDemandSchedule())
+    _first_config, first = configured_backup("first", schedule)
+    _second_config, second = configured_backup("second", schedule)
+    scheduler = Scheduler(
+        Config(
+            {},
+            {"first": first, "second": second},
+            {"selected": BackupGroup("selected", ("first", "second"))},
+        )
+    )
+    request_id = scheduler.enqueue_targets(("selected",))
+    messages = scheduler._requests[request_id].messages
+    while not messages.empty():
+        messages.get_nowait()
+    messages.put(
+        {
+            "type": "result",
+            "ok": False,
+            "error": "first failed",
+            "error_logged": True,
+            "request_id": str(request_id),
+        }
+    )
+    messages.put(
+        {
+            "type": "result",
+            "ok": False,
+            "error": "second failed",
+            "error_logged": False,
+            "request_id": str(request_id),
+        }
+    )
+
+    assert tuple(scheduler.request_messages(request_id)) == (
+        {
+            "type": "result",
+            "ok": False,
+            "error": "multiple backups failed:\n  - first failed\n  - second failed",
+            "error_logged": False,
+            "request_id": str(request_id),
+        },
+    )
 
 
 def test_scheduler_start_and_stop_delegate():

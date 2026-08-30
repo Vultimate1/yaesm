@@ -11,7 +11,11 @@ from yaesm.config import Config, ConfigError, parse_config
 from yaesm.control import DEFAULT_CONTROL_SOCKET, ControlError, ControlMessage, ControlServer
 from yaesm.errors import YaesmError
 from yaesm.scheduler import Scheduler
-from yaesm.subcommand.subcommandbase import SubcommandBase
+from yaesm.subcommand.subcommandbase import (
+    SubcommandBase,
+    TargetSelection,
+    TargetSelectionMode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +27,8 @@ class RunError(YaesmError):
 class RunSubcommand(SubcommandBase):
     """Run scheduled backups until stopped."""
 
+    target_selection = TargetSelectionMode.NONE
+
     @staticmethod
     def _control_request(
         scheduler: Scheduler,
@@ -32,7 +38,7 @@ class RunSubcommand(SubcommandBase):
         command = request.get("command")
         match command:
             case "backup":
-                allowed = {"command", "backup", "schedule"}
+                allowed = {"command", "targets", "schedule"}
             case "reload-config":
                 allowed = {"command"}
             case str() as command:
@@ -51,14 +57,22 @@ class RunSubcommand(SubcommandBase):
             result: ControlMessage = {"type": "result", "ok": True, "request_id": None}
             return (result,)
 
-        backup_name = request.get("backup")
-        if not isinstance(backup_name, str) or not backup_name:
-            raise ControlError("backup command requires a backup name")
+        target_names = request.get("targets")
+        if (
+            not isinstance(target_names, list | tuple)
+            or not target_names
+            or any(not isinstance(name, str) or not name for name in target_names)
+        ):
+            raise ControlError("backup command requires backup targets")
+        try:
+            targets = TargetSelection(tuple(dict.fromkeys(target_names)))
+        except ValueError as error:
+            raise ControlError(str(error)) from error
         schedule_name = request.get("schedule")
         if schedule_name is not None and (not isinstance(schedule_name, str) or not schedule_name):
             raise ControlError("backup command schedule must be a nonempty string")
 
-        request_id = scheduler.enqueue_backup(backup_name, schedule_name)
+        request_id = scheduler.enqueue_targets(targets.names, schedule_name)
         return scheduler.request_messages(request_id)
 
     @staticmethod

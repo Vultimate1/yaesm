@@ -10,16 +10,17 @@ import yaesm.subcommand.checksubcommand as check_module
 from yaesm.backup import Backup, BackupSource
 from yaesm.check import Check, CheckResult, CheckRole
 from yaesm.command import CommandResult
-from yaesm.config import Config
+from yaesm.config import BackupGroup, BackupTargetError, Config
 from yaesm.driver.btrfsdriver import BtrfsDriver
 from yaesm.errors import YaesmError
 from yaesm.ssh import SSHTarget
 from yaesm.subcommand.checksubcommand import CheckError, CheckSubcommand
+from yaesm.subcommand.subcommandbase import TargetSelection, TargetSelectionMode
 
 
 def arguments(*values: str) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    CheckSubcommand.add_argparser_arguments(parser)
+    CheckSubcommand.configure_argparser(parser)
     return parser.parse_args(values)
 
 
@@ -49,9 +50,10 @@ def test_check_error_is_expected_error():
 
 
 def test_check_arguments():
-    assert arguments().backup_names is None
+    assert CheckSubcommand.target_selection is TargetSelectionMode.DEFAULT_ALL
+    assert arguments().targets.all
     assert arguments().quiet is False
-    assert arguments("home,,root, home", "--quiet").backup_names == ("home", "root")
+    assert arguments("home,,root, home", "--quiet").targets == TargetSelection(("home", "root"))
     assert arguments("home", "--quiet").quiet is True
 
 
@@ -230,21 +232,18 @@ def test_check_selects_requested_backups():
             "first": configured_backup("first", first_source, first_destination),
             "second": second,
         },
+        {"selected": BackupGroup("selected", ("second",))},
     )
 
-    assert CheckSubcommand().main(config, arguments("second,old-second", "-q")) == 0
+    assert CheckSubcommand().main(config, arguments("selected,old-second", "-q")) == 0
 
     first_source.check.assert_not_called()
     second_source.check.assert_called_once_with(CheckRole.SOURCE)
 
 
-@pytest.mark.parametrize(
-    ("value", "error"),
-    [(",", "no backup names specified"), ("missing", "unknown backup: 'missing'")],
-)
-def test_check_rejects_invalid_backup_selection(value, error):
-    with pytest.raises(CheckError, match=error):
-        CheckSubcommand().main(Config({}, {}), arguments(value))
+def test_check_rejects_unknown_backup_target():
+    with pytest.raises(BackupTargetError, match="unknown backup target: 'missing'"):
+        CheckSubcommand().main(Config({}, {}), arguments("missing"))
 
 
 def test_ssh_preflights_are_reused(monkeypatch, tmp_path):

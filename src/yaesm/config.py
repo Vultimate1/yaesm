@@ -11,7 +11,7 @@ import yaesm.backup as bckp
 import yaesm.ty as ty
 from yaesm.driver import load_drivers
 from yaesm.driver.driverbase import DriverBase, GlobalSettings
-from yaesm.errors import YaesmError
+from yaesm.errors import YaesmError, YaesmValueError
 from yaesm.names import ALL_TARGET_NAME
 from yaesm.pipeline import Pipeline
 from yaesm.retention import KeepAll, RetentionPolicyBase
@@ -56,6 +56,10 @@ class ConfigError(YaesmError):
 
     def __str__(self) -> str:
         return self.format()
+
+
+class BackupTargetError(YaesmValueError):
+    """Raised when a requested backup target does not exist."""
 
 
 def _collect_messages(messages: list[str], error: YaesmError, prefix: str = "") -> None:
@@ -136,14 +140,14 @@ class Config:
         object.__setattr__(self, "backups_by_name", backups_by_name)
         object.__setattr__(self, "targets_by_name", targets_by_name)
 
-    def expand_targets(self, *names: str) -> tuple[bckp.Backup, ...]:
-        """Expand named backup targets in order, removing duplicate backups."""
+    def backups_for_targets(self, *names: str) -> tuple[bckp.Backup, ...]:
+        """Return backups for named targets in order, removing duplicates."""
         backups: dict[str, bckp.Backup] = {}
 
         def expand(name: str) -> None:
             target = self.targets_by_name.get(name)
             if target is None:
-                raise ConfigError(f"unknown backup target: {name!r}")
+                raise BackupTargetError(f"unknown backup target: {name!r}")
             if isinstance(target, bckp.Backup):
                 backups.setdefault(target.name, target)
                 return

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import logging
 import queue
 import time
@@ -20,8 +21,8 @@ from tzlocal import get_localzone
 
 import yaesm.ty as ty
 from yaesm.backup import Backup
-from yaesm.control import ControlMessage
-from yaesm.errors import YaesmError
+from yaesm.control import ControlFailure, ControlMessage
+from yaesm.errors import YaesmError, YaesmValueError
 from yaesm.logging import RequestFilter, current_backup, format_duration, request_id
 from yaesm.schedule import OnDemandSchedule
 
@@ -59,6 +60,12 @@ class SchedulerError(YaesmError):
     """Raised when a backup cannot be scheduled."""
 
 
+@dataclasses.dataclass(frozen=True)
+class _RequestState:
+    messages: queue.Queue[ControlMessage]
+    result_count: int
+
+
 class Scheduler:
     """Schedule and run configured backup jobs."""
 
@@ -79,7 +86,7 @@ class Scheduler:
     def __init__(self, config: Config) -> None:
         self._lock = Lock()
         self._backup_locks: dict[str, LockType] = {}
-        self._request_messages: dict[UUID, queue.Queue[ControlMessage]] = {}
+        self._requests: dict[UUID, _RequestState] = {}
         self._timer_job_ids: set[str] = set()
         settings = config.global_settings.get(self.global_settings_key, {})
         assert isinstance(settings, dict)
@@ -117,74 +124,120 @@ class Scheduler:
 
     def enqueue_backup(self, backup_name: str, schedule_name: str | None = None) -> UUID:
         """Queue a configured backup for immediate execution."""
+        return self.enqueue_targets((backup_name,), schedule_name)
+
+    def enqueue_targets(
+        self,
+        target_names: ty.Sequence[str],
+        schedule_name: str | None = None,
+    ) -> UUID:
+        """Queue the backups represented by targets for immediate execution."""
         with self._lock:
             config = self._config
-            backup = config.backups_by_name.get(backup_name)
-            if backup is None:
-                raise SchedulerError(f"unknown backup: {backup_name!r}")
-
-            schedules = [
-                schedule
-                for schedule in backup.schedules
-                if isinstance(schedule.implementation, OnDemandSchedule)
-            ]
-            if schedule_name is None:
-                if not schedules:
-                    raise SchedulerError(f"backup {backup_name!r} has no on-demand schedule")
-                if len(schedules) > 1:
-                    raise SchedulerError(f"backup {backup_name!r} has multiple on-demand schedules")
-                schedule_name = schedules[0].name
-            else:
-                schedule = next(
-                    (schedule for schedule in backup.schedules if schedule_name in schedule.names),
-                    None,
-                )
-                if schedule is None:
-                    raise SchedulerError(
-                        f"backup {backup_name!r} has no schedule {schedule_name!r}"
-                    )
-                if schedule not in schedules:
-                    raise SchedulerError(
-                        f"schedule {schedule_name!r} for backup {backup_name!r} is not on-demand"
-                    )
-                schedule_name = schedule.name
+            if not target_names:
+                raise SchedulerError("no backup targets specified")
+            try:
+                backups = config.backups_for_targets(*target_names)
+            except YaesmValueError as error:
+                raise SchedulerError(str(error)) from None
+            scheduled = tuple(
+                (backup, self._on_demand_schedule(backup, schedule_name)) for backup in backups
+            )
 
             request_id = uuid4()
             messages: queue.Queue[ControlMessage] = queue.Queue()
-            self._request_messages[request_id] = messages
-            with _stream_request_logs(request_id, messages):
-                logger.info("backup %r (%s) queued", backup.name, schedule_name)
+            self._requests[request_id] = _RequestState(messages, len(scheduled))
+            job_ids = []
             try:
-                self._add_job(
-                    backup,
-                    schedule_name,
-                    config.backups_by_name,
-                    self.timezone(config),
-                    request_id=request_id,
-                    job_id=str(request_id),
-                )
+                for index, (backup, selected_schedule_name) in enumerate(scheduled):
+                    with _stream_request_logs(request_id, messages):
+                        logger.info("backup %r (%s) queued", backup.name, selected_schedule_name)
+                    job_id = str(request_id) if len(scheduled) == 1 else f"{request_id}:{index}"
+                    self._add_job(
+                        backup,
+                        selected_schedule_name,
+                        config.backups_by_name,
+                        self.timezone(config),
+                        request_id=request_id,
+                        job_id=job_id,
+                    )
+                    job_ids.append(job_id)
             except BaseException:
-                del self._request_messages[request_id]
+                for job_id in job_ids:
+                    if self._scheduler.get_job(job_id) is not None:
+                        self._scheduler.remove_job(job_id)
+                del self._requests[request_id]
                 raise
         return request_id
+
+    @staticmethod
+    def _on_demand_schedule(backup: Backup, schedule_name: str | None) -> str:
+        schedules = [
+            schedule
+            for schedule in backup.schedules
+            if isinstance(schedule.implementation, OnDemandSchedule)
+        ]
+        if schedule_name is None:
+            if not schedules:
+                raise SchedulerError(f"backup {backup.name!r} has no on-demand schedule")
+            if len(schedules) > 1:
+                raise SchedulerError(f"backup {backup.name!r} has multiple on-demand schedules")
+            return schedules[0].name
+
+        schedule = next(
+            (schedule for schedule in backup.schedules if schedule_name in schedule.names),
+            None,
+        )
+        if schedule is None:
+            raise SchedulerError(f"backup {backup.name!r} has no schedule {schedule_name!r}")
+        if schedule not in schedules:
+            raise SchedulerError(
+                f"schedule {schedule_name!r} for backup {backup.name!r} is not on-demand"
+            )
+        return schedule.name
 
     def request_messages(self, request_id: UUID) -> ty.Iterator[ControlMessage]:
         """Yield a queued backup's logs followed by its result."""
         with self._lock:
             try:
-                messages = self._request_messages[request_id]
+                request = self._requests[request_id]
             except KeyError as error:
                 raise SchedulerError(f"unknown backup request: {request_id!r}") from error
 
+        failures: list[ControlFailure] = []
+        results = 0
         try:
-            while True:
-                message = messages.get()
-                yield message
-                if message.get("type") == "result":
-                    return
+            while results < request.result_count:
+                message = request.messages.get()
+                if message.get("type") == "log":
+                    yield message
+                    continue
+                results += 1
+                if message.get("ok") is not True:
+                    failures.append(ty.cast(ControlFailure, message))
+
+            serialized_request_id = str(request_id)
+            if not failures:
+                yield {
+                    "type": "result",
+                    "ok": True,
+                    "request_id": serialized_request_id,
+                }
+            elif len(failures) == 1:
+                yield failures[0]
+            else:
+                errors = tuple(dict.fromkeys(failure["error"] for failure in failures))
+                yield {
+                    "type": "result",
+                    "ok": False,
+                    "error": "multiple backups failed:\n"
+                    + "\n".join(f"  - {error}" for error in errors),
+                    "error_logged": all(failure["error_logged"] for failure in failures),
+                    "request_id": serialized_request_id,
+                }
         finally:
             with self._lock:
-                self._request_messages.pop(request_id, None)
+                self._requests.pop(request_id, None)
 
     def _add_job(
         self,
@@ -198,7 +251,7 @@ class Scheduler:
         request_id: UUID | None = None,
     ) -> None:
         backup_lock = self._backup_locks.setdefault(backup.name, Lock())
-        messages = None if request_id is None else self._request_messages[request_id]
+        messages = None if request_id is None else self._requests[request_id].messages
         self._scheduler.add_job(
             _execute_backup,
             trigger=trigger,
@@ -307,6 +360,16 @@ class _ControlLogHandler(logging.Handler):
         self.messages.put({"type": "log", "message": record.getMessage()})
 
 
+@dataclasses.dataclass
+class _ActiveRequestLogStream:
+    handler: _ControlLogHandler
+    users: int = 0
+
+
+_active_request_log_streams: dict[UUID, _ActiveRequestLogStream] = {}
+_active_request_log_streams_lock = Lock()
+
+
 @contextlib.contextmanager
 def _stream_request_logs(
     backup_request_id: UUID | None,
@@ -317,13 +380,24 @@ def _stream_request_logs(
         yield
         return
 
-    handler = _ControlLogHandler(messages)
-    handler.addFilter(RequestFilter(backup_request_id))
     root_logger = logging.getLogger()
-    root_logger.addHandler(handler)
+    with _active_request_log_streams_lock:
+        stream = _active_request_log_streams.get(backup_request_id)
+        if stream is None:
+            handler = _ControlLogHandler(messages)
+            handler.addFilter(RequestFilter(backup_request_id))
+            stream = _ActiveRequestLogStream(handler)
+            _active_request_log_streams[backup_request_id] = stream
+            root_logger.addHandler(handler)
+        stream.users += 1
+
     token = request_id.set(backup_request_id)
     try:
         yield
     finally:
         request_id.reset(token)
-        root_logger.removeHandler(handler)
+        with _active_request_log_streams_lock:
+            stream.users -= 1
+            if stream.users == 0:
+                root_logger.removeHandler(stream.handler)
+                del _active_request_log_streams[backup_request_id]

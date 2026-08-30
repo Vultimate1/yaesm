@@ -11,24 +11,32 @@ import yaesm.subcommand.backupsubcommand as backup_module
 from yaesm.config import Config
 from yaesm.control import DEFAULT_CONTROL_SOCKET, ControlError
 from yaesm.subcommand.backupsubcommand import BackupSubcommand
+from yaesm.subcommand.subcommandbase import TargetSelection, TargetSelectionMode
 
 _REQUEST_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
 def arguments(*values: str) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    BackupSubcommand.add_argparser_arguments(parser)
+    BackupSubcommand.configure_argparser(parser)
     return parser.parse_args(values)
 
 
 def test_backup_subcommand_does_not_require_local_config():
     assert not BackupSubcommand.config_required
+    assert BackupSubcommand.target_selection is TargetSelectionMode.REQUIRED
 
 
 def test_backup_arguments():
-    parsed = arguments("home", "--schedule", "manual", "--control-socket", "/tmp/control")
+    parsed = arguments(
+        "local,home,local",
+        "--schedule",
+        "manual",
+        "--control-socket",
+        "/tmp/control",
+    )
 
-    assert parsed.backup == "home"
+    assert parsed.targets == TargetSelection(("local", "home"))
     assert parsed.schedule == "manual"
     assert parsed.control_socket == Path("/tmp/control")
 
@@ -56,7 +64,7 @@ def test_backup_sends_request(monkeypatch, capsys):
 
     send_request.assert_called_once_with(
         DEFAULT_CONTROL_SOCKET,
-        {"command": "backup", "backup": "home", "schedule": "manual"},
+        {"command": "backup", "targets": ("home",), "schedule": "manual"},
     )
     assert capsys.readouterr() == ("", "starting\n")
 

@@ -8,7 +8,7 @@ from yaesm.check import Check, CheckResult, CheckRole
 from yaesm.config import Config
 from yaesm.errors import YaesmError
 from yaesm.ssh import SSHTarget
-from yaesm.subcommand.subcommandbase import SubcommandBase
+from yaesm.subcommand.subcommandbase import SubcommandBase, TargetSelectionMode
 
 
 class CheckError(YaesmError):
@@ -18,8 +18,10 @@ class CheckError(YaesmError):
 class CheckSubcommand(SubcommandBase):
     """Check whether configured backups can run."""
 
+    target_selection = TargetSelectionMode.DEFAULT_ALL
+
     def main(self, config: Config, arguments: argparse.Namespace) -> int:
-        backups = self._select_backups(config, arguments.backup_names)
+        backups = config.backups_for_targets(*arguments.targets.names)
         openssh_result = None
         connection_results: dict[SSHTarget, CheckResult] = {}
         passed = True
@@ -65,18 +67,6 @@ class CheckSubcommand(SubcommandBase):
                 self._print_result(result)
 
         return 0 if passed else 1
-
-    @staticmethod
-    def _select_backups(config: Config, names: tuple[str, ...] | None) -> tuple[Backup, ...]:
-        if names is None:
-            return tuple(config.backups.values())
-        if not names:
-            raise CheckError("no backup names specified")
-        if unknown := tuple(name for name in names if name not in config.backups_by_name):
-            label = "backup" if len(unknown) == 1 else "backups"
-            raise CheckError(f"unknown {label}: {', '.join(repr(name) for name in unknown)}")
-        selected = (config.backups_by_name[name] for name in names)
-        return tuple({backup.name: backup for backup in selected}.values())
 
     @staticmethod
     def _backup_checks(
@@ -133,13 +123,6 @@ class CheckSubcommand(SubcommandBase):
 
     @classmethod
     def add_argparser_arguments(cls, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument(
-            "backup_names",
-            nargs="?",
-            metavar="BACKUP[,BACKUP...]",
-            type=lambda value: tuple(dict.fromkeys(filter(None, map(str.strip, value.split(","))))),
-            help="names of backups to check (default: all)",
-        )
         parser.add_argument(
             "-q",
             "--quiet",

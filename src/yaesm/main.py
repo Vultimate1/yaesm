@@ -83,7 +83,7 @@ def _argument_parser(
                 description=subcommand.description(),
                 help=subcommand.description(),
             )
-        subcommand.add_argparser_arguments(subparser)
+        subcommand.configure_argparser(subparser)
         subparser.set_defaults(subcommand_type=subcommand)
     return parser
 

@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from yaesm.backup import Backup, BackupArtifact, BackupOperation
-from yaesm.config import Config
+from yaesm.config import BackupGroup, BackupTargetError, Config
 from yaesm.errors import YaesmError, YaesmValueError
 from yaesm.representation import Representation
 from yaesm.schedule import CronSchedule, Schedule
@@ -18,6 +18,7 @@ from yaesm.subcommand.findsubcommand import (
     FindQueryError,
     FindSubcommand,
 )
+from yaesm.subcommand.subcommandbase import TargetSelection, TargetSelectionMode
 
 
 def find_config(backups: dict[str, Backup]) -> Config:
@@ -26,7 +27,7 @@ def find_config(backups: dict[str, Backup]) -> Config:
 
 def arguments(*values: str) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    FindSubcommand.add_argparser_arguments(parser)
+    FindSubcommand.configure_argparser(parser)
     return parser.parse_args(values)
 
 
@@ -66,7 +67,8 @@ def test_find_errors_are_expected_value_errors():
 def test_find_arguments_with_positional_query():
     parsed = arguments("home", "after", "2026-01-01")
 
-    assert parsed.backup_names == ("home",)
+    assert FindSubcommand.target_selection is TargetSelectionMode.REQUIRED
+    assert parsed.targets == TargetSelection(("home",))
     assert parsed.query == ["after", "2026-01-01"]
     assert parsed.additional_queries == []
 
@@ -116,7 +118,7 @@ def test_find_arguments_normalize_names_and_schedules():
         "weekly",
     )
 
-    assert parsed.backup_names == ("home", "root")
+    assert parsed.targets == TargetSelection(("home", "root"))
     assert parsed.schedules == ["hourly", "daily", "weekly"]
 
 
@@ -437,9 +439,13 @@ def test_find_supports_multiple_backup_names_in_requested_order(capsys):
     root_artifact = artifact(11, backup_name="root")
     home, _ = configured_backup("home", (home_artifact,))
     root, _ = configured_backup("root", (root_artifact,))
-    config = find_config({"root": root, "home": home})
+    config = Config(
+        {"scheduler": {"timezone": ZoneInfo("UTC")}},
+        {"root": root, "home": home},
+        {"selected": BackupGroup("selected", ("home", "root"))},
+    )
 
-    assert FindSubcommand().main(config, arguments("home,root")) == 0
+    assert FindSubcommand().main(config, arguments("selected,home")) == 0
 
     assert capsys.readouterr().out.splitlines() == [
         f"locator:{home_artifact.name}",
@@ -480,13 +486,9 @@ def test_find_returns_success_without_matches(capsys):
     assert capsys.readouterr().out == ""
 
 
-@pytest.mark.parametrize(
-    ("value", "error"),
-    [(",", "no backup names specified"), ("missing", "unknown backup: 'missing'")],
-)
-def test_find_rejects_invalid_backup_selection(value, error):
-    with pytest.raises(FindError, match=error):
-        FindSubcommand().main(find_config({}), arguments(value))
+def test_find_rejects_unknown_backup_target():
+    with pytest.raises(BackupTargetError, match="unknown backup target: 'missing'"):
+        FindSubcommand().main(find_config({}), arguments("missing"))
 
 
 def test_find_rejects_invalid_query_before_listing():

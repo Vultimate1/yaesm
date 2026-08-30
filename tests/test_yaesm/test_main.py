@@ -13,7 +13,7 @@ from yaesm.errors import YaesmError
 from yaesm.subcommand.backupsubcommand import BackupSubcommand
 from yaesm.subcommand.checksubcommand import CheckSubcommand
 from yaesm.subcommand.runsubcommand import RunSubcommand
-from yaesm.subcommand.subcommandbase import SubcommandBase
+from yaesm.subcommand.subcommandbase import SubcommandBase, TargetSelectionMode
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +34,8 @@ def test_argument_parser_shows_only_visible_subcommands(monkeypatch):
     class VisibleSubcommand(SubcommandBase):
         """Visible command."""
 
+        target_selection = TargetSelectionMode.NONE
+
         def main(self, config: Config, arguments: argparse.Namespace) -> int:
             del config, arguments
             return 0
@@ -45,6 +47,7 @@ def test_argument_parser_shows_only_visible_subcommands(monkeypatch):
     class HiddenSubcommand(VisibleSubcommand):
         """Hidden command."""
 
+        target_selection = TargetSelectionMode.NONE
         hidden = True
 
     monkeypatch.setattr(main_module.importlib.metadata, "version", lambda _name: "1.2.3")
@@ -206,6 +209,17 @@ def test_main_reports_expected_errors_without_traceback(caplog, monkeypatch):
         assert main_module.main(["check"]) == 1
 
     assert caplog.records[-1].message == "expected failure"
+    assert caplog.records[-1].exc_info is None
+
+
+def test_main_reports_unknown_target_as_an_expected_error(caplog, monkeypatch):
+    monkeypatch.setattr(main_module, "parse_config", lambda _path: Config({}, {}))
+
+    with caplog.at_level(logging.ERROR):
+        assert main_module.main(["check", "missing"]) == 1
+
+    assert caplog.records[-1].message == "unknown backup target: 'missing'"
+    assert "configuration error" not in caplog.text
     assert caplog.records[-1].exc_info is None
 
 

@@ -13,7 +13,14 @@ from hypothesis import strategies as st
 import yaesm.backup as bckp
 import yaesm.config as config_module
 import yaesm.ty as ty
-from yaesm.config import BackupGroup, Config, ConfigError, parse_config, parse_schedules
+from yaesm.config import (
+    BackupGroup,
+    BackupTargetError,
+    Config,
+    ConfigError,
+    parse_config,
+    parse_schedules,
+)
 from yaesm.driver.btrfsdriver import BtrfsDriver
 from yaesm.driver.driverbase import DriverBase
 from yaesm.driver.gpgdriver import GPGDriver
@@ -742,7 +749,7 @@ def test_parse_config_builds_backup_group():
         "local": group,
         ALL_TARGET_NAME: all_group,
     }
-    assert config.expand_targets("local") == (
+    assert config.backups_for_targets("local") == (
         config.backups["root"],
         config.backups["home"],
     )
@@ -759,7 +766,7 @@ def test_backup_groups_expand_recursively_in_order_without_duplicates():
         }
     )
 
-    assert config.expand_targets("home", "everything", "local") == (
+    assert config.backups_for_targets("home", "everything", "local") == (
         config.backups["home"],
         config.backups["root"],
         config.backups["remote"],
@@ -777,14 +784,14 @@ def test_all_target_expands_every_backup_in_definition_order():
 
     assert config.groups[ALL_TARGET_NAME].members == ("root", "home", "remote")
     assert config.targets_by_name[ALL_TARGET_NAME] is config.groups[ALL_TARGET_NAME]
-    assert config.expand_targets(ALL_TARGET_NAME) == tuple(config.backups.values())
+    assert config.backups_for_targets(ALL_TARGET_NAME) == tuple(config.backups.values())
 
 
 def test_all_target_exists_when_config_has_no_backups():
     config = Config({}, {})
 
     assert config.groups[ALL_TARGET_NAME].members == ()
-    assert config.expand_targets(ALL_TARGET_NAME) == ()
+    assert config.backups_for_targets(ALL_TARGET_NAME) == ()
 
 
 def test_backup_group_definition_order_does_not_matter():
@@ -797,7 +804,7 @@ def test_backup_group_definition_order_does_not_matter():
         }
     )
 
-    assert config.expand_targets("everything") == (
+    assert config.backups_for_targets("everything") == (
         config.backups["home"],
         config.backups["remote"],
     )
@@ -811,14 +818,14 @@ def test_backup_group_members_may_use_previous_backup_names():
         }
     )
 
-    assert config.expand_targets("local") == (config.backups["home"],)
+    assert config.backups_for_targets("local") == (config.backups["home"],)
 
 
-def test_expand_targets_rejects_unknown_name():
+def test_backups_for_targets_rejects_unknown_name():
     config = parse_config({"home": backup_config()})
 
-    with pytest.raises(ConfigError, match="unknown backup target: 'missing'"):
-        config.expand_targets("missing")
+    with pytest.raises(BackupTargetError, match="unknown backup target: 'missing'"):
+        config.backups_for_targets("missing")
 
 
 @pytest.mark.parametrize("members", [None, "home", {}, 1])
@@ -1427,11 +1434,11 @@ def test_generated_valid_configs_parse(value):
     )
     assert set(parsed.targets_by_name) == expected_target_names
     for target_name in parsed.targets_by_name:
-        assert tuple(backup.name for backup in parsed.expand_targets(target_name)) == (
+        assert tuple(backup.name for backup in parsed.backups_for_targets(target_name)) == (
             _expand_config_targets(value, target_name)
         )
     assert tuple(
-        backup.name for backup in parsed.expand_targets(*parsed.targets_by_name)
+        backup.name for backup in parsed.backups_for_targets(*parsed.targets_by_name)
     ) == _expand_config_targets(value, *parsed.targets_by_name)
 
 
