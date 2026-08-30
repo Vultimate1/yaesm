@@ -41,6 +41,9 @@ _GLOBAL_SETTINGS_COMPONENTS: tuple[type[GlobalSettingsComponent], ...] = (
 load_drivers()
 
 
+# Configuration model
+
+
 class ConfigError(YaesmError):
     """Raised when yaesm configuration is invalid."""
 
@@ -76,16 +79,22 @@ class BackupGroup:
     _system: dataclasses.InitVar[bool] = False
 
     def __post_init__(self, _system: bool) -> None:
+        messages = []
         if _system:
             if self.name != ALL_TARGET_NAME:
-                raise ConfigError(f"invalid system group name: {self.name!r}")
+                messages.append(f"invalid system group name: {self.name!r}")
         elif not bckp.backup_name_valid(self.name):
-            raise ConfigError(f"invalid group name: {self.name!r}")
+            messages.append(f"invalid group name: {self.name!r}")
         if not _system and not self.members:
-            raise ConfigError("group must contain at least one target")
+            messages.append("group must contain at least one target")
         for member in self.members:
+            if not isinstance(member, str):
+                messages.append("group members must be strings")
+                break
             if not bckp.backup_name_valid(member):
-                raise ConfigError(f"invalid group member name: {member!r}")
+                messages.append(f"invalid group member name: {member!r}")
+        if messages:
+            raise ConfigError(messages)
 
 
 BackupTarget: ty.TypeAlias = bckp.Backup | BackupGroup
@@ -197,6 +206,9 @@ def _validate_backup_groups(
     return tuple(dict.fromkeys(messages))
 
 
+# Top-level parsing
+
+
 def parse_config(value: object) -> Config:
     """Parse a YAML file or configuration data."""
     if isinstance(value, str | Path):
@@ -218,33 +230,30 @@ def parse_config(value: object) -> Config:
         messages.extend(error.messages)
         global_settings = {}
 
+    definition_is_group = {
+        name: _is_group_definition(definition)
+        for name, definition in value.items()
+        if isinstance(name, str) and name != "global_settings"
+    }
+    group_names = {name for name, is_group in definition_is_group.items() if is_group}
+    backup_names = set(definition_is_group) - group_names
+
     backups = {}
     groups = {}
-    backup_names = {
-        name
-        for name, definition in value.items()
-        if isinstance(name, str)
-        and name != "global_settings"
-        and not _is_group_definition(definition)
-    }
-    group_names = {
-        name
-        for name, definition in value.items()
-        if isinstance(name, str) and name != "global_settings" and _is_group_definition(definition)
-    }
     for name, definition in value.items():
         if name == "global_settings":
             continue
         if not isinstance(name, str):
             messages.append("backup names must be strings")
             continue
+        is_group = definition_is_group[name]
+        kind = "group" if is_group else "backup"
         try:
-            if _is_group_definition(definition):
+            if is_group:
                 groups[name] = _parse_backup_group(name, definition)
             else:
                 backups[name] = _parse_backup(name, definition, global_settings)
         except YaesmError as error:
-            kind = "group" if _is_group_definition(definition) else "backup"
             _collect_messages(messages, error, f"{kind} {name!r}: ")
 
     config = None
@@ -276,27 +285,23 @@ def _is_group_definition(value: object) -> bool:
 def _parse_backup_group(name: str, value: object) -> BackupGroup:
     assert isinstance(value, dict) and "group" in value
     messages = []
+    group = None
     if unknown := sorted(value.keys() - {"group"}, key=str):
         messages.append(f"unknown settings: {', '.join(str(item) for item in unknown)}")
 
     members = value["group"]
     if not isinstance(members, list):
         messages.append("group must be a list")
-    elif not members:
-        messages.append("group must contain at least one target")
     else:
-        for member in members:
-            if not isinstance(member, str):
-                messages.append("group members must be strings")
-                break
-            if not bckp.backup_name_valid(member):
-                messages.append(f"invalid group member name: {member!r}")
+        try:
+            group = BackupGroup(name, ty.cast(tuple[str, ...], tuple(members)))
+        except ConfigError as error:
+            messages.extend(error.messages)
 
-    if not bckp.backup_name_valid(name):
-        messages.append(f"invalid group name: {name!r}")
     if messages:
         raise ConfigError(messages)
-    return BackupGroup(name, tuple(members))
+    assert group is not None
+    return group
 
 
 def _parse_global_settings(value: object) -> GlobalSettings:
@@ -317,6 +322,9 @@ def _parse_global_settings(value: object) -> GlobalSettings:
         raise ConfigError(
             [f"invalid global settings: {message}" for message in error.errors]
         ) from error
+
+
+# Backup parsing
 
 
 def _parse_backup(
@@ -488,6 +496,9 @@ def _validate_destination(driver: DriverBase) -> None:
         raise ConfigError(f"destination driver {driver.name()} cannot store backup artifacts")
 
 
+# Cross-backup validation
+
+
 def _validate_backup_sources(
     backups: ty.Mapping[str, bckp.Backup],
     declared_names: set[str],
@@ -548,6 +559,9 @@ def _validate_backup_sources(
         visit(name)
     if messages:
         raise ConfigError(messages)
+
+
+# Schedule and retention parsing
 
 
 def parse_schedules(
@@ -680,6 +694,9 @@ def _parse_retention(
     if messages:
         raise ConfigError(messages)
     return tuple(policies)
+
+
+# Shared implementation lookup
 
 
 def _type_named(base: type[_NamedType], name: object) -> type[_NamedType] | None:
