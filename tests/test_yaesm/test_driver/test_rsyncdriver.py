@@ -30,7 +30,7 @@ _RSYNC_OPTIONS = (
     "--numeric-ids",
     "--delete",
     "--delete-excluded",
-    "--protect-args",
+    "-s",
 )
 _MARKER_PREFIX = ".yaesm-rsync-artifact-"
 

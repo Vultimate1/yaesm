@@ -182,7 +182,7 @@ class RsyncDriver(DriverBase):
             "--numeric-ids",
             "--delete",
             "--delete-excluded",
-            "--protect-args",
+            "-s",
             *(f"--exclude={pattern}" for pattern in self.exclude),
             *self.extra_options,
         ]
