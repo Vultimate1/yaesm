@@ -112,8 +112,8 @@ class DriverBase(abc.ABC):
         return cls.name()
 
     @classmethod
-    def executable_check_command(cls) -> tuple[str, ...]:
-        """Return a harmless command that verifies the primary executable can run."""
+    def executable_check_command(cls) -> tuple[str, ...] | None:
+        """Return a harmless command that verifies the primary executable can run, if any."""
         return (cls.executable_name(), "--version")
 
     @classmethod
@@ -191,13 +191,13 @@ class DriverBase(abc.ABC):
     @ty.final
     def check(self, role: CheckRole) -> tuple[Check, ...]:
         """Return deferred, read-only feasibility checks for this driver."""
-        executable = self.executable_name()
+        command = self.executable_check_command()
+        checks = self._checks(role)
+        if command is None:
+            return checks
         return (
-            self._command_check(
-                f"{executable} is installed",
-                self.executable_check_command(),
-            ),
-            *self._checks(role),
+            self._command_check(f"{self.executable_name()} is installed", command),
+            *checks,
         )
 
     def format_locator(self, artifact: bckp.BackupArtifact) -> str:

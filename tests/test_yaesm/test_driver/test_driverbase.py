@@ -144,6 +144,12 @@ class DriverWithDifferentExecutableCheck(EmptyDriver):
         return ("special", "version")
 
 
+class DriverWithoutExecutableCheck(EmptyDriver):
+    @classmethod
+    def executable_check_command(cls) -> None:
+        return None
+
+
 def test_driver_has_global_settings():
     settings = {"setting": "value"}
 
@@ -326,6 +332,10 @@ def test_executable_check_command_can_be_overridden():
         "special",
         "version",
     )
+
+
+def test_executable_check_can_be_omitted():
+    assert DriverWithoutExecutableCheck().check(CheckRole.SOURCE) == ()
 
 
 def test_unknown_capability_method_is_rejected():

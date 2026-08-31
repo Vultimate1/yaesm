@@ -21,8 +21,8 @@ from yaesm.command import (
     CommandStage,
     PipelineCommand,
 )
+from yaesm.driver.directorydriver import DirectoryDriver
 from yaesm.driver.gpgdriver import GPGDriver
-from yaesm.driver.rsyncdriver import RsyncDriver
 from yaesm.driver.tardriver import TarArchive, TarDriver, TarDriverError, TarStream
 from yaesm.driver.zstddriver import ZstdDriver
 from yaesm.errors import YaesmValueError
@@ -490,7 +490,7 @@ def test_cap_delete_rejects_different_endpoint(tmp_path):
 
 
 def test_encrypted_tar_pipeline_uses_tar_as_destination(tmp_path):
-    source = RsyncDriver(Path("/source"))
+    source = DirectoryDriver(Path("/source"))
     tar = TarDriver(Path("/archives"))
     gpg = GPGDriver(tmp_path / "public-key.asc")
 
@@ -512,7 +512,7 @@ def test_archive_pipeline_stores_suffixes_in_driver_order(tmp_path):
     tar = TarDriver(tmp_path)
     tar.runner = RecordingRunner()
     pipeline = Pipeline(
-        RsyncDriver(Path("/source")),
+        DirectoryDriver(Path("/source")),
         tar,
         (ZstdDriver(), GPGDriver(tmp_path / "public-key.asc")),
     )

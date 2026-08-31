@@ -14,6 +14,7 @@ from yaesm.backup import Backup, BackupArtifact, BackupOperation
 from yaesm.check import CheckRole
 from yaesm.command import Command, CommandResult, CommandRunner
 from yaesm.driver.btrfsdriver import BtrfsDriver, BtrfsSubvolume
+from yaesm.driver.directorydriver import DirectoryDriver
 from yaesm.driver.rsyncdriver import RsyncDriver, RsyncDriverError, RsyncTree
 from yaesm.errors import YaesmValueError
 from yaesm.pipeline import Pipeline, PipelineStep
@@ -219,41 +220,11 @@ def test_constructor_rejects_invalid_one_file_system(tmp_path, one_file_system):
         RsyncDriver(tmp_path, one_file_system=ty.cast(ty.Any, one_file_system))
 
 
-def test_cap_source(tmp_path):
+def test_capabilities(tmp_path):
     driver = RsyncDriver(tmp_path)
 
-    assert driver.capabilities() == {"source", "store", "list", "delete"}
+    assert driver.capabilities() == {"store", "list", "delete"}
     assert driver.capability_metadata("store").base == "destination"
-    assert driver.cap_source() == PathTree(tmp_path)
-
-
-def test_cap_source_includes_ssh_target(tmp_path):
-    target = SSHTarget("ssh://host", tmp_path / "key")
-
-    assert RsyncDriver(tmp_path, target).cap_source() == PathTree(tmp_path, target)
-
-
-def test_source_checks_directory_requirements(tmp_path, monkeypatch):
-    runner = RecordingRunner()
-    monkeypatch.setattr(command_module, "run", runner.run)
-    driver = RsyncDriver(tmp_path)
-
-    checks = driver.check(CheckRole.SOURCE)
-
-    assert tuple(check.description for check in checks) == (
-        "rsync is installed",
-        f"directory exists: {tmp_path}",
-        f"directory is readable: {tmp_path}",
-        f"directory is searchable: {tmp_path}",
-    )
-    assert runner.commands == []
-    assert all(check.run().passed for check in checks)
-    assert runner.commands == [
-        ("rsync", "--version"),
-        ("test", "-d", str(tmp_path)),
-        ("test", "-r", str(tmp_path)),
-        ("test", "-x", str(tmp_path)),
-    ]
 
 
 def test_destination_checks_directory_requirements_remotely(tmp_path, monkeypatch):
@@ -295,9 +266,6 @@ def test_artifact_source_checks_storage_read_requirements(tmp_path):
 @pytest.mark.parametrize(
     ("role", "index"),
     [
-        (CheckRole.SOURCE, 0),
-        (CheckRole.SOURCE, 1),
-        (CheckRole.SOURCE, 2),
         (CheckRole.ARTIFACT_SOURCE, 0),
         (CheckRole.ARTIFACT_SOURCE, 1),
         (CheckRole.ARTIFACT_SOURCE, 2),
@@ -323,12 +291,13 @@ def test_each_directory_check_reports_failure(role, index, tmp_path, monkeypatch
     assert result.stderr == "permission denied"
 
 
-def test_transform_check_does_not_validate_unused_directory(tmp_path):
+@pytest.mark.parametrize("role", [CheckRole.SOURCE, CheckRole.TRANSFORM])
+def test_unused_roles_do_not_validate_directory(role, tmp_path):
     driver = RsyncDriver(tmp_path)
-    checks = driver.check(CheckRole.TRANSFORM)
+    checks = driver.check(role)
 
     assert tuple(check.description for check in checks) == ("rsync is installed",)
-    assert driver._checks(CheckRole.TRANSFORM) == ()
+    assert driver._checks(role) == ()
 
 
 def test_cap_store_local(tmp_path):
@@ -719,7 +688,7 @@ def test_rsync_does_not_support_unchanged(tmp_path):
 
 
 def test_pipeline_uses_rsync_store(tmp_path):
-    source = RsyncDriver(tmp_path / "source")
+    source = DirectoryDriver(tmp_path / "source")
     destination = RsyncDriver(tmp_path / "destination")
 
     assert Pipeline(source, destination).steps == (
@@ -755,7 +724,7 @@ def test_rsync_integration(tmp_path):
     destination.mkdir()
     (source / "unchanged").write_text("same")
     (source / "changed").write_text("before")
-    source_driver = RsyncDriver(source)
+    source_driver = DirectoryDriver(source)
     driver = RsyncDriver(destination)
     backup = Backup("example", source_driver, driver)
 

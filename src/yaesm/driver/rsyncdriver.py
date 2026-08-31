@@ -122,7 +122,7 @@ class RsyncDriver(DriverBase):
 
     def _checks(self, role: CheckRole) -> tuple[Check, ...]:
         match role:
-            case CheckRole.SOURCE | CheckRole.ARTIFACT_SOURCE:
+            case CheckRole.ARTIFACT_SOURCE:
                 requirements = (
                     ("directory exists", ("test", "-d", self.location)),
                     ("directory is readable", ("test", "-r", self.location)),
@@ -135,7 +135,7 @@ class RsyncDriver(DriverBase):
                     ("directory is writable", ("test", "-w", self.location)),
                     ("directory is searchable", ("test", "-x", self.location)),
                 )
-            case CheckRole.TRANSFORM:
+            case CheckRole.SOURCE | CheckRole.TRANSFORM:
                 return ()
         return tuple(
             self._command_check(
@@ -157,9 +157,6 @@ class RsyncDriver(DriverBase):
             and isinstance(destination_base, RsyncTree)
             and same_endpoint(destination_base.ssh, self.ssh)
         )
-
-    def cap_source(self) -> PathTree:
-        return PathTree(self.location, self.ssh)
 
     def cap_store(
         self,

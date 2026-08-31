@@ -22,6 +22,7 @@ from yaesm.config import (
     parse_schedules,
 )
 from yaesm.driver.btrfsdriver import BtrfsDriver
+from yaesm.driver.directorydriver import DirectoryDriver
 from yaesm.driver.driverbase import DriverBase
 from yaesm.driver.gpgdriver import GPGDriver
 from yaesm.driver.rsyncdriver import RsyncDriver
@@ -104,6 +105,10 @@ _BTRFS_CONFIGS = st.one_of(
     _PATHS,
     st.builds(lambda location: {"location": location}, _PATHS),
 )
+_DIRECTORY_CONFIGS = st.one_of(
+    _PATHS,
+    st.builds(lambda location: {"location": location}, _PATHS),
+)
 _RSYNC_CONFIGS = st.one_of(
     _PATHS,
     st.builds(
@@ -160,6 +165,7 @@ _ZSTD_CONFIGS = st.one_of(
 )
 _DRIVER_CONFIGS = {
     "btrfs": _BTRFS_CONFIGS,
+    "directory": _DIRECTORY_CONFIGS,
     "rsync": _RSYNC_CONFIGS,
     "zfs": _ZFS_CONFIGS,
     "tar": _TAR_CONFIGS,
@@ -261,13 +267,19 @@ def schedule_definitions(draw):
 
 @st.composite
 def direct_pipeline_definitions(draw, remote_allowed):
-    if draw(st.booleans()):
-        driver_name = draw(st.sampled_from(("btrfs", "rsync", "zfs")))
+    pipeline_type = draw(st.sampled_from(("native", "rsync", "archive")))
+    if pipeline_type == "native":
+        driver_name = draw(st.sampled_from(("btrfs", "zfs")))
         source = draw(driver_definitions(driver_name, remote_allowed))
         destination = draw(driver_definitions(driver_name, remote_allowed))
         transforms = []
+    elif pipeline_type == "rsync":
+        driver_name = draw(st.sampled_from(("btrfs", "directory")))
+        source = draw(driver_definitions(driver_name, remote_allowed))
+        destination = draw(driver_definitions("rsync", remote_allowed))
+        transforms = []
     else:
-        driver_name = draw(st.sampled_from(("btrfs", "rsync")))
+        driver_name = draw(st.sampled_from(("btrfs", "directory")))
         source = draw(driver_definitions(driver_name, remote_allowed))
         destination = draw(driver_definitions("tar", remote_allowed))
         transform_names = draw(
@@ -1047,7 +1059,6 @@ def test_parse_config_rejects_schedule_name_history_collisions(schedules):
     ("driver", "driver_type"),
     [
         ({"btrfs": {"location": "/source"}}, BtrfsDriver),
-        ({"rsync": {"location": "/source"}}, RsyncDriver),
         ({"zfs": "tank/source"}, ZFSDriver),
     ],
 )
@@ -1060,11 +1071,37 @@ def test_parse_config_constructs_source_and_destination_drivers(driver, driver_t
     assert isinstance(backup.destination, driver_type)
 
 
+def test_parse_config_constructs_directory_source_and_rsync_destination():
+    backup = parse_config(
+        {
+            "home": backup_config(
+                source={"directory": "/source"},
+                destination={"rsync": "/destination"},
+            )
+        }
+    ).backups["home"]
+
+    assert isinstance(backup.source, DirectoryDriver)
+    assert isinstance(backup.destination, RsyncDriver)
+
+
+def test_parse_config_rejects_rsync_source():
+    with pytest.raises(ConfigError, match="rsync driver cannot provide a backup source"):
+        parse_config(
+            {
+                "home": backup_config(
+                    source={"rsync": "/source"},
+                    destination={"rsync": "/destination"},
+                )
+            }
+        )
+
+
 def test_parse_config_builds_encrypted_tar_archive_pipeline():
     backup = parse_config(
         {
             "home": backup_config(
-                source={"rsync": {"location": "/source"}},
+                source={"directory": {"location": "/source"}},
                 destination={
                     "tar": {
                         "location": "/archives",
@@ -1076,7 +1113,7 @@ def test_parse_config_builds_encrypted_tar_archive_pipeline():
         }
     ).backups["home"]
 
-    assert isinstance(backup.source, RsyncDriver)
+    assert isinstance(backup.source, DirectoryDriver)
     assert isinstance(backup.destination, TarDriver)
     assert backup.destination.location == Path("/archives")
     assert not backup.destination.one_file_system
@@ -1084,7 +1121,7 @@ def test_parse_config_builds_encrypted_tar_archive_pipeline():
         (step.driver.name(), step.capability)
         for step in Pipeline(backup.source, backup.destination, backup.transforms).steps
     ) == (
-        ("rsync", "source"),
+        ("directory", "source"),
         ("tar", "export"),
         ("gpg", "encrypt"),
         ("tar", "import"),
@@ -1110,7 +1147,7 @@ def test_parse_config_rejects_incompatible_replication_without_artifacts():
         parse_config(
             {
                 "archive": backup_config(
-                    source={"rsync": "/source"},
+                    source={"directory": "/source"},
                     destination={"tar": "/archives"},
                 ),
                 "replica": backup_config(
@@ -1830,7 +1867,7 @@ def test_parse_config_rejects_incompatible_pipeline():
         parse_config(
             {
                 "home": backup_config(
-                    source={"rsync": {"location": "/source"}},
+                    source={"directory": {"location": "/source"}},
                     destination={"zfs": "tank/backup"},
                 )
             }
