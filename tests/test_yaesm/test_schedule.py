@@ -13,6 +13,7 @@ from yaesm.schedule import (
     Schedule,
     ScheduleBase,
     schedule_name_valid,
+    validate_schedule_name,
 )
 
 
@@ -86,6 +87,7 @@ def test_schedule_rejects_duplicate_name_history(previous_names):
 )
 def test_schedule_accepts_safe_name(name):
     assert schedule_name_valid(name)
+    assert validate_schedule_name(name) == name
     assert Schedule(name, UntimedSchedule()).name == name
 
 
@@ -107,8 +109,10 @@ def test_schedule_accepts_safe_name(name):
 )
 def test_schedule_rejects_unsafe_name(name):
     assert not schedule_name_valid(name)
-    with pytest.raises(YaesmValueError, match="invalid schedule name"):
+    with pytest.raises(YaesmValueError, match="invalid schedule name") as error:
         Schedule(name, UntimedSchedule())
+
+    assert "name must" in error.value.format()
 
 
 def test_schedule_can_have_no_timer_triggers():

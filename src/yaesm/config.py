@@ -15,7 +15,7 @@ from yaesm.errors import YaesmError, YaesmValueError
 from yaesm.names import ALL_TARGET_NAME, SETTINGS_NAME
 from yaesm.pipeline import Pipeline
 from yaesm.retention import KeepAll, RetentionPolicyBase
-from yaesm.schedule import OnDemandSchedule, Schedule, ScheduleBase, schedule_name_valid
+from yaesm.schedule import OnDemandSchedule, Schedule, ScheduleBase, validate_schedule_name
 from yaesm.scheduler import Scheduler
 from yaesm.ssh import SSHTarget, SSHTargetError
 
@@ -83,16 +83,18 @@ class BackupGroup:
         if _system:
             if self.name != ALL_TARGET_NAME:
                 messages.append(f"invalid system group name: {self.name!r}")
-        elif not bckp.backup_name_valid(self.name):
-            messages.append(f"invalid group name: {self.name!r}")
+        else:
+            try:
+                bckp.validate_backup_name(self.name)
+            except YaesmValueError as error:
+                messages.append(f"invalid group name: {self.name!r} ({error})")
         if not _system and not self.members:
             messages.append("group must contain at least one target")
         for member in self.members:
-            if not isinstance(member, str):
-                messages.append("group members must be strings")
-                break
-            if not bckp.backup_name_valid(member):
-                messages.append(f"invalid group member name: {member!r}")
+            try:
+                bckp.validate_backup_name(member)
+            except YaesmValueError as error:
+                messages.append(f"invalid group member name: {member!r} ({error})")
         if messages:
             raise ConfigError(messages)
 
@@ -354,7 +356,7 @@ def _parse_backup(
         previous_names = _parse_previous_names(
             name,
             value.get("previous_names", []),
-            bckp.backup_name_valid,
+            bckp.validate_backup_name,
             "backup",
         )
     except ConfigError as error:
@@ -578,8 +580,10 @@ def parse_schedules(
     messages = []
     for schedule_name, definition in value.items():
         try:
-            if not schedule_name_valid(schedule_name):
-                raise ConfigError(f"invalid schedule name: {schedule_name!r}")
+            try:
+                validate_schedule_name(schedule_name)
+            except YaesmValueError as error:
+                raise ConfigError(f"invalid schedule name: {schedule_name!r} ({error})") from error
             schedule, retention = _parse_schedule(schedule_name, definition)
             if schedule_name.casefold() == "manual" and not isinstance(
                 schedule.implementation, OnDemandSchedule
@@ -610,7 +614,7 @@ def _parse_schedule(
     previous_names = _parse_previous_names(
         schedule_name,
         value.get("previous_names", []),
-        schedule_name_valid,
+        validate_schedule_name,
         "schedule",
     )
     implementations = tuple(
@@ -642,7 +646,7 @@ def _parse_schedule(
 def _parse_previous_names(
     current_name: str,
     value: object,
-    valid: ty.Callable[[object], bool],
+    validate: ty.Callable[[object], str],
     kind: str,
 ) -> tuple[str, ...]:
     if not isinstance(value, list):
@@ -650,8 +654,10 @@ def _parse_previous_names(
     names = tuple(value)
     seen = {current_name}
     for name in names:
-        if not valid(name):
-            raise ConfigError(f"invalid previous {kind} name: {name!r}")
+        try:
+            validate(name)
+        except YaesmValueError as error:
+            raise ConfigError(f"invalid previous {kind} name: {name!r} ({error})") from error
         if name in seen:
             raise ConfigError(f"duplicate {kind} name: {name!r}")
         seen.add(name)

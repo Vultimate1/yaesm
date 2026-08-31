@@ -8,9 +8,9 @@ from datetime import timedelta, timezone
 
 import yaesm.ty as ty
 from yaesm.errors import YaesmError, YaesmValueError
-from yaesm.names import SETTINGS_NAME, name_valid
+from yaesm.names import SETTINGS_NAME, validate_name
 from yaesm.representation import Representation
-from yaesm.schedule import schedule_name_valid
+from yaesm.schedule import validate_schedule_name
 
 _RepresentationT = ty.TypeVar("_RepresentationT", bound=Representation, covariant=True)
 logger = logging.getLogger(__name__)
@@ -25,9 +25,18 @@ class BackupError(YaesmError):
     """Raised when a backup cannot be prepared or executed."""
 
 
+def validate_backup_name(name: object) -> str:
+    """Return a valid backup name or raise with the reason it is invalid."""
+    return validate_name(name, reserved=(SETTINGS_NAME,))
+
+
 def backup_name_valid(name: object) -> bool:
     """Return whether a name is safe to use in an artifact name."""
-    return name_valid(name, reserved=(SETTINGS_NAME,))
+    try:
+        validate_backup_name(name)
+    except YaesmValueError:
+        return False
+    return True
 
 
 @dataclasses.dataclass(frozen=True)
@@ -37,8 +46,10 @@ class BackupSource:
     backup_name: str
 
     def __post_init__(self) -> None:
-        if not backup_name_valid(self.backup_name):
-            raise YaesmValueError(f"invalid source backup name: {self.backup_name!r}")
+        try:
+            validate_backup_name(self.backup_name)
+        except YaesmValueError as error:
+            raise YaesmValueError(f"invalid source backup name: {self.backup_name!r}") from error
 
 
 @dataclasses.dataclass(frozen=True)
@@ -54,10 +65,14 @@ class BackupOperation:
     )
 
     def __post_init__(self) -> None:
-        if not backup_name_valid(self.backup_name):
-            raise YaesmValueError(f"invalid backup name: {self.backup_name!r}")
-        if not schedule_name_valid(self.schedule_name):
-            raise YaesmValueError(f"invalid schedule name: {self.schedule_name!r}")
+        try:
+            validate_backup_name(self.backup_name)
+        except YaesmValueError as error:
+            raise YaesmValueError(f"invalid backup name: {self.backup_name!r}") from error
+        try:
+            validate_schedule_name(self.schedule_name)
+        except YaesmValueError as error:
+            raise YaesmValueError(f"invalid schedule name: {self.schedule_name!r}") from error
         if not isinstance(self.created_at, ty.datetime):
             raise YaesmValueError(f"invalid created_at: {self.created_at!r}")
         if self.created_at.tzinfo is None:
@@ -86,8 +101,10 @@ class BackupOperation:
             raise YaesmValueError(f"invalid source artifact ID: {self.source_artifact_id!r}")
         seen = {self.backup_name}
         for name in self.previous_backup_names:
-            if not backup_name_valid(name):
-                raise YaesmValueError(f"invalid previous backup name: {name!r}")
+            try:
+                validate_backup_name(name)
+            except YaesmValueError as error:
+                raise YaesmValueError(f"invalid previous backup name: {name!r}") from error
             if name in seen:
                 raise YaesmValueError(f"duplicate backup name: {name!r}")
             seen.add(name)
@@ -168,8 +185,10 @@ class Backup:
     def __post_init__(self) -> None:
         from yaesm.driver.driverbase import DriverBase
 
-        if not backup_name_valid(self.name):
-            raise YaesmValueError(f"invalid backup name: {self.name!r}")
+        try:
+            validate_backup_name(self.name)
+        except YaesmValueError as error:
+            raise YaesmValueError(f"invalid backup name: {self.name!r}") from error
         if not isinstance(self.skip_unchanged, bool):
             raise YaesmValueError("skip_unchanged must be a boolean")
         if (
@@ -194,8 +213,10 @@ class Backup:
 
         seen = {self.name}
         for name in self.previous_names:
-            if not backup_name_valid(name):
-                raise YaesmValueError(f"invalid previous backup name: {name!r}")
+            try:
+                validate_backup_name(name)
+            except YaesmValueError as error:
+                raise YaesmValueError(f"invalid previous backup name: {name!r}") from error
             if name in seen:
                 raise YaesmValueError(f"duplicate backup name: {name!r}")
             seen.add(name)

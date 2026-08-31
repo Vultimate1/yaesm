@@ -552,7 +552,7 @@ def invalid_group_config(names, mutation):
             message = "unknown settings: unexpected"
         case "nonstring-member":
             config[group_name] = {"group": [1]}
-            message = "group members must be strings"
+            message = "invalid group member name: 1 (name must be a string)"
         case "invalid-member":
             config[group_name] = {"group": ["bad/name"]}
             message = "invalid group member name: 'bad/name'"
@@ -842,8 +842,11 @@ def test_parse_config_rejects_empty_backup_group():
 @pytest.mark.parametrize(
     ("members", "message"),
     [
-        ([1], "group members must be strings"),
-        (["bad/name"], "invalid group member name: 'bad/name'"),
+        ([1], r"invalid group member name: 1 \(name must be a string\)"),
+        (
+            ["bad/name"],
+            r"invalid group member name: 'bad/name' \(name must contain only ASCII",
+        ),
     ],
 )
 def test_parse_config_rejects_invalid_backup_group_member(members, message):

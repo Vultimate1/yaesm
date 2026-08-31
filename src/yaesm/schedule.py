@@ -9,12 +9,21 @@ from apscheduler.triggers.base import BaseTrigger
 from apscheduler.triggers.cron import CronTrigger
 
 from yaesm.errors import YaesmValueError
-from yaesm.names import name_valid
+from yaesm.names import validate_name
+
+
+def validate_schedule_name(name: object) -> str:
+    """Return a valid schedule name or raise with the reason it is invalid."""
+    return validate_name(name)
 
 
 def schedule_name_valid(name: object) -> bool:
     """Return whether a name is safe to use in an artifact name."""
-    return name_valid(name)
+    try:
+        validate_schedule_name(name)
+    except YaesmValueError:
+        return False
+    return True
 
 
 class ScheduleBase(abc.ABC):
@@ -96,12 +105,16 @@ class Schedule:
     previous_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if not schedule_name_valid(self.name):
-            raise YaesmValueError(f"invalid schedule name: {self.name!r}")
+        try:
+            validate_schedule_name(self.name)
+        except YaesmValueError as error:
+            raise YaesmValueError(f"invalid schedule name: {self.name!r}") from error
         seen = {self.name}
         for name in self.previous_names:
-            if not schedule_name_valid(name):
-                raise YaesmValueError(f"invalid previous schedule name: {name!r}")
+            try:
+                validate_schedule_name(name)
+            except YaesmValueError as error:
+                raise YaesmValueError(f"invalid previous schedule name: {name!r}") from error
             if name in seen:
                 raise YaesmValueError(f"duplicate schedule name: {name!r}")
             seen.add(name)

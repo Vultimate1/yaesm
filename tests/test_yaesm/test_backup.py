@@ -275,10 +275,18 @@ def test_backup_source_identifies_configured_backup():
     assert bckp.BackupSource("local-home").backup_name == "local-home"
 
 
+def test_validate_backup_name_applies_reserved_names():
+    assert bckp.validate_backup_name("home") == "home"
+    with pytest.raises(YaesmValueError, match="name is reserved"):
+        bckp.validate_backup_name("SETTINGS")
+
+
 @pytest.mark.parametrize("name", ["", "-local", "settings", "local.backup"])
 def test_backup_source_rejects_invalid_name(name):
-    with pytest.raises(YaesmValueError, match="invalid source backup name"):
+    with pytest.raises(YaesmValueError, match="invalid source backup name") as error:
         bckp.BackupSource(name)
+
+    assert "name must" in error.value.format() or "name is reserved" in error.value.format()
 
 
 def test_backup_operation():
