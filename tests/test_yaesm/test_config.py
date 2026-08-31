@@ -173,7 +173,7 @@ _RETENTION = st.one_of(
     st.integers(min_value=1, max_value=100).map(lambda count: {"keep-last": {"count": count}}),
     st.tuples(
         st.integers(min_value=1, max_value=100),
-        st.sampled_from(("s", "m", "h", "d", "w", "y")),
+        st.sampled_from(("m", "h", "d", "w", "y")),
     ).map(lambda duration: {"keep-for": f"{duration[0]}{duration[1]}"}),
     st.timedeltas(min_value=timedelta(seconds=1), max_value=timedelta(days=3650)).map(
         lambda duration: {"keep-for": {"duration": duration}}

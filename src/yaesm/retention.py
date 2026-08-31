@@ -127,7 +127,6 @@ class KeepFor(RetentionPolicyBase):
             if isinstance(value, str) and len(value) > 1:
                 amount, unit = value[:-1], value[-1].lower()
                 units = {
-                    "s": "seconds",
                     "m": "minutes",
                     "h": "hours",
                     "d": "days",
