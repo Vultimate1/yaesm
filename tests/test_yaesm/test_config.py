@@ -24,6 +24,7 @@ from yaesm.config import (
 from yaesm.driver.btrfsdriver import BtrfsDriver
 from yaesm.driver.directorydriver import DirectoryDriver
 from yaesm.driver.driverbase import DriverBase
+from yaesm.driver.filedriver import FileDriver
 from yaesm.driver.gpgdriver import GPGDriver
 from yaesm.driver.rsyncdriver import RsyncDriver
 from yaesm.driver.tardriver import TarDriver
@@ -109,6 +110,10 @@ _DIRECTORY_CONFIGS = st.one_of(
     _PATHS,
     st.builds(lambda location: {"location": location}, _PATHS),
 )
+_FILE_CONFIGS = st.one_of(
+    _PATHS,
+    st.builds(lambda location: {"location": location}, _PATHS),
+)
 _RSYNC_CONFIGS = st.one_of(
     _PATHS,
     st.builds(
@@ -166,6 +171,7 @@ _ZSTD_CONFIGS = st.one_of(
 _DRIVER_CONFIGS = {
     "btrfs": _BTRFS_CONFIGS,
     "directory": _DIRECTORY_CONFIGS,
+    "file": _FILE_CONFIGS,
     "rsync": _RSYNC_CONFIGS,
     "zfs": _ZFS_CONFIGS,
     "tar": _TAR_CONFIGS,
@@ -267,7 +273,7 @@ def schedule_definitions(draw):
 
 @st.composite
 def direct_pipeline_definitions(draw, remote_allowed):
-    pipeline_type = draw(st.sampled_from(("native", "rsync", "archive")))
+    pipeline_type = draw(st.sampled_from(("native", "rsync", "archive", "file")))
     if pipeline_type == "native":
         driver_name = draw(st.sampled_from(("btrfs", "zfs")))
         source = draw(driver_definitions(driver_name, remote_allowed))
@@ -278,10 +284,17 @@ def direct_pipeline_definitions(draw, remote_allowed):
         source = draw(driver_definitions(driver_name, remote_allowed))
         destination = draw(driver_definitions("rsync", remote_allowed))
         transforms = []
-    else:
+    elif pipeline_type == "archive":
         driver_name = draw(st.sampled_from(("btrfs", "directory")))
         source = draw(driver_definitions(driver_name, remote_allowed))
         destination = draw(driver_definitions("tar", remote_allowed))
+        transform_names = draw(
+            st.sampled_from(((), ("zstd",), ("gpg",), ("zstd", "gpg"), ("gpg", "zstd")))
+        )
+        transforms = [draw(driver_definitions(name, remote_allowed)) for name in transform_names]
+    else:
+        source = draw(driver_definitions("file", remote_allowed))
+        destination = draw(driver_definitions("file", remote_allowed))
         transform_names = draw(
             st.sampled_from(((), ("zstd",), ("gpg",), ("zstd", "gpg"), ("gpg", "zstd")))
         )
@@ -1083,6 +1096,44 @@ def test_parse_config_constructs_directory_source_and_rsync_destination():
 
     assert isinstance(backup.source, DirectoryDriver)
     assert isinstance(backup.destination, RsyncDriver)
+
+
+def test_parse_config_constructs_file_source_and_destination():
+    backup = parse_config(
+        {
+            "database": backup_config(
+                source={"file": "/source/database.sql"},
+                destination={"file": "/destination"},
+                transforms=[{"zstd": {}}],
+            )
+        }
+    ).backups["database"]
+
+    assert isinstance(backup.source, FileDriver)
+    assert backup.source.location == Path("/source/database.sql")
+    assert isinstance(backup.destination, FileDriver)
+    assert backup.destination.location == Path("/destination")
+    assert tuple(
+        (step.driver.name(), step.capability)
+        for step in Pipeline(backup.source, backup.destination, backup.transforms).steps
+    ) == (
+        ("file", "source"),
+        ("zstd", "compress"),
+        ("file", "import"),
+    )
+
+
+def test_parse_config_rejects_file_transform():
+    with pytest.raises(ConfigError, match="next configured transform cannot be used: file"):
+        parse_config(
+            {
+                "database": backup_config(
+                    source={"file": "/source/database.sql"},
+                    destination={"file": "/destination"},
+                    transforms=[{"file": "/unused"}],
+                )
+            }
+        )
 
 
 def test_parse_config_rejects_rsync_source():

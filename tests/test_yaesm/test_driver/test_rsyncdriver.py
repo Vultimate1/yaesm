@@ -337,6 +337,71 @@ def test_cap_store_uses_exclude_patterns(tmp_path):
     )
 
 
+def test_cap_store_uses_protected_path_exclusions(tmp_path):
+    runner = RecordingRunner()
+    source_path = tmp_path / "source"
+    source = PathTree(
+        source_path,
+        excluded_paths=(ty.Path("backups[1]*?"),),
+    )
+    destination_dir = tmp_path / "destination"
+    driver = with_runner(RsyncDriver(destination_dir), runner)
+
+    driver.cap_store(source, operation())
+
+    assert "--exclude=/backups\\[1\\]\\*\\?/" in runner.commands[0]
+
+
+@pytest.mark.parametrize(
+    "extra_options",
+    [
+        ("--filter=!",),
+        ("--include-from=/filters",),
+        ("--exclude-from=/filters",),
+        ("-f", "- *.tmp"),
+        ("-avf- *.tmp",),
+    ],
+)
+def test_cap_store_rejects_custom_filters_when_paths_are_protected(
+    tmp_path,
+    extra_options,
+):
+    runner = RecordingRunner()
+    source = PathTree(
+        tmp_path / "source",
+        excluded_paths=(ty.Path("backups"),),
+    )
+    driver = with_runner(RsyncDriver(tmp_path / "destination", extra_options=extra_options), runner)
+
+    with pytest.raises(
+        RsyncDriverError,
+        match="extra_options could override required protected-path filters",
+    ):
+        driver.cap_store(source, operation())
+
+    assert runner.commands == []
+
+
+def test_cap_store_keeps_protected_exclusions_before_simple_extra_filters(tmp_path):
+    runner = RecordingRunner()
+    source = PathTree(
+        tmp_path / "source",
+        excluded_paths=(ty.Path("backups"),),
+    )
+    driver = with_runner(
+        RsyncDriver(
+            tmp_path / "destination",
+            extra_options=("--include=/backups/***", "--exclude=*.tmp"),
+        ),
+        runner,
+    )
+
+    driver.cap_store(source, operation())
+
+    command = runner.commands[0]
+    assert command.index("--exclude=/backups/") < command.index("--include=/backups/***")
+
+
 def test_cap_store_can_stay_on_one_file_system(tmp_path):
     runner = RecordingRunner()
     source = PathTree(tmp_path / "source")
@@ -697,6 +762,17 @@ def test_pipeline_uses_rsync_store(tmp_path):
     )
 
 
+def test_pipeline_excludes_nested_rsync_destination(tmp_path):
+    source_path = tmp_path / "source"
+    destination_path = source_path / "backups"
+    runner = RecordingRunner()
+    destination = with_runner(RsyncDriver(destination_path), runner)
+
+    Pipeline(DirectoryDriver(source_path), destination).execute(operation())
+
+    assert "--exclude=/backups/" in runner.commands[0]
+
+
 def test_pipeline_snapshots_btrfs_tree_before_storing_with_rsync(tmp_path):
     source = BtrfsDriver(tmp_path / "source")
     destination = RsyncDriver(tmp_path / "destination")
@@ -742,3 +818,24 @@ def test_rsync_integration(tmp_path):
     assert not first.representation.path.exists()
     assert not second.representation.path.exists()
     assert not any(destination.iterdir())
+
+
+def test_rsync_does_not_copy_nested_destination(tmp_path):
+    if shutil.which("rsync") is None:
+        pytest.skip("rsync is not installed")
+
+    source = tmp_path / "source"
+    destination = source / "backups[1]*?"
+    decoy = source / "backups1fooX"
+    destination.mkdir(parents=True)
+    decoy.mkdir()
+    (source / "content").write_text("backup content")
+    (destination / "old-backup").write_text("must not be copied")
+    (decoy / "included").write_text("must be copied")
+
+    result = Pipeline(DirectoryDriver(source), RsyncDriver(destination)).execute(operation())
+
+    artifact = result.representation.path
+    assert (artifact / "content").read_text() == "backup content"
+    assert (artifact / "backups1fooX" / "included").read_text() == "must be copied"
+    assert not (artifact / destination.name).exists()

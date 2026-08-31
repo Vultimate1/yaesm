@@ -158,6 +158,9 @@ class RsyncDriver(DriverBase):
             and same_endpoint(destination_base.ssh, self.ssh)
         )
 
+    def artifact_roots(self) -> tuple[PathTree, ...]:
+        return (PathTree(self.location, self.ssh),)
+
     def cap_store(
         self,
         source: PathTree,
@@ -166,6 +169,10 @@ class RsyncDriver(DriverBase):
     ) -> bckp.BackupArtifact[RsyncTree]:
         if base is not None and not same_endpoint(base.ssh, self.ssh):
             raise RsyncDriverError("rsync base and destination use different SSH endpoints")
+        if source.excluded_paths and _can_override_protected_filters(self.extra_options):
+            raise RsyncDriverError(
+                "rsync extra_options could override required protected-path filters"
+            )
 
         destination = RsyncTree(self.location / operation.artifact_name, self.ssh)
         command: list[str | ty.Path] = [
@@ -181,6 +188,7 @@ class RsyncDriver(DriverBase):
             "--delete-excluded",
             "-s",
             *(f"--exclude={pattern}" for pattern in self.exclude),
+            *(f"--exclude={self._exclude_pattern(path)}" for path in source.excluded_paths),
             *self.extra_options,
         ]
         if base is not None:
@@ -200,6 +208,13 @@ class RsyncDriver(DriverBase):
             self._delete((destination,), check=False)
             raise
         return bckp.BackupArtifact(operation, destination)
+
+    @staticmethod
+    def _exclude_pattern(path: ty.Path) -> str:
+        pattern = "".join(
+            f"\\{character}" if character in "\\*?[]" else character for character in str(path)
+        )
+        return f"/{pattern}/"
 
     def cap_list(self, backup_name: str) -> tuple[bckp.BackupArtifact[RsyncTree], ...]:
         result = self.runner.run(
@@ -297,3 +312,16 @@ def _remote_directory(ssh: SSHTarget, path: ty.Path) -> str:
     host = f"[{ssh.host}]" if ":" in ssh.host else ssh.host
     destination = host if ssh.user is None else f"{ssh.user}@{host}"
     return f"{destination}:{_directory(path)}"
+
+
+def _can_override_protected_filters(options: ty.Sequence[str]) -> bool:
+    long_options = {
+        "--exclude-from",
+        "--filter",
+        "--include-from",
+    }
+    return any(
+        option.partition("=")[0] in long_options
+        or (option.startswith("-") and not option.startswith("--") and "f" in option[1:])
+        for option in options
+    )

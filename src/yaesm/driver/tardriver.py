@@ -109,9 +109,12 @@ class TarDriver(DriverBase):
             )
         )
 
+    def artifact_roots(self) -> tuple[PathTree, ...]:
+        return (PathTree(self.location, self.ssh),)
+
     @capability("export", adds=(DataProperty.ARCHIVED,))
     def cap_export(self, source: PathTree, base: PathTree | None = None) -> TarStream:
-        exclude = self._destination_exclude(source)
+        excludes = tuple(self._exclude_pattern(path) for path in source.excluded_paths)
         return TarStream(
             (
                 CommandStage(
@@ -125,7 +128,7 @@ class TarDriver(DriverBase):
                         "--xattrs",
                         "--numeric-owner",
                         *(("--one-file-system",) if self.one_file_system else ()),
-                        *((f"--exclude={exclude}",) if exclude is not None else ()),
+                        *(f"--exclude={exclude}" for exclude in excludes),
                         "-C",
                         source.path,
                         ".",
@@ -136,17 +139,10 @@ class TarDriver(DriverBase):
             suffixes=(TarStream.suffix,),
         )
 
-    def _destination_exclude(self, source: PathTree) -> str | None:
-        if not same_endpoint(source.ssh, self.ssh):
-            return None
-        try:
-            relative = self.location.relative_to(source.path)
-        except ValueError:
-            return None
-        if relative == Path("."):
-            raise TarDriverError(f"tar destination is also the source: {source.path}")
+    @staticmethod
+    def _exclude_pattern(path: ty.Path) -> str:
         pattern = "".join(
-            f"\\{character}" if character in "\\*?[]" else character for character in str(relative)
+            f"\\{character}" if character in "\\*?[]" else character for character in str(path)
         )
         return f"./{pattern}"
 

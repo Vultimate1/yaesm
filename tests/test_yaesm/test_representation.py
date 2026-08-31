@@ -1,5 +1,7 @@
 """Tests for yaesm.representation."""
 
+from pathlib import Path
+
 from yaesm.command import CommandStage
 from yaesm.representation import (
     BlockDevice,
@@ -36,6 +38,12 @@ def test_path_tree_has_local_or_remote_location(tmp_path):
 
     assert PathTree(tmp_path).path == tmp_path
     assert PathTree(tmp_path, target).ssh is target
+
+
+def test_path_tree_contains_ordered_excluded_paths(tmp_path):
+    paths = (Path("first"), Path("second"))
+
+    assert PathTree(tmp_path, excluded_paths=paths).excluded_paths == paths
 
 
 def test_command_stream_contains_stages():

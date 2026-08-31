@@ -4,13 +4,15 @@ import collections
 import dataclasses
 import inspect
 import logging
+import posixpath
 import typing
 
 import yaesm.ty as ty
 from yaesm.backup import BackupArtifact, BackupError, BackupOperation
 from yaesm.driver.driverbase import DriverBase
 from yaesm.errors import YaesmError
-from yaesm.representation import DataProperty, Representation
+from yaesm.representation import DataProperty, PathTree, Representation
+from yaesm.ssh import same_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +100,12 @@ class Pipeline:
         base_checked = base is None
         try:
             for step in self.steps:
+                if step.capability != "source" and isinstance(value, PathTree):
+                    value = _exclude_artifact_roots(
+                        value,
+                        self.destination,
+                        operation.backup_name,
+                    )
                 method = step.driver.capability_method(step.capability)
                 metadata = step.driver.capability_metadata(step.capability)
                 logger.info(
@@ -107,6 +115,7 @@ class Pipeline:
                     step.capability,
                 )
                 try:
+                    input_tree = value if isinstance(value, PathTree) else None
                     if not base_checked and metadata.base is not None:
                         assert base is not None
                         if step.driver.validate_base(
@@ -130,6 +139,8 @@ class Pipeline:
                         value = method(value, step_base)
                     else:
                         value = method(value)
+                    if input_tree is not None and isinstance(value, PathTree):
+                        value = _preserve_excluded_paths(input_tree, value)
                 except YaesmError as error:
                     raise PipelineError(
                         f"backup {operation.backup_name!r} failed in "
@@ -160,6 +171,40 @@ class Pipeline:
                         f"backup {operation.backup_name!r} failed while cleaning up "
                         f"{step.driver.name()}.{step.capability}"
                     ) from error
+
+
+def _exclude_artifact_roots(
+    source: PathTree,
+    destination: DriverBase,
+    backup_name: str,
+) -> PathTree:
+    excluded_paths = list(source.excluded_paths)
+    source_path = ty.Path(posixpath.normpath(source.path))
+    for root in destination.artifact_roots():
+        if not same_endpoint(source.ssh, root.ssh):
+            continue
+        try:
+            relative = ty.Path(posixpath.normpath(root.path)).relative_to(source_path)
+        except ValueError:
+            continue
+        if relative == ty.Path("."):
+            raise PipelineError(
+                f"backup {backup_name!r}: destination artifact root is also the source: "
+                f"{source_path}"
+            )
+        if relative not in excluded_paths:
+            excluded_paths.append(relative)
+    if tuple(excluded_paths) == source.excluded_paths:
+        return source
+    return dataclasses.replace(source, excluded_paths=tuple(excluded_paths))
+
+
+def _preserve_excluded_paths(source: PathTree, destination: PathTree) -> PathTree:
+    excluded_paths = (*source.excluded_paths, *destination.excluded_paths)
+    excluded_paths = tuple(dict.fromkeys(excluded_paths))
+    if excluded_paths == destination.excluded_paths:
+        return destination
+    return dataclasses.replace(destination, excluded_paths=excluded_paths)
 
 
 def _validate_steps(steps: ty.Sequence[PipelineStep]) -> None:

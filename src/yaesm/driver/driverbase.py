@@ -15,6 +15,7 @@ from yaesm.representation import (
     CompressedStream,
     DataProperty,
     EncryptedStream,
+    PathTree,
     ReadableTree,
     Representation,
 )
@@ -211,6 +212,10 @@ class DriverBase(abc.ABC):
     def source_artifact_id(self, artifact: bckp.BackupArtifact) -> str | None:
         """Return the identifier of the artifact from which this artifact was copied."""
         return artifact.operation.source_artifact_id
+
+    def artifact_roots(self) -> tuple[PathTree, ...]:
+        """Return directory roots in which this driver stores artifacts."""
+        return ()
 
     def _checks(self, role: CheckRole) -> tuple[Check, ...]:
         """Return this driver's additional feasibility checks."""

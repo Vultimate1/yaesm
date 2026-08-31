@@ -29,10 +29,11 @@ class ReadableTree(Representation):
 
 @dataclasses.dataclass(frozen=True)
 class PathTree(ReadableTree):
-    """A directory tree available at a local or remote path."""
+    """A directory tree and its relative paths that recursive readers must exclude."""
 
     path: ty.Path
     ssh: SSHTarget | None = None
+    excluded_paths: tuple[ty.Path, ...] = dataclasses.field(default=(), kw_only=True)
 
 
 class BlockDevice(Representation):

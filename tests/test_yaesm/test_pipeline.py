@@ -25,9 +25,11 @@ from yaesm.representation import (
     CompressedStream,
     DataProperty,
     EncryptedStream,
+    PathTree,
     ReadableTree,
     Representation,
 )
+from yaesm.ssh import SSHTarget
 
 
 class SourceDriver(DriverBase):
@@ -171,6 +173,16 @@ class DestinationDriver(DriverBase):
         return True
 
 
+class PathDestinationDriver(DestinationDriver):
+    def __init__(self, path: Path, ssh: SSHTarget | None = None) -> None:
+        super().__init__()
+        self.path = path
+        self.ssh = ssh
+
+    def artifact_roots(self) -> tuple[PathTree, ...]:
+        return (PathTree(self.path, self.ssh),)
+
+
 class BrokenDestinationDriver(DestinationDriver):
     def cap_import(
         self,
@@ -285,6 +297,129 @@ def test_pipeline_executes_resolved_capabilities():
     assert exporter.call == (source.output, None)
     assert destination.call == (exporter.output, operation, None)
     assert artifact == BackupArtifact(operation, exporter.output)
+
+
+def test_pipeline_excludes_nested_destination_artifact_roots():
+    source = SourceDriver()
+    source.output = PathTree(
+        Path("/source"),
+        excluded_paths=(Path("already-excluded"),),
+    )
+    exporter = ExportDriver()
+    destination = PathDestinationDriver(Path("/source/backups"))
+
+    Pipeline(source, destination, (exporter,)).execute(
+        BackupOperation("home", "hourly", datetime(2026, 8, 27, 12, 30))
+    )
+
+    assert exporter.call is not None
+    assert exporter.call[0] == PathTree(
+        Path("/source"),
+        excluded_paths=(
+            Path("already-excluded"),
+            Path("backups"),
+        ),
+    )
+
+
+def test_pipeline_normalizes_paths_before_excluding_artifact_roots():
+    source = SourceDriver()
+    source.output = PathTree(Path("/source"))
+    exporter = ExportDriver()
+    destination = PathDestinationDriver(Path("/source/intermediate/../backups"))
+
+    Pipeline(source, destination, (exporter,)).execute(
+        BackupOperation("home", "hourly", datetime(2026, 8, 27, 12, 30))
+    )
+
+    assert exporter.call is not None
+    assert exporter.call[0] == PathTree(
+        Path("/source"),
+        excluded_paths=(Path("backups"),),
+    )
+
+
+def test_pipeline_excludes_artifact_root_on_same_remote_endpoint(tmp_path):
+    source_target = SSHTarget("ssh://host", tmp_path / "source-key")
+    destination_target = SSHTarget("ssh://host", tmp_path / "destination-key")
+    source = SourceDriver()
+    source.output = PathTree(Path("/source"), source_target)
+    exporter = ExportDriver()
+    destination = PathDestinationDriver(Path("/source/backups"), destination_target)
+
+    Pipeline(source, destination, (exporter,)).execute(
+        BackupOperation("home", "hourly", datetime(2026, 8, 27, 12, 30))
+    )
+
+    assert exporter.call is not None
+    assert exporter.call[0] == PathTree(
+        Path("/source"),
+        source_target,
+        excluded_paths=(Path("backups"),),
+    )
+
+
+@pytest.mark.parametrize(
+    ("destination_path", "destination_endpoint"),
+    [
+        (Path("/backups"), "ssh://host"),
+        (Path("/source"), "ssh://other"),
+    ],
+)
+def test_pipeline_does_not_exclude_unrelated_artifact_root(
+    tmp_path,
+    destination_path,
+    destination_endpoint,
+):
+    source_target = SSHTarget("ssh://host", tmp_path / "source-key")
+    source = SourceDriver()
+    source.output = PathTree(Path("/source"), source_target)
+    exporter = ExportDriver()
+    destination = PathDestinationDriver(
+        destination_path,
+        SSHTarget(destination_endpoint, tmp_path / "destination-key"),
+    )
+
+    Pipeline(source, destination, (exporter,)).execute(
+        BackupOperation("home", "hourly", datetime(2026, 8, 27, 12, 30))
+    )
+
+    assert exporter.call is not None
+    assert exporter.call[0] is source.output
+
+
+def test_pipeline_rejects_destination_artifact_root_equal_to_source():
+    source = SourceDriver()
+    source.output = PathTree(Path("/source"))
+    pipeline = Pipeline(
+        source,
+        PathDestinationDriver(Path("/source")),
+        (ExportDriver(),),
+    )
+
+    with pytest.raises(PipelineError) as error:
+        pipeline.execute(BackupOperation("home", "hourly", datetime(2026, 8, 27, 12, 30)))
+
+    assert str(error.value) == (
+        "backup 'home': destination artifact root is also the source: /source"
+    )
+
+
+def test_pipeline_rejects_normalized_destination_artifact_root_equal_to_source():
+    source = SourceDriver()
+    source.output = PathTree(Path("/source"))
+    pipeline = Pipeline(
+        source,
+        PathDestinationDriver(Path("/source/child/..")),
+        (ExportDriver(),),
+    )
+
+    with pytest.raises(PipelineError) as error:
+        pipeline.execute(BackupOperation("home", "hourly", datetime(2026, 8, 27, 12, 30)))
+
+    assert str(error.value) == (
+        "backup 'home': destination artifact root is also the source: /source"
+    )
 
 
 def test_pipeline_logs_capability_steps(caplog):
@@ -428,7 +563,7 @@ def test_configured_remote_pipeline_uses_one_ssh_command():
                     {"zstd": {}, "remote": True},
                     {"gpg": "/public-key.asc", "remote": True},
                 ],
-                "destination": {"tar": "/backups", "remote": True},
+                "destination": {"tar": "/source/backups", "remote": True},
                 "schedules": {
                     "manual": {
                         "on-demand": {},
@@ -479,6 +614,7 @@ def test_configured_remote_pipeline_uses_one_ssh_command():
         "gpg",
         "dd",
     )
+    assert "--exclude=./backups" in stages[0].command
     assert command_module._execution_commands(stages) == (
         ssh.openssh_pipeline(
             tuple(stage.command for stage in stages if isinstance(stage, CommandStage))

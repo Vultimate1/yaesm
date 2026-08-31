@@ -252,7 +252,12 @@ def test_cap_export_runs_tar_on_source_target(tmp_path):
 
 
 def test_cap_export_excludes_destination_inside_source():
-    stream = TarDriver(Path("/source/archives")).cap_export(PathTree(Path("/source")))
+    stream = TarDriver(Path("/unused")).cap_export(
+        PathTree(
+            Path("/source"),
+            excluded_paths=(Path("archives"),),
+        )
+    )
 
     assert stream.stages == (
         CommandStage(
@@ -265,12 +270,17 @@ def test_cap_export_excludes_destination_inside_source():
     )
 
 
-def test_cap_export_excludes_remote_destination_on_same_endpoint(tmp_path):
+def test_cap_export_excludes_paths_on_source_endpoint(tmp_path):
     source_target = SSHTarget("ssh://host", tmp_path / "source-key")
-    destination_target = SSHTarget("ssh://host", tmp_path / "destination-key")
-    driver = TarDriver(Path("/source/archives"), destination_target)
+    driver = TarDriver(Path("/unused"))
 
-    stream = driver.cap_export(PathTree(Path("/source"), source_target))
+    stream = driver.cap_export(
+        PathTree(
+            Path("/source"),
+            source_target,
+            excluded_paths=(Path("archives"),),
+        )
+    )
 
     expected = (
         *_TAR_COMMAND[:-3],
@@ -278,21 +288,6 @@ def test_cap_export_excludes_remote_destination_on_same_endpoint(tmp_path):
         *_TAR_COMMAND[-3:],
     )
     assert stream.stages == (CommandStage(expected, source_target),)
-
-
-def test_cap_export_does_not_exclude_destination_on_different_endpoint(tmp_path):
-    source_target = SSHTarget("ssh://source", tmp_path / "source-key")
-    destination_target = SSHTarget("ssh://destination", tmp_path / "destination-key")
-    driver = TarDriver(Path("/source/archives"), destination_target)
-
-    stream = driver.cap_export(PathTree(Path("/source"), source_target))
-
-    assert stream.stages == (CommandStage(_TAR_COMMAND, source_target),)
-
-
-def test_cap_export_rejects_destination_equal_to_source(tmp_path):
-    with pytest.raises(TarDriverError, match=f"destination is also the source: {tmp_path}"):
-        TarDriver(tmp_path).cap_export(PathTree(tmp_path))
 
 
 def test_capabilities_describe_tar_archive_lifecycle(tmp_path):
@@ -556,7 +551,7 @@ def test_tar_does_not_archive_its_destination(tmp_path):
     (destination / "old-archive").write_text("must not be archived")
     driver = TarDriver(destination)
 
-    result = driver.cap_import(driver.cap_export(PathTree(source)), operation())
+    result = Pipeline(DirectoryDriver(source), driver).execute(operation())
 
     listing = CommandRunner().run(
         ("tar", "--list", f"--file={result.representation.path}"),
@@ -577,7 +572,12 @@ def test_tar_options_work_with_gnu_tar_and_bsdtar(tmp_path, executable):
     (source / "content").write_text("backup content")
     (destination / "excluded").write_text("must not be archived")
     (decoy / "included").write_text("must be archived")
-    command = TarDriver(destination).cap_export(PathTree(source)).stages[0].command
+    command = (
+        TarDriver(destination)
+        .cap_export(PathTree(source, excluded_paths=(Path(destination.name),)))
+        .stages[0]
+        .command
+    )
     archive = tmp_path / f"{executable}.tar"
 
     CommandRunner().pipeline(
