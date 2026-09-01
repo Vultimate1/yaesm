@@ -77,6 +77,15 @@ def test_configure_formats_interactive_stderr():
     assert handler.format(record) == "yaesm: plain error"
 
 
+def test_configure_can_omit_stderr_timestamps():
+    with mock.patch.object(logging, "basicConfig") as basic_config:
+        configure(stderr_timestamps=False)
+
+    handler = basic_config.call_args.kwargs["handlers"][0]
+    record = logging.LogRecord("yaesm.test", logging.INFO, "", 0, "message", (), None)
+    assert handler.format(record) == "INFO yaesm.test: message"
+
+
 def test_configure_uses_syslog():
     handler = mock.Mock()
     with (
@@ -106,6 +115,7 @@ def test_configure_combines_destinations(tmp_path):
     ):
         configure(
             stderr=True,
+            stderr_timestamps=False,
             logfile=path,
             syslog_address="/dev/log",
         )
@@ -116,6 +126,9 @@ def test_configure_combines_destinations(tmp_path):
         file_handler,
         syslog_handler,
     ]
+    stream_handler.setFormatter.assert_called_once_with(mock.ANY)
+    file_handler.setFormatter.assert_not_called()
+    syslog_handler.setFormatter.assert_not_called()
 
 
 def test_request_filter_matches_current_request():

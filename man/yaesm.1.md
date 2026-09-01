@@ -429,7 +429,7 @@ A relative time has the form `now-Nm`, `now-Nh`, or `now-Nd`, where `N` is a pos
 ### SYNOPSIS
 
 ```text
-yaesm [OPTIONS] run [--lockfile FILE] [--control-socket PATH]
+yaesm [OPTIONS] run [--lockfile FILE] [--control-socket PATH] [--no-stderr-timestamps]
 ```
 
 ### DESCRIPTION
@@ -444,6 +444,7 @@ Executions of the same backup are serialized. An immediate execution, or an occu
 
 - **`--lockfile FILE`**: Acquire the scheduler lock through `FILE`. The default is `/run/lock/yaesm-run.lock`.
 - **`--control-socket PATH`**: Listen for control requests on this Unix socket. The default is `/run/yaesm/control.sock`; the socket is created with mode `0600`.
+- **`--no-stderr-timestamps`**: Omit timestamps from logs written to standard error. This is useful when an init system adds its own timestamps.
 
 ### SIGNALS
 

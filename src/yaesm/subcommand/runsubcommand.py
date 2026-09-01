@@ -173,3 +173,9 @@ class RunSubcommand(SubcommandBase):
             default=DEFAULT_CONTROL_SOCKET,
             help="path to the control socket",
         )
+        parser.add_argument(
+            "--no-stderr-timestamps",
+            action="store_false",
+            dest="stderr_timestamps",
+            help="omit timestamps from logs written to standard error",
+        )

@@ -45,6 +45,14 @@ def test_run_arguments(tmp_path):
     assert RunSubcommand.target_selection is TargetSelectionMode.NONE
     assert parsed.lockfile == tmp_path / "yaesm.lock"
     assert parsed.control_socket == tmp_path / "control.sock"
+    assert parsed.stderr_timestamps
+
+
+def test_run_can_disable_stderr_timestamps():
+    parser = argparse.ArgumentParser()
+    RunSubcommand.configure_argparser(parser)
+
+    assert not parser.parse_args(["--no-stderr-timestamps"]).stderr_timestamps
 
 
 def test_run_uses_default_lockfile():

@@ -95,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         arguments.log_level,
         stderr=arguments.log_stderr,
         message_only_stderr=arguments.subcommand != "run",
+        stderr_timestamps=getattr(arguments, "stderr_timestamps", True),
         logfile=arguments.log_file,
         syslog_address=arguments.log_syslog,
     )

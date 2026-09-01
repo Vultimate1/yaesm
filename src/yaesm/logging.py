@@ -54,6 +54,7 @@ def configure(
     *,
     stderr: bool = False,
     message_only_stderr: bool = False,
+    stderr_timestamps: bool = True,
     logfile: Path | str | None = None,
     syslog_address: str | None = None,
 ) -> None:
@@ -65,6 +66,8 @@ def configure(
         handler = logging.StreamHandler()
         if message_only_stderr:
             handler.setFormatter(logging.Formatter("yaesm: %(message)s"))
+        elif not stderr_timestamps:
+            handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
         handlers.append(handler)
     if logfile:
         handlers.append(logging.FileHandler(logfile, encoding="utf-8"))

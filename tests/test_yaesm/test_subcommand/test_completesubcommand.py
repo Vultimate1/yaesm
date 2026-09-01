@@ -75,6 +75,7 @@ def test_completes_visible_subcommands_and_parser_options():
     assert "__complete" not in candidates
     assert _complete(["check"], "--config-o") == ["--config-only"]
     assert _complete(["backup", "home"], "--control") == ["--control-socket"]
+    assert _complete(["run"], "--no") == ["--no-stderr-timestamps"]
 
 
 def test_completes_option_choices_case_insensitively():

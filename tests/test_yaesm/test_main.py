@@ -89,6 +89,7 @@ def test_main_loads_config_and_dispatches(tmp_path, monkeypatch):
             {
                 "stderr": False,
                 "message_only_stderr": True,
+                "stderr_timestamps": True,
                 "logfile": None,
                 "syslog_address": None,
             },
@@ -125,6 +126,7 @@ def test_main_configures_logging_destinations(monkeypatch):
             {
                 "stderr": True,
                 "message_only_stderr": True,
+                "stderr_timestamps": True,
                 "logfile": Path("/tmp/yaesm.log"),
                 "syslog_address": "/var/run/log",
             },
@@ -142,6 +144,19 @@ def test_main_keeps_log_metadata_for_daemon(monkeypatch):
 
     assert main_module.main(["run"]) == 0
     assert configured[0][1]["message_only_stderr"] is False
+    assert configured[0][1]["stderr_timestamps"] is True
+
+
+def test_main_can_omit_daemon_stderr_timestamps(monkeypatch):
+    configured = []
+    monkeypatch.setattr(main_module, "parse_config", lambda _path: Config({}, {}))
+    monkeypatch.setattr(
+        main_module, "configure_logging", lambda *args, **kwargs: configured.append((args, kwargs))
+    )
+    monkeypatch.setattr(RunSubcommand, "main", lambda *_arguments: 0)
+
+    assert main_module.main(["run", "--no-stderr-timestamps"]) == 0
+    assert configured[0][1]["stderr_timestamps"] is False
 
 
 def test_main_uses_default_config_path(monkeypatch):
