@@ -40,11 +40,11 @@ class UntimedSchedule(ScheduleBase):
 
 
 def test_schedule():
-    implementation = CronSchedule("0 * * * *")
-    schedule = Schedule("hourly", implementation)
+    trigger = CronSchedule("0 * * * *")
+    schedule = Schedule("hourly", trigger)
 
     assert schedule.name == "hourly"
-    assert schedule.implementation is implementation
+    assert schedule.trigger is trigger
     assert len(schedule.timer_triggers()) == 1
     assert isinstance(schedule.timer_triggers()[0], CronTrigger)
 
@@ -143,30 +143,26 @@ def test_cron_schedule_name():
 
 
 def test_cron_schedule_config_schema_constructs_schedule():
-    config = CronSchedule.config_schema()({"expression": "0 4 * * *"})
+    config = CronSchedule.config_schema()("0 4 * * *")
 
     assert CronSchedule(**config) == CronSchedule("0 4 * * *")
-
-
-def test_cron_schedule_config_schema_accepts_shorthand():
-    assert CronSchedule.config_schema()("0 4 * * *") == {"expression": "0 4 * * *"}
 
 
 @pytest.mark.parametrize("expression", [None, True, 1, [], {}])
 def test_cron_schedule_config_schema_rejects_nonstring_expression(expression):
     with pytest.raises(vlp.Invalid, match="expression must be a string"):
-        CronSchedule.config_schema()({"expression": expression})
+        CronSchedule.config_schema()(expression)
 
 
 @pytest.mark.parametrize("expression", ["", "0 * * *", "invalid"])
 def test_cron_schedule_config_schema_rejects_invalid_expression(expression):
     with pytest.raises(vlp.Invalid, match="invalid cron expression"):
-        CronSchedule.config_schema()({"expression": expression})
+        CronSchedule.config_schema()(expression)
 
 
 @pytest.mark.parametrize(
     "config",
-    [None, [], "config", 1, {}, {"expression": "0 * * * *", "unknown": True}],
+    [{"expression": "0 * * * *"}, {"expression": "0 * * * *", "unknown": True}],
 )
 def test_cron_schedule_config_schema_rejects_invalid_structure(config):
     with pytest.raises(vlp.Invalid):

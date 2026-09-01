@@ -24,14 +24,14 @@ home:
     btrfs: /destination/home
   schedules:
     daily:
-      cron: "0 4 * * *"
+      trigger:
+        cron: "0 4 * * *"
       retention:
         keep-last: 7
     manual:
       previous_names: [adhoc]
-      on-demand: {}
-      retention:
-        keep-all: {}
+      trigger: on-demand
+      retention: keep-all
 
 photos:
   source:
@@ -40,14 +40,14 @@ photos:
     btrfs: /destination/photos
   schedules:
     weekly:
-      cron: "0 4 * * 0"
+      trigger:
+        cron: "0 4 * * 0"
       retention:
         keep-last: 4
     manual:
       previous_names: [emergency]
-      on-demand: {}
-      retention:
-        keep-all: {}
+      trigger: on-demand
+      retention: keep-all
 
 root:
   source:

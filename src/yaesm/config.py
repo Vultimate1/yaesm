@@ -25,6 +25,11 @@ class _Named(ty.Protocol):
     def name(cls) -> str: ...
 
 
+class _NamedConfigType(_Named, ty.Protocol):
+    @staticmethod
+    def config_schema() -> vlp.Schema: ...
+
+
 class GlobalSettingsComponent(ty.Protocol):
     """A component that owns a section of global configuration."""
 
@@ -33,6 +38,7 @@ class GlobalSettingsComponent(ty.Protocol):
 
 
 _NamedType = ty.TypeVar("_NamedType", bound=_Named)
+_NamedConfigTypeT = ty.TypeVar("_NamedConfigTypeT", bound=_NamedConfigType)
 _GLOBAL_SETTINGS_COMPONENTS: tuple[type[GlobalSettingsComponent], ...] = (
     SSHTarget,
     Scheduler,
@@ -464,29 +470,27 @@ def _parse_driver(
     global_settings: GlobalSettings,
     ssh: SSHTarget | None,
 ) -> DriverBase:
-    if not isinstance(value, dict):
-        raise ConfigError(f"{label} must select one driver")
-    remote = value.get("remote", False)
-    selection = tuple((name, config) for name, config in value.items() if name != "remote")
-    if len(selection) != 1:
-        raise ConfigError(f"{label} must select one driver")
-    name, config = selection[0]
-    driver_type = _type_named(DriverBase, name)
-    if driver_type is None:
-        raise ConfigError(f"{label} uses unknown driver {name!r}")
-
-    try:
+    remote = False
+    if isinstance(value, dict) and ("driver" in value or "remote" in value):
+        if "driver" not in value:
+            raise ConfigError(f"{label} expanded definition requires driver")
+        if unknown := sorted(value.keys() - {"driver", "remote"}, key=str):
+            raise ConfigError(
+                f"{label} has unknown settings: {', '.join(str(item) for item in unknown)}"
+            )
+        remote = value.get("remote", False)
         if not isinstance(remote, bool):
-            raise vlp.Invalid("remote must be a boolean")
-        if remote and ssh is None:
-            raise vlp.Invalid("remote requires backup SSH configuration")
-        parsed = driver_type.config_schema()(config)
-    except vlp.Invalid as error:
-        raise ConfigError(f"{label} has invalid {name} configuration: {error}") from error
+            raise ConfigError(f"{label} remote must be a boolean")
+        value = value["driver"]
+
+    driver_type, config = _parse_named_config(value, DriverBase, label, "driver")
+    if remote and ssh is None:
+        raise ConfigError(f"{label} remote requires backup SSH configuration")
+
     constructor = ty.cast(ty.Callable[..., DriverBase], driver_type)
     if remote:
-        parsed["ssh"] = ssh
-    return constructor(**parsed, global_settings=global_settings)
+        config["ssh"] = ssh
+    return constructor(**config, global_settings=global_settings)
 
 
 def _validate_destination(driver: DriverBase) -> None:
@@ -586,7 +590,7 @@ def parse_schedules(
                 raise ConfigError(f"invalid schedule name: {schedule_name!r} ({error})") from error
             schedule, retention = _parse_schedule(schedule_name, definition)
             if schedule_name.casefold() == "manual" and not isinstance(
-                schedule.implementation, OnDemandSchedule
+                schedule.trigger, OnDemandSchedule
             ):
                 raise ConfigError(f"schedule {schedule_name!r} must be on-demand")
             schedules.append(schedule)
@@ -596,7 +600,7 @@ def parse_schedules(
 
     if messages:
         raise ConfigError(messages)
-    if not any(isinstance(schedule.implementation, OnDemandSchedule) for schedule in schedules):
+    if not any(isinstance(schedule.trigger, OnDemandSchedule) for schedule in schedules):
         schedules.append(Schedule("manual", OnDemandSchedule()))
         policies.append(KeepAll("manual"))
     return tuple(schedules), tuple(policies)
@@ -610,6 +614,13 @@ def _parse_schedule(
         raise ConfigError(f"schedule {schedule_name!r} must be a mapping")
     if "retention" not in value:
         raise ConfigError(f"schedule {schedule_name!r} has no retention policy")
+    if "trigger" not in value:
+        raise ConfigError(f"schedule {schedule_name!r} has no trigger")
+    if unknown := sorted(value.keys() - {"previous_names", "retention", "trigger"}, key=str):
+        raise ConfigError(
+            f"schedule {schedule_name!r} has unknown settings: "
+            f"{', '.join(str(item) for item in unknown)}"
+        )
 
     previous_names = _parse_previous_names(
         schedule_name,
@@ -617,28 +628,16 @@ def _parse_schedule(
         validate_schedule_name,
         "schedule",
     )
-    implementations = tuple(
-        (name, config)
-        for name, config in value.items()
-        if name not in {"previous_names", "retention"}
+    schedule_type, config = _parse_named_config(
+        value["trigger"],
+        ScheduleBase,
+        f"schedule {schedule_name!r} trigger",
+        "schedule type",
     )
-    if len(implementations) != 1:
-        raise ConfigError(f"schedule {schedule_name!r} must select one schedule type")
-    type_name, config = implementations[0]
-    schedule_type = _type_named(ScheduleBase, type_name)
-    if schedule_type is None:
-        raise ConfigError(f"schedule {schedule_name!r} uses unknown type {type_name!r}")
-
-    try:
-        config = schedule_type.config_schema()(config)
-    except vlp.Invalid as error:
-        raise ConfigError(
-            f"schedule {schedule_name!r} has invalid {type_name} configuration: {error}"
-        ) from error
-    implementation = ty.cast(ty.Callable[..., ScheduleBase], schedule_type)(**config)
+    trigger = ty.cast(ty.Callable[..., ScheduleBase], schedule_type)(**config)
     return Schedule(
         schedule_name,
-        implementation,
+        trigger,
         previous_names=previous_names,
     ), _parse_retention(schedule_name, value["retention"])
 
@@ -676,22 +675,12 @@ def _parse_retention(
     messages = []
     for entry in entries:
         try:
-            if not isinstance(entry, dict) or len(entry) != 1:
-                raise ConfigError(
-                    f"schedule {schedule_name!r} retention policies must select one policy type"
-                )
-            type_name, config = next(iter(entry.items()))
-            policy_type = _type_named(RetentionPolicyBase, type_name)
-            if policy_type is None:
-                raise ConfigError(
-                    f"schedule {schedule_name!r} uses unknown retention policy {type_name!r}"
-                )
-            try:
-                config = policy_type.config_schema()(config)
-            except vlp.Invalid as error:
-                raise ConfigError(
-                    f"schedule {schedule_name!r} has invalid {type_name} configuration: {error}"
-                ) from error
+            policy_type, config = _parse_named_config(
+                entry,
+                RetentionPolicyBase,
+                f"schedule {schedule_name!r} retention",
+                "retention policy",
+            )
             policy = ty.cast(ty.Callable[..., RetentionPolicyBase], policy_type)(
                 **config,
                 schedule_name=schedule_name,
@@ -704,13 +693,41 @@ def _parse_retention(
     return tuple(policies)
 
 
-# Shared implementation lookup
+# A named configuration is either a bare type name or a one-entry mapping from
+# the selected type name to its settings.
+
+
+def _parse_named_config(
+    value: object,
+    base: type[_NamedConfigTypeT],
+    label: str,
+    kind: str,
+) -> tuple[type[_NamedConfigTypeT], dict[str, object]]:
+    if isinstance(value, str):
+        name, config = value, {}
+        explicit = False
+    elif isinstance(value, dict) and len(value) == 1:
+        name, config = next(iter(value.items()))
+        explicit = True
+    else:
+        raise ConfigError(f"{label} must select one {kind}")
+
+    selected_type = _type_named(base, name)
+    if selected_type is None:
+        raise ConfigError(f"{label} uses unknown {kind} {name!r}")
+    if explicit and config == {}:
+        raise ConfigError(f"{label} has empty {name} configuration; use {name!r} directly")
+    try:
+        parsed = selected_type.config_schema()(config)
+    except vlp.Invalid as error:
+        raise ConfigError(f"{label} has invalid {name} configuration: {error}") from error
+    return selected_type, ty.cast(dict[str, object], parsed)
 
 
 def _type_named(base: type[_NamedType], name: object) -> type[_NamedType] | None:
-    for implementation in base.__subclasses__():
-        if not inspect.isabstract(implementation) and implementation.name() == name:
-            return implementation
-        if found := _type_named(implementation, name):
+    for candidate in base.__subclasses__():
+        if not inspect.isabstract(candidate) and candidate.name() == name:
+            return candidate
+        if found := _type_named(candidate, name):
             return found
     return None

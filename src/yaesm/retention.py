@@ -83,14 +83,7 @@ class KeepLast(RetentionPolicyBase):
                 raise vlp.Invalid("count must be a positive integer")
             return value
 
-        mapping = vlp.Schema({vlp.Required("count"): count})
-        return vlp.Schema(
-            lambda value: mapping(
-                {"count": value}
-                if isinstance(value, int) and not isinstance(value, bool)
-                else value
-            )
-        )
+        return vlp.Schema(lambda value: {"count": count(value)})
 
     def retain(
         self, artifacts: ty.Sequence[BackupArtifact], now: ty.datetime
@@ -143,12 +136,7 @@ class KeepFor(RetentionPolicyBase):
                 raise vlp.Invalid("duration must be a positive duration")
             return value
 
-        mapping = vlp.Schema({vlp.Required("duration"): duration})
-        return vlp.Schema(
-            lambda value: mapping(
-                {"duration": value} if isinstance(value, str | ty.timedelta) else value
-            )
-        )
+        return vlp.Schema(lambda value: {"duration": duration(value)})
 
     def retain(
         self, artifacts: ty.Sequence[BackupArtifact], now: ty.datetime

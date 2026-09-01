@@ -190,7 +190,7 @@ class Scheduler:
         schedules = [
             schedule
             for schedule in backup.schedules
-            if isinstance(schedule.implementation, OnDemandSchedule)
+            if isinstance(schedule.trigger, OnDemandSchedule)
         ]
         if schedule_name is None:
             if not schedules:

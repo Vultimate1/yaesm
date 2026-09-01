@@ -53,22 +53,16 @@ def test_name():
     assert GPGDriver.name() == "gpg"
 
 
-def test_config_schema_accepts_shorthand(tmp_path):
+def test_config_schema_accepts_public_key(tmp_path):
     public_key = tmp_path / "backup-key.asc"
 
     assert GPGDriver.config_schema()(public_key) == {"public_key": public_key}
 
 
-def test_config_schema_accepts_mapping(tmp_path):
-    public_key = tmp_path / "backup-key.asc"
-
-    assert GPGDriver.config_schema()({"public_key": str(public_key)}) == {"public_key": public_key}
-
-
 @pytest.mark.parametrize("value", [None, 1, [], {}])
 def test_config_schema_rejects_invalid_public_key_type(value):
     with pytest.raises(vlp.Invalid, match="public_key must be a path"):
-        GPGDriver.config_schema()({"public_key": value})
+        GPGDriver.config_schema()(value)
 
 
 def test_config_schema_rejects_relative_public_key():
@@ -83,7 +77,7 @@ def test_config_schema_rejects_invalid_mapping(config):
 
 
 def test_config_schema_output_constructs_driver(tmp_path):
-    config = GPGDriver.config_schema()({"public_key": tmp_path / "backup-key.asc"})
+    config = GPGDriver.config_schema()(tmp_path / "backup-key.asc")
 
     assert GPGDriver(**config).public_key == tmp_path / "backup-key.asc"
     assert GPGDriver(**config).ssh is None

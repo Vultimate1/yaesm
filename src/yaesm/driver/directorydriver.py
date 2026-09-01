@@ -42,10 +42,7 @@ class DirectoryDriver(DriverBase):
                 raise vlp.Invalid("location must be an absolute path")
             return path
 
-        mapping = vlp.Schema({vlp.Required("location"): absolute_path})
-        return vlp.Schema(
-            lambda value: mapping({"location": value} if isinstance(value, str | Path) else value)
-        )
+        return vlp.Schema(lambda value: {"location": absolute_path(value)})
 
     def _checks(self, role: CheckRole) -> tuple[Check, ...]:
         if role is not CheckRole.SOURCE:

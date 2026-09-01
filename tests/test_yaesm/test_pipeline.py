@@ -559,16 +559,19 @@ def test_configured_remote_pipeline_uses_one_ssh_command():
                     "endpoint": "ssh://server",
                     "identity_file": "/key",
                 },
-                "source": {"btrfs": "/source", "remote": True},
+                "source": {"driver": {"btrfs": "/source"}, "remote": True},
                 "transforms": [
-                    {"tar": {}, "remote": True},
-                    {"zstd": {}, "remote": True},
-                    {"gpg": "/public-key.asc", "remote": True},
+                    {"driver": "tar", "remote": True},
+                    {"driver": "zstd", "remote": True},
+                    {"driver": {"gpg": "/public-key.asc"}, "remote": True},
                 ],
-                "destination": {"file": "/source/backups", "remote": True},
+                "destination": {
+                    "driver": {"file": "/source/backups"},
+                    "remote": True,
+                },
                 "schedules": {
                     "manual": {
-                        "on-demand": {},
+                        "trigger": "on-demand",
                         "retention": {"keep-last": 1},
                     }
                 },

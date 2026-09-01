@@ -114,21 +114,14 @@ def test_keep_last_rejects_invalid_count():
 
 
 @pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        ({"count": 1}, KeepLast(1)),
-        ({"count": 2**63}, KeepLast(2**63)),
-    ],
+    "value",
+    [1, 2**63],
 )
-def test_keep_last_config_schema_constructs_policy(value, expected):
+def test_keep_last_config_schema_constructs_policy(value):
     config = KeepLast.config_schema()(value)
 
-    assert config == value
-    assert KeepLast(**config) == expected
-
-
-def test_keep_last_config_schema_accepts_shorthand():
-    assert KeepLast.config_schema()(2) == {"count": 2}
+    assert config == {"count": value}
+    assert KeepLast(**config) == KeepLast(value)
 
 
 @pytest.mark.parametrize(
@@ -137,7 +130,7 @@ def test_keep_last_config_schema_accepts_shorthand():
 )
 def test_keep_last_config_schema_rejects_invalid_count(count):
     with pytest.raises(vlp.Invalid, match="count must be a positive integer"):
-        KeepLast.config_schema()({"count": count})
+        KeepLast.config_schema()(count)
 
 
 @pytest.mark.parametrize(
@@ -147,6 +140,7 @@ def test_keep_last_config_schema_rejects_invalid_count(count):
         [],
         "config",
         {},
+        {"count": 2},
         {"count": 2, "unknown": True},
         {"count": 2, "schedule_name": "hourly"},
     ],
@@ -202,16 +196,14 @@ def test_keep_for_filters_by_schedule():
 
 
 @pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        ({"duration": timedelta(microseconds=1)}, KeepFor(timedelta(microseconds=1))),
-    ],
+    "value",
+    [timedelta(microseconds=1)],
 )
-def test_keep_for_config_schema_constructs_policy(value, expected):
+def test_keep_for_config_schema_constructs_policy(value):
     config = KeepFor.config_schema()(value)
 
-    assert config == value
-    assert KeepFor(**config) == expected
+    assert config == {"duration": value}
+    assert KeepFor(**config) == KeepFor(value)
 
 
 @pytest.mark.parametrize(
@@ -248,7 +240,7 @@ def test_keep_for_config_schema_accepts_shorthand(value, expected):
 )
 def test_keep_for_config_schema_rejects_invalid_duration(duration):
     with pytest.raises(vlp.Invalid, match="duration must be a positive duration"):
-        KeepFor.config_schema()({"duration": duration})
+        KeepFor.config_schema()(duration)
 
 
 @pytest.mark.parametrize(
@@ -258,6 +250,7 @@ def test_keep_for_config_schema_rejects_invalid_duration(duration):
         [],
         1,
         {},
+        {"duration": timedelta(days=2)},
         {"duration": timedelta(days=2), "unknown": True},
         {"duration": timedelta(days=2), "schedule_name": "daily"},
     ],

@@ -214,26 +214,18 @@ def test_name():
     assert BtrfsDriver.name() == "btrfs"
 
 
-def test_config_schema(tmp_path):
-    assert BtrfsDriver.config_schema()({"location": str(tmp_path)}) == {"location": tmp_path}
-
-
-def test_config_schema_accepts_path_location(tmp_path):
-    assert BtrfsDriver.config_schema()({"location": tmp_path})["location"] == tmp_path
-
-
-def test_config_schema_accepts_shorthand(tmp_path):
+def test_config_schema_accepts_location(tmp_path):
     assert BtrfsDriver.config_schema()(tmp_path) == {"location": tmp_path}
 
 
 @pytest.mark.parametrize("location", [None, 42])
 def test_config_schema_rejects_invalid_location_type(location):
     with pytest.raises(vlp.Invalid, match="location must be a path"):
-        BtrfsDriver.config_schema()({"location": location})
+        BtrfsDriver.config_schema()(location)
 
 
 def test_config_schema_output_constructs_driver(tmp_path):
-    config = BtrfsDriver.config_schema()({"location": tmp_path})
+    config = BtrfsDriver.config_schema()(tmp_path)
 
     driver = BtrfsDriver(**config)
 

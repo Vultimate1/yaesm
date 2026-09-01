@@ -86,10 +86,7 @@ class CronSchedule(ScheduleBase):
                 raise vlp.Invalid(f"invalid cron expression: {value!r}") from error
             return value
 
-        mapping = vlp.Schema({vlp.Required("expression"): validate_expression})
-        return vlp.Schema(
-            lambda value: mapping({"expression": value} if isinstance(value, str) else value)
-        )
+        return vlp.Schema(lambda value: {"expression": validate_expression(value)})
 
     def timer_triggers(self, timezone: tzinfo | None = None) -> tuple[BaseTrigger, ...]:
         """Return the cron trigger."""
@@ -98,10 +95,10 @@ class CronSchedule(ScheduleBase):
 
 @dataclasses.dataclass(frozen=True)
 class Schedule:
-    """A configured name paired with a schedule implementation."""
+    """A configured schedule name paired with its trigger."""
 
     name: str
-    implementation: ScheduleBase
+    trigger: ScheduleBase
     previous_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -126,4 +123,4 @@ class Schedule:
 
     def timer_triggers(self, timezone: tzinfo | None = None) -> tuple[BaseTrigger, ...]:
         """Return this schedule's timer triggers."""
-        return self.implementation.timer_triggers(timezone)
+        return self.trigger.timer_triggers(timezone)

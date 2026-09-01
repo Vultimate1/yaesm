@@ -230,7 +230,7 @@ def _schedule_names(config: Config, targets: str, *, on_demand: bool) -> list[st
         {
             name
             for schedule in backup.schedules
-            if not on_demand or isinstance(schedule.implementation, OnDemandSchedule)
+            if not on_demand or isinstance(schedule.trigger, OnDemandSchedule)
             for name in schedule.names
         }
         for backup in backups

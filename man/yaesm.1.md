@@ -51,14 +51,17 @@ encrypted-home:
   ssh:
     endpoint: ssh://server.example.com
   source:
-    directory: /home
+    driver:
+      directory: /home
     remote: true
   transforms:
-    - tar: {}
+    - driver: tar
       remote: true
-    - zstd: 3
+    - driver:
+        zstd: 3
       remote: true
-    - gpg: /etc/yaesm/backup-key.asc
+    - driver:
+        gpg: /etc/yaesm/backup-key.asc
       remote: true
   destination:
     file: /srv/backups
@@ -66,14 +69,14 @@ encrypted-home:
     hourly:
       previous_names:
         - frequent
-      cron: "0 * * * *"
+      trigger:
+        cron: "0 * * * *"
       retention:
         - keep-last: 24
         - keep-for: 7d
     manual:
-      on-demand: {}
-      retention:
-        keep-all: {}
+      trigger: on-demand
+      retention: keep-all
 
 offsite-copy:
   skip_unchanged: true
@@ -82,7 +85,8 @@ offsite-copy:
   source:
     backup: encrypted-home
   destination:
-    file: /srv/backups
+    driver:
+      file: /srv/backups
     remote: true
 
 root-snapshots:
@@ -108,11 +112,11 @@ The optional `previous_names` field is a list of earlier names for the backup. T
 
 Each backup definition requires a `source` and a `destination`. The `source` selects the driver that supplies the data, and the `destination` selects the driver that stores the resulting backup. A source may instead refer to another configured backup, allowing its artifacts to be copied through a new pipeline. Yaesm validates each pipeline while reading the configuration and rejects it if its drivers cannot exchange a compatible form of backup data.
 
-The optional `transforms` field is a list of drivers that process the data between the source and destination, in the order listed. Omitting `transforms` defines a pipeline with no explicit transformations. Each source, transform, and destination driver is selected by a mapping that names one driver and provides its configuration; see [DRIVERS](#drivers) for the available drivers and their settings.
+The optional `transforms` field is a list of drivers that process the data between the source and destination, in the order listed. Omitting `transforms` defines a pipeline with no explicit transformations. A driver with no settings is specified by name; a configured driver is a mapping from its name to its value. To attach settings to the pipeline step itself, use an expanded definition whose `driver` field contains either form. See [DRIVERS](#drivers) for the available drivers and their settings.
 
 ### SSH
 
-The optional `ssh` field configures at most one OpenSSH endpoint for a backup. Each source, transform, or destination driver runs there when configured with `remote: true` and locally otherwise. Pipelines may therefore be local-to-local, local-to-remote, remote-to-local, or remote-to-remote on the same remote system; a pipeline cannot directly connect two different remote systems.
+The optional `ssh` field configures at most one OpenSSH endpoint for a backup. To run a source, transform, or destination there, use an expanded driver definition and set its `remote` field to `true`; drivers run locally otherwise. Pipelines may therefore be local-to-local, local-to-remote, remote-to-local, or remote-to-remote on the same remote system; a pipeline cannot directly connect two different remote systems.
 
 The `ssh` field is a mapping that requires an `endpoint` in the form `ssh://[user@]host[:port]`. The `identity_file` and `config_file` settings may also be specified here, overriding the corresponding defaults from the top-level [`settings`](#settings) section. An `identity_file` must be provided either here or in the defaults.
 
@@ -120,7 +124,7 @@ Yaesm supports only non-interactive OpenSSH public-key authentication; password 
 
 ### SKIP UNCHANGED
 
-The optional `skip_unchanged` field is a boolean that defaults to `false`. When enabled and an earlier artifact exists, yaesm compares the current source with the newest artifact for the backup and skips the pipeline if they are unchanged, regardless of which schedule created that artifact. The destination driver must support change detection. If yaesm cannot determine whether the source changed, it reports a warning and creates the backup normally.
+The optional `skip_unchanged` field is a boolean that defaults to `false`. When enabled and an earlier artifact exists, yaesm compares the current source with the newest artifact for the backup and skips the pipeline if they are unchanged, regardless of which schedule created that artifact. Direct pipelines require a destination driver that supports change detection; pipelines that copy an existing backup compare artifact identities. If yaesm cannot determine whether the source changed, it reports a warning and creates the backup normally.
 
 ### SCHEDULES
 
@@ -130,18 +134,18 @@ If no on-demand schedule is configured, yaesm implicitly adds an on-demand sched
 
 #### SCHEDULE TYPES
 
-Each schedule definition must select exactly one of the following schedule types.
+Each schedule definition requires a `trigger` field that selects exactly one of the following schedule types.
 
-- **`on-demand`**: Defines a schedule with no timer. Its configuration must be an empty mapping, and the schedule runs only when explicitly selected for a manual backup.
-- **`cron`**: Runs the backup when a cron expression matches in the scheduler time zone. Its configuration may be the expression string directly or a mapping containing an `expression` field. The expression contains exactly five whitespace-separated fields in this order: minute, hour, day of month, month, and day of week. Fields accept `*`, comma-separated values, ranges, and `/` steps; months and weekdays may use their three-letter English names. All fields must match. Numeric weekdays run from `0` for Monday through `6` for Sunday. Cron expressions should be quoted so YAML 1.1 treats them as strings.
+- **`on-demand`**: Defines a schedule with no timer. Specify it directly as the trigger name. The schedule runs only when explicitly selected for a manual backup.
+- **`cron`**: Runs the backup when a cron expression matches in the scheduler time zone. The expression contains exactly five whitespace-separated fields in this order: minute, hour, day of month, month, and day of week. Fields accept `*`, comma-separated values, ranges, and `/` steps; months and weekdays may use their three-letter English names. All fields must match. Numeric weekdays run from `0` for Monday through `6` for Sunday. Cron expressions should be quoted so YAML 1.1 treats them as strings.
 
 #### RETENTION
 
-Every explicitly configured schedule requires a `retention` field. Its value may be one retention policy or a nonempty list of policies, with each policy represented by a mapping that selects one policy type. When multiple policies are configured, their results are combined: an artifact is retained if any policy selects it. Retention is applied after a backup artifact is created successfully.
+Every explicitly configured schedule requires a `retention` field. Its value may be one retention policy or a nonempty list of policies. A policy with no settings is specified by name; a configured policy is a mapping from its name to its value. When multiple policies are configured, their results are combined: an artifact is retained if any policy selects it. Retention is applied after a backup artifact is created successfully.
 
-- **`keep-all`**: Retains every artifact created by the schedule. Its configuration must be an empty mapping.
-- **`keep-last`**: Retains the specified positive number of newest artifacts created by the schedule. Its configuration may be the number directly or a mapping containing a `count` field.
-- **`keep-for`**: Retains artifacts created within the specified positive duration. Its configuration may be the duration directly or a mapping containing a `duration` field. A duration is an integer followed by `m`, `h`, `d`, `w`, or `y` for minutes, hours, days, weeks, or 365-day years.
+- **`keep-all`**: Retains every artifact created by the schedule.
+- **`keep-last`**: Retains the specified positive number of newest artifacts created by the schedule.
+- **`keep-for`**: Retains artifacts created within the specified positive duration. A duration is an integer followed by `m`, `h`, `d`, `w`, or `y` for minutes, hours, days, weeks, or 365-day years.
 
 ## GROUP DEFINITIONS
 
@@ -179,9 +183,7 @@ The `directory` driver makes an existing local or remote directory tree availabl
 
 ### CONFIGURATION
 
-The `directory` value may be an absolute path or a mapping containing `location`.
-
-- **`location`**: The absolute path of the directory to read.
+The `directory` value is the absolute path of the directory to read.
 
 ### PIPELINE ROLES
 
@@ -195,9 +197,7 @@ The `file` driver makes an existing file available as a byte stream or stores a 
 
 ### CONFIGURATION
 
-The `file` value may be an absolute path or a mapping containing `location`.
-
-- **`location`**: As a source, the absolute path of the file to read. As a destination, the absolute path of the directory beneath which artifact files are stored.
+The `file` value is an absolute path. As a source, it names the file to read. As a destination, it names the directory beneath which artifact files are stored.
 
 ### PIPELINE ROLES
 
@@ -207,7 +207,7 @@ As a source, the `file` driver reads the configured file without modifying its c
 
 #### DESTINATION
 
-As a destination, the `file` driver writes the byte stream produced by the pipeline to a new artifact file beneath `location`. Filename suffixes contributed by the source and transformation drivers are preserved. Suffixes accumulate in pipeline order, so `tar` followed by `zstd` and `gpg` produces a filename ending in `.tar.zst.gpg`.
+As a destination, the `file` driver writes the byte stream produced by the pipeline to a new artifact file beneath the configured directory. Filename suffixes contributed by the source and transformation drivers are preserved. Suffixes accumulate in pipeline order, so `tar` followed by `zstd` and `gpg` produces a filename ending in `.tar.zst.gpg`.
 
 ## rsync
 
@@ -215,7 +215,7 @@ The `rsync` driver uses the `rsync` utility to create and manage directory-tree 
 
 ### CONFIGURATION
 
-The `rsync` value may be an absolute path or a mapping. An absolute path is shorthand for a mapping containing only `location`.
+The `rsync` value is normally an absolute path. To configure additional behavior, use a mapping containing `location` and any of the optional settings below.
 
 - **`location`**: The absolute path of the directory beneath which backup artifacts are stored.
 - **`exclude`**: An `rsync` exclude pattern or list of exclude patterns. By default, no patterns are excluded.
@@ -226,7 +226,7 @@ The `rsync` value may be an absolute path or a mapping. An absolute path is shor
 
 #### DESTINATION
 
-As a destination, the `rsync` driver copies the directory tree produced by the pipeline into a new artifact directory beneath `location`. Copies preserve filesystem metadata, symlinks, hard links, ACLs, extended attributes, numeric ownership, and sparse files.
+As a destination, the `rsync` driver copies the directory tree produced by the pipeline into a new artifact directory beneath the configured directory. Copies preserve filesystem metadata, symlinks, hard links, ACLs, extended attributes, numeric ownership, and sparse files.
 
 When an earlier compatible `rsync` artifact exists on the same system, yaesm supplies it through `--link-dest`. Rsync then hard-links unchanged files from that artifact instead of storing their data again. Every artifact remains directly browsable as a complete directory tree. The `rsync` driver does not support `skip_unchanged`.
 
@@ -236,9 +236,7 @@ The `btrfs` driver uses the `btrfs` utility to back up Btrfs subvolumes. It can 
 
 ### CONFIGURATION
 
-The `btrfs` value may be an absolute path or a mapping containing `location`.
-
-- **`location`**: As a source, the absolute path of the Btrfs subvolume to back up. As a destination, the absolute path of an existing directory on a Btrfs filesystem beneath which snapshot artifacts are stored.
+The `btrfs` value is an absolute path. As a source, it names the Btrfs subvolume to back up. As a destination, it names an existing directory on a Btrfs filesystem beneath which snapshot artifacts are stored.
 
 ### PIPELINE ROLES
 
@@ -260,7 +258,7 @@ The `zfs` driver uses the `zfs` utility to back up ZFS filesystem datasets. It c
 
 ### CONFIGURATION
 
-The `zfs` value may be a ZFS dataset name or a mapping containing `dataset`.
+The `zfs` value is normally a ZFS dataset name. To configure native encryption, use a mapping containing `dataset` and `encryption`.
 
 - **`dataset`**: As a source, the ZFS filesystem dataset to back up. As a destination, the dataset in which snapshot artifacts are stored.
 - **`encryption`**: Whether to preserve native ZFS encryption using raw send streams. The source dataset must already be encrypted. The default is `false`.
@@ -285,7 +283,7 @@ The `tar` driver uses the `tar` utility to transform a directory tree into an un
 
 ### CONFIGURATION
 
-The `tar` value is a mapping with the following optional setting:
+Specify `tar` by name to use its default behavior. To override the default, its value is a mapping with the following setting:
 
 - **`one_file_system`**: Whether `tar` should avoid crossing filesystem boundaries while reading the directory tree. The default is `true`.
 
@@ -301,9 +299,7 @@ The `zstd` driver uses the `zstd` utility to compress a byte stream with Zstanda
 
 ### CONFIGURATION
 
-The `zstd` value may be an integer compression level or a mapping containing `level`.
-
-- **`level`**: An integer from `1` through `19`. Higher levels generally improve compression at the cost of more time and processing. The default is `3`.
+Specify `zstd` by name to use compression level `3`, or give it an integer from `1` through `19`. Higher levels generally improve compression at the cost of more time and processing.
 
 ### PIPELINE ROLES
 
@@ -317,9 +313,7 @@ The `gpg` driver uses the GnuPG `gpg` utility to encrypt a byte stream with an O
 
 ### CONFIGURATION
 
-The `gpg` value may be the absolute path of a public-key file or a mapping containing `public_key`.
-
-- **`public_key`**: The absolute path of the OpenPGP public-key file used to encrypt the backup. The path is interpreted on the system where the transform runs, and the key does not need to be imported into a GnuPG keyring.
+The `gpg` value is the absolute path of the OpenPGP public-key file used to encrypt the backup. The path is interpreted on the system where the transform runs, and the key does not need to be imported into a GnuPG keyring.
 
 ### PIPELINE ROLES
 

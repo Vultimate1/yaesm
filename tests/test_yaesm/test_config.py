@@ -85,7 +85,7 @@ def backup_config(**settings):
         "destination": {"btrfs": "/destination"},
         "schedules": {
             "daily": {
-                "cron": "30 4 * * *",
+                "trigger": {"cron": "30 4 * * *"},
                 "retention": {"keep-last": 7},
             }
         },
@@ -102,18 +102,9 @@ _SCHEDULE_NAMES = st.from_regex(r"[a-z0-9_][a-z0-9_-]{0,8}", fullmatch=True).fil
 )
 _PATHS = st.sampled_from(("/source", "/home", "/srv/data", "/srv/backup data"))
 _DATASETS = st.sampled_from(("tank/source", "tank/home", "backup/archive"))
-_BTRFS_CONFIGS = st.one_of(
-    _PATHS,
-    st.builds(lambda location: {"location": location}, _PATHS),
-)
-_DIRECTORY_CONFIGS = st.one_of(
-    _PATHS,
-    st.builds(lambda location: {"location": location}, _PATHS),
-)
-_FILE_CONFIGS = st.one_of(
-    _PATHS,
-    st.builds(lambda location: {"location": location}, _PATHS),
-)
+_BTRFS_CONFIGS = _PATHS
+_DIRECTORY_CONFIGS = _PATHS
+_FILE_CONFIGS = _PATHS
 _RSYNC_CONFIGS = st.one_of(
     _PATHS,
     st.builds(
@@ -150,16 +141,10 @@ _TAR_CONFIGS = st.one_of(
     st.just({}),
     st.booleans().map(lambda one_file_system: {"one_file_system": one_file_system}),
 )
-_GPG_CONFIGS = st.one_of(
-    st.sampled_from(("/key.asc", "/root/backup key.asc")),
-    st.sampled_from(("/key.asc", "/root/backup key.asc")).map(
-        lambda public_key: {"public_key": public_key}
-    ),
-)
+_GPG_CONFIGS = st.sampled_from(("/key.asc", "/root/backup key.asc"))
 _ZSTD_CONFIGS = st.one_of(
     st.just({}),
     st.integers(min_value=1, max_value=19),
-    st.integers(min_value=1, max_value=19).map(lambda level: {"level": level}),
 )
 _DRIVER_CONFIGS = {
     "btrfs": _BTRFS_CONFIGS,
@@ -173,15 +158,14 @@ _DRIVER_CONFIGS = {
 }
 _CRON_EXPRESSIONS = st.sampled_from(("* * * * *", "0 * * * *", "30 4 * * *", "*/15 9-17 * * 1-5"))
 _RETENTION = st.one_of(
-    st.just({"keep-all": {}}),
+    st.just("keep-all"),
     st.integers(min_value=1, max_value=100).map(lambda count: {"keep-last": count}),
-    st.integers(min_value=1, max_value=100).map(lambda count: {"keep-last": {"count": count}}),
     st.tuples(
         st.integers(min_value=1, max_value=100),
         st.sampled_from(("m", "h", "d", "w", "y")),
     ).map(lambda duration: {"keep-for": f"{duration[0]}{duration[1]}"}),
     st.timedeltas(min_value=timedelta(seconds=1), max_value=timedelta(days=3650)).map(
-        lambda duration: {"keep-for": {"duration": duration}}
+        lambda duration: {"keep-for": duration}
     ),
 )
 _RETENTIONS = st.one_of(_RETENTION, st.lists(_RETENTION, min_size=1, max_size=3))
@@ -229,10 +213,13 @@ _GLOBAL_SETTINGS = st.builds(
 
 @st.composite
 def driver_definitions(draw, name, remote_allowed):
-    definition = {name: draw(_DRIVER_CONFIGS[name])}
-    if draw(st.booleans()):
-        definition["remote"] = draw(st.booleans()) if remote_allowed else False
-    return definition
+    config = draw(_DRIVER_CONFIGS[name])
+    definition = name if config == {} else {name: config}
+    return (
+        {"driver": definition, "remote": True}
+        if remote_allowed and draw(st.booleans())
+        else definition
+    )
 
 
 @st.composite
@@ -243,22 +230,16 @@ def schedule_definitions(draw):
     names = draw(st.lists(_SCHEDULE_NAMES, max_size=3, unique=True))
     schedules = {}
     for name in names:
-        if draw(st.booleans()):
-            expression = draw(_CRON_EXPRESSIONS)
-            implementation = {
-                "cron": expression if draw(st.booleans()) else {"expression": expression}
-            }
-        else:
-            implementation = {"on-demand": {}}
+        trigger = {"cron": draw(_CRON_EXPRESSIONS)} if draw(st.booleans()) else "on-demand"
         schedules[name] = {
-            **implementation,
+            "trigger": trigger,
             "retention": draw(_RETENTIONS),
             **({"previous_names": [f"old-{name}"]} if draw(st.booleans()) else {}),
         }
 
     if draw(st.booleans()):
         schedules["manual"] = {
-            "on-demand": {},
+            "trigger": "on-demand",
             "retention": draw(_RETENTIONS),
         }
     return schedules
@@ -271,16 +252,19 @@ def direct_pipeline_definitions(draw, remote_allowed):
         driver_name = draw(st.sampled_from(("btrfs", "zfs")))
         source = draw(driver_definitions(driver_name, remote_allowed))
         destination = draw(driver_definitions(driver_name, remote_allowed))
+        destination_name = driver_name
         transforms = []
     elif pipeline_type == "rsync":
         driver_name = draw(st.sampled_from(("btrfs", "directory")))
         source = draw(driver_definitions(driver_name, remote_allowed))
         destination = draw(driver_definitions("rsync", remote_allowed))
+        destination_name = "rsync"
         transforms = []
     elif pipeline_type == "archive":
         driver_name = draw(st.sampled_from(("btrfs", "directory")))
         source = draw(driver_definitions(driver_name, remote_allowed))
         destination = draw(driver_definitions("file", remote_allowed))
+        destination_name = "file"
         transform_names = draw(
             st.sampled_from(((), ("zstd",), ("gpg",), ("zstd", "gpg"), ("gpg", "zstd")))
         )
@@ -290,11 +274,12 @@ def direct_pipeline_definitions(draw, remote_allowed):
     else:
         source = draw(driver_definitions("file", remote_allowed))
         destination = draw(driver_definitions("file", remote_allowed))
+        destination_name = "file"
         transform_names = draw(
             st.sampled_from(((), ("zstd",), ("gpg",), ("zstd", "gpg"), ("gpg", "zstd")))
         )
         transforms = [draw(driver_definitions(name, remote_allowed)) for name in transform_names]
-    return source, destination, transforms, next(name for name in destination if name != "remote")
+    return source, destination, transforms, destination_name
 
 
 @st.composite
@@ -395,7 +380,8 @@ _INVALID_MUTATION_NAMES = (
     "invalid-schedule-name",
     "nonmapping-schedule",
     "missing-retention",
-    "multiple-schedule-types",
+    "missing-trigger",
+    "invalid-trigger-selection",
     "unknown-schedule-type",
     "invalid-schedule-configuration",
     "invalid-previous-schedule-names",
@@ -484,16 +470,18 @@ def invalidate_backup(config, mutation):
         case "missing-retention":
             del schedule["retention"]
             return config, "schedule 'daily' has no retention policy"
-        case "multiple-schedule-types":
-            schedule["on-demand"] = {}
-            return config, "schedule 'daily' must select one schedule type"
+        case "missing-trigger":
+            del schedule["trigger"]
+            return config, "schedule 'daily' has no trigger"
+        case "invalid-trigger-selection":
+            schedule["trigger"] = {"cron": "30 4 * * *", "on-demand": {}}
+            return config, "schedule 'daily' trigger must select one schedule type"
         case "unknown-schedule-type":
-            del schedule["cron"]
-            schedule["unknown"] = {}
-            return config, "schedule 'daily' uses unknown type 'unknown'"
+            schedule["trigger"] = {"unknown": 1}
+            return config, "schedule 'daily' trigger uses unknown schedule type 'unknown'"
         case "invalid-schedule-configuration":
-            schedule["cron"] = "invalid"
-            return config, "schedule 'daily' has invalid cron configuration"
+            schedule["trigger"] = {"cron": "invalid"}
+            return config, "schedule 'daily' trigger has invalid cron configuration"
         case "invalid-previous-schedule-names":
             schedule["previous_names"] = "old-daily"
             return config, "previous_names must be a list"
@@ -502,7 +490,7 @@ def invalidate_backup(config, mutation):
             return config, "schedule 'daily' has no retention policy"
         case "invalid-retention-selection":
             schedule["retention"] = {}
-            return config, "retention policies must select one policy type"
+            return config, "schedule 'daily' retention must select one retention policy"
         case "unknown-retention":
             schedule["retention"] = {"unknown": 1}
             return config, "uses unknown retention policy 'unknown'"
@@ -623,11 +611,11 @@ def test_config_types_are_discovered_from_subclasses():
     backup = parse_config(
         {
             "home": backup_config(
-                source={"automatically-discovered": {"location": "/source"}},
-                destination={"automatically-discovered": {"location": "/destination"}},
+                source={"automatically-discovered": "/source"},
+                destination={"automatically-discovered": "/destination"},
                 schedules={
                     "automatic": {
-                        "automatically-discovered": {},
+                        "trigger": "automatically-discovered",
                         "retention": {"automatically-discovered": 2},
                     }
                 },
@@ -637,7 +625,7 @@ def test_config_types_are_discovered_from_subclasses():
 
     assert isinstance(backup.source, AutomaticallyDiscoveredDriver)
     assert isinstance(backup.destination, AutomaticallyDiscoveredDriver)
-    assert isinstance(backup.schedules[0].implementation, AutomaticallyDiscoveredSchedule)
+    assert isinstance(backup.schedules[0].trigger, AutomaticallyDiscoveredSchedule)
     assert backup.schedules[1] == Schedule("manual", OnDemandSchedule())
     assert backup.retention_policies == (
         AutomaticallyDiscoveredRetention(2, "automatic"),
@@ -653,12 +641,12 @@ def test_config_has_no_hardcoded_type_registries():
 
 def test_config_generator_covers_every_builtin_type():
     def names(base):
-        implementations = set()
+        types = set()
         for subclass in base.__subclasses__():
             if subclass.__module__.startswith("yaesm.") and not inspect.isabstract(subclass):
-                implementations.add(subclass.name())
-            implementations.update(names(subclass))
-        return implementations
+                types.add(subclass.name())
+            types.update(names(subclass))
+        return types
 
     assert set(_DRIVER_CONFIGS) == names(DriverBase)
     assert {"cron", "on-demand"} == names(ScheduleBase)
@@ -673,12 +661,12 @@ def test_parse_config_builds_complete_backup():
                 "identity_file": "/root/.ssh/server-key",
                 "config_file": "/root/.ssh/config",
             },
-            source={"btrfs": "/home", "remote": True},
-            destination={"file": "/backups", "remote": True},
+            source={"driver": {"btrfs": "/home"}, "remote": True},
+            destination={"driver": {"file": "/backups"}, "remote": True},
             transforms=[
-                {"tar": {}, "remote": True},
-                {"zstd": 7, "remote": True},
-                {"gpg": "/root/backup-key.asc", "remote": True},
+                {"driver": "tar", "remote": True},
+                {"driver": {"zstd": 7}, "remote": True},
+                {"driver": {"gpg": "/root/backup-key.asc"}, "remote": True},
             ],
         )
     }
@@ -724,7 +712,7 @@ def test_parse_config_builds_previous_name_lookup():
                 schedules={
                     "nightly": {
                         "previous_names": ["daily", "old-daily"],
-                        "cron": "30 4 * * *",
+                        "trigger": {"cron": "30 4 * * *"},
                         "retention": {"keep-last": 7},
                     }
                 },
@@ -1007,7 +995,7 @@ def test_parse_config_rejects_invalid_previous_schedule_names(previous_names):
     schedules = {
         "daily": {
             "previous_names": previous_names,
-            "cron": "30 4 * * *",
+            "trigger": {"cron": "30 4 * * *"},
             "retention": {"keep-last": 7},
         }
     }
@@ -1021,7 +1009,7 @@ def test_parse_config_rejects_duplicate_schedule_name_history(previous_names):
     schedules = {
         "daily": {
             "previous_names": previous_names,
-            "cron": "30 4 * * *",
+            "trigger": {"cron": "30 4 * * *"},
             "retention": {"keep-last": 7},
         }
     }
@@ -1036,23 +1024,23 @@ def test_parse_config_rejects_duplicate_schedule_name_history(previous_names):
         {
             "nightly": {
                 "previous_names": ["daily"],
-                "cron": "0 1 * * *",
+                "trigger": {"cron": "0 1 * * *"},
                 "retention": {"keep-last": 7},
             },
             "daily": {
-                "cron": "0 2 * * *",
+                "trigger": {"cron": "0 2 * * *"},
                 "retention": {"keep-last": 7},
             },
         },
         {
             "nightly": {
                 "previous_names": ["old-daily"],
-                "cron": "0 1 * * *",
+                "trigger": {"cron": "0 1 * * *"},
                 "retention": {"keep-last": 7},
             },
             "daily": {
                 "previous_names": ["old-daily"],
-                "cron": "0 2 * * *",
+                "trigger": {"cron": "0 2 * * *"},
                 "retention": {"keep-last": 7},
             },
         },
@@ -1066,7 +1054,7 @@ def test_parse_config_rejects_schedule_name_history_collisions(schedules):
 @pytest.mark.parametrize(
     ("driver", "driver_type"),
     [
-        ({"btrfs": {"location": "/source"}}, BtrfsDriver),
+        ({"btrfs": "/source"}, BtrfsDriver),
         ({"zfs": "tank/source"}, ZFSDriver),
     ],
 )
@@ -1099,7 +1087,7 @@ def test_parse_config_constructs_file_source_and_destination():
             "database": backup_config(
                 source={"file": "/source/database.sql"},
                 destination={"file": "/destination"},
-                transforms=[{"zstd": {}}],
+                transforms=["zstd"],
             )
         }
     ).backups["database"]
@@ -1149,7 +1137,7 @@ def test_parse_config_rejects_tar_destination():
             {
                 "home": backup_config(
                     source={"directory": "/source"},
-                    destination={"tar": {}},
+                    destination="tar",
                 )
             }
         )
@@ -1159,7 +1147,7 @@ def test_parse_config_builds_encrypted_tar_archive_pipeline():
     backup = parse_config(
         {
             "home": backup_config(
-                source={"directory": {"location": "/source"}},
+                source={"directory": "/source"},
                 destination={"file": "/archives"},
                 transforms=[
                     {"tar": {"one_file_system": False}},
@@ -1190,7 +1178,7 @@ def test_parse_config_accepts_forward_backup_source_reference():
         {
             "offsite": backup_config(
                 source={"backup": "local"},
-                destination={"btrfs": {"location": "/offsite"}},
+                destination={"btrfs": "/offsite"},
             ),
             "local": backup_config(),
         }
@@ -1206,7 +1194,7 @@ def test_parse_config_rejects_incompatible_replication_without_artifacts():
                 "archive": backup_config(
                     source={"directory": "/source"},
                     destination={"file": "/archives"},
-                    transforms=[{"tar": {}}],
+                    transforms=["tar"],
                 ),
                 "replica": backup_config(
                     source={"backup": "archive"},
@@ -1244,7 +1232,7 @@ def test_parse_config_accepts_settings():
         },
         "home": backup_config(
             destination={"file": "/destination"},
-            transforms=[{"tar": {}}, {"zstd": {}}],
+            transforms=["tar", "zstd"],
         ),
     }
 
@@ -1279,7 +1267,7 @@ def test_parse_config_applies_global_ssh_defaults():
             },
             "home": backup_config(
                 ssh={"endpoint": "ssh://server"},
-                source={"btrfs": "/source", "remote": True},
+                source={"driver": {"btrfs": "/source"}, "remote": True},
             ),
         }
     )
@@ -1308,7 +1296,7 @@ def test_backup_ssh_settings_override_global_defaults():
                     "identity_file": "/backup-key",
                     "config_file": "/backup-config",
                 },
-                source={"btrfs": "/source", "remote": True},
+                source={"driver": {"btrfs": "/source"}, "remote": True},
             ),
         }
     )
@@ -1492,13 +1480,18 @@ def test_generated_valid_configs_parse(value):
             zip(definition.get("transforms", ()), backup.transforms, strict=True)
         )
         for driver_definition, driver in configured_drivers:
-            driver_name = next(name for name in driver_definition if name != "remote")
+            expanded = isinstance(driver_definition, dict) and "driver" in driver_definition
+            selection = driver_definition["driver"] if expanded else driver_definition
+            driver_name = selection if isinstance(selection, str) else next(iter(selection))
             assert driver.name() == driver_name
             assert driver.global_settings is parsed.global_settings
-            assert (driver.ssh is not None) is driver_definition.get("remote", False)
+            remote = expanded and driver_definition.get("remote", False)
+            assert (driver.ssh is not None) is remote
 
         configured_schedules = definition.get("schedules", {})
-        has_on_demand = any("on-demand" in schedule for schedule in configured_schedules.values())
+        has_on_demand = any(
+            schedule["trigger"] == "on-demand" for schedule in configured_schedules.values()
+        )
         expected_schedule_names = (
             *configured_schedules,
             *(("manual",) if not has_on_demand else ()),
@@ -1712,9 +1705,9 @@ def test_parse_config_rejects_invalid_ssh_target(ssh):
 def test_invalid_ssh_stops_backup_validation():
     definition = backup_config(
         ssh={},
-        source={"btrfs": "/source", "remote": True},
-        destination={"btrfs": "/destination", "remote": True},
-        transforms=[{"zstd": {}, "remote": True}],
+        source={"driver": {"btrfs": "/source"}, "remote": True},
+        destination={"driver": {"btrfs": "/destination"}, "remote": True},
+        transforms=[{"driver": "zstd", "remote": True}],
     )
 
     with pytest.raises(ConfigError) as error:
@@ -1741,9 +1734,9 @@ def test_invalid_backup_suppresses_dependent_group_errors():
 @pytest.mark.parametrize(
     ("setting", "value"),
     [
-        ("source", {"btrfs": "/source", "remote": True}),
-        ("destination", {"btrfs": "/destination", "remote": True}),
-        ("transforms", [{"zstd": {}, "remote": True}]),
+        ("source", {"driver": {"btrfs": "/source"}, "remote": True}),
+        ("destination", {"driver": {"btrfs": "/destination"}, "remote": True}),
+        ("transforms", [{"driver": "zstd", "remote": True}]),
     ],
 )
 def test_parse_config_rejects_remote_driver_without_ssh(setting, value):
@@ -1751,34 +1744,53 @@ def test_parse_config_rejects_remote_driver_without_ssh(setting, value):
         parse_config({"home": backup_config(**{setting: value})})
 
 
-@pytest.mark.parametrize("remote", [None, 1, "yes", []])
-def test_parse_config_rejects_invalid_remote_setting(remote):
-    source = {"btrfs": "/source", "remote": remote}
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"driver": {"btrfs": "/source"}},
+        {"driver": {"btrfs": "/source"}, "remote": False},
+    ],
+)
+def test_parse_config_accepts_expanded_local_driver(source):
+    backup = parse_config({"home": backup_config(source=source)}).backups["home"]
 
-    with pytest.raises(ConfigError, match="remote must be a boolean"):
+    assert isinstance(backup.source, BtrfsDriver)
+    assert backup.source.ssh is None
+
+
+@pytest.mark.parametrize("remote", [None, 1, "yes", [], {}])
+def test_parse_config_rejects_invalid_remote_driver(remote):
+    source = {"driver": {"btrfs": "/source"}, "remote": remote}
+
+    with pytest.raises(ConfigError, match="source remote must be a boolean"):
         parse_config({"home": backup_config(source=source)})
 
 
-def test_parse_config_rejects_driver_ssh_configuration():
-    source = {"btrfs": {"location": "/source", "ssh": {}}}
+def test_parse_config_rejects_expanded_driver_without_driver():
+    source = {"remote": True}
 
-    with pytest.raises(ConfigError, match="extra keys not allowed.*ssh"):
+    with pytest.raises(ConfigError, match="source expanded definition requires driver"):
         parse_config({"home": backup_config(source=source)})
 
 
-def test_parse_config_rejects_target_setting():
-    source = {
-        "btrfs": {
-            "location": "/source",
-            "target": {
-                "spec": "ssh://host",
-                "key": "/key",
-            },
-        }
-    }
+def test_parse_config_rejects_unknown_expanded_driver_setting():
+    source = {"driver": {"btrfs": "/source"}, "remote": True, "unknown": True}
 
-    with pytest.raises(ConfigError, match="extra keys not allowed.*target"):
+    with pytest.raises(ConfigError, match="source has unknown settings: unknown"):
         parse_config({"home": backup_config(source=source)})
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"location": "/source"},
+        {"location": "/source", "ssh": {}},
+        {"location": "/source", "target": "ssh://host"},
+    ],
+)
+def test_parse_config_rejects_mapping_for_single_value_driver(config):
+    with pytest.raises(ConfigError, match="source has invalid btrfs configuration"):
+        parse_config({"home": backup_config(source={"btrfs": config})})
 
 
 @pytest.mark.parametrize(
@@ -1876,7 +1888,10 @@ def test_parse_config_rejects_replication_between_ssh_endpoints():
     def remote(endpoint):
         return {
             "ssh": {"endpoint": endpoint, "identity_file": "/key"},
-            "destination": {"btrfs": "/destination", "remote": True},
+            "destination": {
+                "driver": {"btrfs": "/destination"},
+                "remote": True,
+            },
         }
 
     with pytest.raises(ConfigError, match="use different SSH configurations"):
@@ -1897,12 +1912,12 @@ def test_parse_config_accepts_replication_on_one_ssh_endpoint():
         {
             "original": backup_config(
                 ssh=ssh,
-                destination={"btrfs": "/original", "remote": True},
+                destination={"driver": {"btrfs": "/original"}, "remote": True},
             ),
             "replica": backup_config(
                 ssh=ssh,
                 source={"backup": "original"},
-                destination={"btrfs": "/replica", "remote": True},
+                destination={"driver": {"btrfs": "/replica"}, "remote": True},
             ),
         }
     )
@@ -1925,7 +1940,7 @@ def test_parse_config_rejects_incompatible_pipeline():
         parse_config(
             {
                 "home": backup_config(
-                    source={"directory": {"location": "/source"}},
+                    source={"directory": "/source"},
                     destination={"zfs": "tank/backup"},
                 )
             }
@@ -1947,7 +1962,7 @@ def test_parse_config_rejects_driver_without_destination_capabilities():
 
 def test_parse_config_rejects_destination_without_storage_capability():
     with pytest.raises(ConfigError, match="destination driver unstorable cannot store"):
-        parse_config({"home": backup_config(destination={"unstorable": {}})})
+        parse_config({"home": backup_config(destination="unstorable")})
 
 
 def test_parse_config_rejects_driver_incompatible_with_destination():
@@ -1961,14 +1976,13 @@ def test_parse_config_reads_yaml_file(tmp_path):
         """
 home:
   source:
-    btrfs:
-      location: /source
+    btrfs: /source
   destination:
-    btrfs:
-      location: /destination
+    btrfs: /destination
   schedules:
     daily:
-      cron: "30 4 * * *"
+      trigger:
+        cron: "30 4 * * *"
       retention:
         keep-last: 7
 """.lstrip()
@@ -2001,18 +2015,18 @@ def test_parse_schedules():
     schedules, retention = parse_schedules(
         {
             "hourly": {
-                "cron": "0 * * * *",
+                "trigger": {"cron": "0 * * * *"},
                 "retention": {"keep-last": 24},
             },
             "daily": {
-                "cron": {"expression": "30 4 * * *"},
+                "trigger": {"cron": "30 4 * * *"},
                 "retention": [
                     {"keep-for": "30d"},
-                    {"keep-last": {"count": 3}},
+                    {"keep-last": 3},
                 ],
             },
             "manual": {
-                "on-demand": {},
+                "trigger": "on-demand",
                 "retention": {"keep-last": 2},
             },
         }
@@ -2035,7 +2049,7 @@ def test_parse_schedules_accepts_numeric_leading_name():
     schedules, retention = parse_schedules(
         {
             "5minute": {
-                "cron": "*/5 * * * *",
+                "trigger": {"cron": "*/5 * * * *"},
                 "retention": {"keep-last": 288},
             }
         }
@@ -2049,7 +2063,7 @@ def test_parse_schedules_adds_implicit_manual_schedule():
     schedules, retention = parse_schedules(
         {
             "daily": {
-                "cron": "30 4 * * *",
+                "trigger": {"cron": "30 4 * * *"},
                 "retention": {"keep-last": 7},
             }
         }
@@ -2066,7 +2080,7 @@ def test_parse_schedules_preserves_explicit_on_demand_schedule():
     schedules, retention = parse_schedules(
         {
             "adhoc": {
-                "on-demand": {},
+                "trigger": "on-demand",
                 "retention": {"keep-last": 4},
             }
         }
@@ -2080,8 +2094,8 @@ def test_parse_schedules_accepts_keep_all():
     schedules, retention = parse_schedules(
         {
             "manual": {
-                "on-demand": {},
-                "retention": {"keep-all": {}},
+                "trigger": "on-demand",
+                "retention": "keep-all",
             }
         }
     )
@@ -2096,7 +2110,7 @@ def test_parse_schedules_reserves_manual_for_on_demand(name):
         parse_schedules(
             {
                 name: {
-                    "cron": "30 4 * * *",
+                    "trigger": {"cron": "30 4 * * *"},
                     "retention": {"keep-last": 1},
                 }
             }
@@ -2136,48 +2150,80 @@ def test_parse_schedules_rejects_nonmapping_schedule():
 @pytest.mark.parametrize(
     ("definition", "message"),
     [
-        ({"cron": "0 * * * *"}, "schedule 'hourly' has no retention policy"),
+        ({"trigger": {"cron": "0 * * * *"}}, "schedule 'hourly' has no retention policy"),
         (
-            {"cron": "0 * * * *", "retention": []},
+            {"trigger": {"cron": "0 * * * *"}, "retention": []},
             "schedule 'hourly' has no retention policy",
         ),
         (
             {"retention": {"keep-last": 24}},
-            "schedule 'hourly' must select one schedule type",
+            "schedule 'hourly' has no trigger",
         ),
         (
             {
-                "cron": "0 * * * *",
+                "trigger": {"cron": "0 * * * *"},
                 "other": {},
                 "retention": {"keep-last": 24},
             },
-            "schedule 'hourly' must select one schedule type",
+            "schedule 'hourly' has unknown settings: other",
         ),
         (
-            {"unknown": {}, "retention": {"keep-last": 24}},
-            "schedule 'hourly' uses unknown type 'unknown'",
-        ),
-        (
-            {"cron": "invalid", "retention": {"keep-last": 24}},
-            "schedule 'hourly' has invalid cron configuration",
-        ),
-        (
-            {"cron": "0 * * * *", "retention": {}},
-            "retention policies must select one policy type",
+            {"trigger": {}, "retention": {"keep-last": 24}},
+            "schedule 'hourly' trigger must select one schedule type",
         ),
         (
             {
-                "cron": "0 * * * *",
-                "retention": {"keep-last": 24, "keep-for": "2d"},
+                "trigger": {"cron": "0 * * * *", "on-demand": 1},
+                "retention": {"keep-last": 24},
             },
-            "retention policies must select one policy type",
+            "schedule 'hourly' trigger must select one schedule type",
         ),
         (
-            {"cron": "0 * * * *", "retention": {"unknown": 1}},
+            {"trigger": {"unknown": 1}, "retention": {"keep-last": 24}},
+            "schedule 'hourly' trigger uses unknown schedule type 'unknown'",
+        ),
+        (
+            {"trigger": {"cron": "invalid"}, "retention": {"keep-last": 24}},
+            "schedule 'hourly' trigger has invalid cron configuration",
+        ),
+        (
+            {"trigger": {"on-demand": {}}, "retention": {"keep-last": 24}},
+            (
+                "schedule 'hourly' trigger has empty on-demand configuration; "
+                "use 'on-demand' directly"
+            ),
+        ),
+        (
+            {"trigger": {"cron": "0 * * * *"}, "retention": {}},
+            "schedule 'hourly' retention must select one retention policy",
+        ),
+        (
+            {
+                "trigger": {"cron": "0 * * * *"},
+                "retention": {"keep-last": 24, "keep-for": "2d"},
+            },
+            "schedule 'hourly' retention must select one retention policy",
+        ),
+        (
+            {"trigger": {"cron": "0 * * * *"}, "retention": {"keep-all": {}}},
+            (
+                "schedule 'hourly' retention has empty keep-all configuration; "
+                "use 'keep-all' directly"
+            ),
+        ),
+        (
+            {
+                "trigger": {"cron": "0 * * * *"},
+                "retention": {"keep-last": {"count": 24}},
+            },
+            "has invalid keep-last configuration",
+        ),
+        (
+            {"trigger": {"cron": "0 * * * *"}, "retention": {"unknown": 1}},
             "uses unknown retention policy 'unknown'",
         ),
         (
-            {"cron": "0 * * * *", "retention": {"keep-last": 0}},
+            {"trigger": {"cron": "0 * * * *"}, "retention": {"keep-last": 0}},
             "has invalid keep-last configuration",
         ),
     ],

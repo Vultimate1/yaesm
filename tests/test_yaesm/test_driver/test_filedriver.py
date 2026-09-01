@@ -98,7 +98,6 @@ def test_name():
     [
         "/source",
         Path("/source"),
-        {"location": "/source"},
     ],
 )
 def test_config_schema_accepts_absolute_location(value):
@@ -110,6 +109,7 @@ def test_config_schema_accepts_absolute_location(value):
     [
         "relative",
         Path("relative"),
+        {"location": "/source"},
         {"location": "relative"},
         {"location": 1},
         {},

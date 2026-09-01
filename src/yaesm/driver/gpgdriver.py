@@ -52,14 +52,7 @@ class GPGDriver(DriverBase):
                 raise vlp.Invalid("public_key must be an absolute path")
             return path
 
-        mapping = vlp.Schema(
-            {
-                vlp.Required("public_key"): public_key,
-            }
-        )
-        return vlp.Schema(
-            lambda value: mapping({"public_key": value} if isinstance(value, str | Path) else value)
-        )
+        return vlp.Schema(lambda value: {"public_key": public_key(value)})
 
     def _checks(self, role: CheckRole) -> tuple[Check, ...]:
         if role is not CheckRole.TRANSFORM:
