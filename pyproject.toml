@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yaesm"
-version = "0.0.3"
+version = "0.0.4"
 description = "A backup tool with support for multiple filesystems"
 authors = [
     {name = "Connor Gallivan"},
