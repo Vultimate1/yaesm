@@ -79,7 +79,7 @@ class FindSubcommand(SubcommandBase):
         )
         parser.add_argument(
             "-0",
-            "--null",
+            dest="null",
             action="store_true",
             help="separate results with NUL bytes",
         )

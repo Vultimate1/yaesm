@@ -105,7 +105,6 @@ def test_find_argument_defaults():
 
 
 def test_find_null_argument():
-    assert arguments("home", "--null").null is True
     assert arguments("home", "-0").null is True
 
 
