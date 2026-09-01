@@ -78,6 +78,7 @@ jobs:
           dnf install --assumeyes --setopt=install_weak_deps=False \
             dist/yaesm-*.noarch.rpm
           yaesm --help
+          test "$(yaesm __complete --current=b --)" = backup
           systemd-analyze verify --man=no /usr/lib/systemd/system/yaesm.service
 
       - name: Upload Fedora package
