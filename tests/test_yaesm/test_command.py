@@ -49,16 +49,35 @@ def test_pipeline_logs_commands(caplog):
 
 
 def test_pipeline_logs_status_while_running(monkeypatch, caplog):
-    monkeypatch.setattr(command_module, "_STATUS_LOG_INTERVAL_SECONDS", 0.01)
+    timeouts = []
+
+    class Process:
+        stdout = None
+        returncode = None
+        pid = 2**31 - 1
+
+        def communicate(self, *, timeout):
+            timeouts.append(timeout)
+            if len(timeouts) < 3:
+                raise subprocess.TimeoutExpired("command", timeout)
+            self.returncode = 0
+            return None, None
+
+        def wait(self, timeout=None):
+            self.returncode = 0
+            return 0
+
+    monkeypatch.setattr(command_module.subprocess, "Popen", lambda *args, **kwargs: Process())
     token = current_backup.set("backup 'home' (manual)")
 
     try:
         with caplog.at_level(logging.INFO, logger="yaesm.command"):
-            CommandRunner().pipeline([[sys.executable, "-c", "import time; time.sleep(0.04)"]])
+            CommandRunner().pipeline([["command"]])
     finally:
         current_backup.reset(token)
 
-    assert caplog.messages
+    assert timeouts == [30, 60, 60]
+    assert len(caplog.messages) == 2
     assert all(
         message.startswith("backup 'home' (manual): command pipeline still running (")
         and message.endswith(" elapsed)")

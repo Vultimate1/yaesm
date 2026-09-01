@@ -22,7 +22,7 @@ if ty.TYPE_CHECKING:
 
 Command: ty.TypeAlias = ty.Sequence[str | ty.Path]
 logger = logging.getLogger(__name__)
-_STATUS_LOG_INTERVAL_SECONDS = 30
+_STATUS_LOG_INTERVAL_SECONDS = 60
 _TERMINATE_GRACE_SECONDS = 5
 
 
@@ -142,11 +142,10 @@ class CommandRunner:
 
                     started = time.monotonic()
                     backup = current_backup.get()
+                    timeout = _STATUS_LOG_INTERVAL_SECONDS / 2 if backup else None
                     while True:
                         try:
-                            output, _stderr = processes[-1].communicate(
-                                timeout=_STATUS_LOG_INTERVAL_SECONDS if backup else None
-                            )
+                            output, _stderr = processes[-1].communicate(timeout=timeout)
                             break
                         except subprocess.TimeoutExpired:
                             logger.info(
@@ -154,6 +153,7 @@ class CommandRunner:
                                 backup,
                                 format_duration(time.monotonic() - started),
                             )
+                            timeout = _STATUS_LOG_INTERVAL_SECONDS
                     for process in processes[:-1]:
                         process.wait()
                 except OSError as error:
