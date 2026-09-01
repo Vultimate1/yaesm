@@ -147,15 +147,8 @@ _ZFS_CONFIGS = st.one_of(
     ),
 )
 _TAR_CONFIGS = st.one_of(
-    _PATHS,
-    st.builds(
-        lambda location, one_file_system: {
-            "location": location,
-            "one_file_system": one_file_system,
-        },
-        _PATHS,
-        st.booleans(),
-    ),
+    st.just({}),
+    st.booleans().map(lambda one_file_system: {"one_file_system": one_file_system}),
 )
 _GPG_CONFIGS = st.one_of(
     st.sampled_from(("/key.asc", "/root/backup key.asc")),
@@ -287,11 +280,13 @@ def direct_pipeline_definitions(draw, remote_allowed):
     elif pipeline_type == "archive":
         driver_name = draw(st.sampled_from(("btrfs", "directory")))
         source = draw(driver_definitions(driver_name, remote_allowed))
-        destination = draw(driver_definitions("tar", remote_allowed))
+        destination = draw(driver_definitions("file", remote_allowed))
         transform_names = draw(
             st.sampled_from(((), ("zstd",), ("gpg",), ("zstd", "gpg"), ("gpg", "zstd")))
         )
-        transforms = [draw(driver_definitions(name, remote_allowed)) for name in transform_names]
+        transforms = [
+            draw(driver_definitions(name, remote_allowed)) for name in ("tar", *transform_names)
+        ]
     else:
         source = draw(driver_definitions("file", remote_allowed))
         destination = draw(driver_definitions("file", remote_allowed))
@@ -307,10 +302,7 @@ def valid_backup_definitions(draw, name, ssh, previous_backups):
     use_ssh = draw(st.booleans())
     remote_allowed = use_ssh
     replication_sources = tuple(
-        (alias, driver_name)
-        for aliases, driver_name in previous_backups
-        if driver_name != "tar"
-        for alias in aliases
+        (alias, driver_name) for aliases, driver_name in previous_backups for alias in aliases
     )
     if replication_sources and draw(st.booleans()):
         source_name, destination_name = draw(st.sampled_from(replication_sources))
@@ -439,8 +431,8 @@ def invalidate_backup(config, mutation):
             return config, "skip_unchanged must be a boolean"
         case "unsupported-skip-unchanged":
             config["skip_unchanged"] = True
-            config["destination"] = {"tar": "/destination"}
-            return config, "destination driver tar does not support skip_unchanged"
+            config["destination"] = {"file": "/destination"}
+            return config, "destination driver file does not support skip_unchanged"
         case "invalid-previous-names":
             config["previous_names"] = "old-home"
             return config, "previous_names must be a list"
@@ -682,8 +674,9 @@ def test_parse_config_builds_complete_backup():
                 "config_file": "/root/.ssh/config",
             },
             source={"btrfs": "/home", "remote": True},
-            destination={"tar": "/backups", "remote": True},
+            destination={"file": "/backups", "remote": True},
             transforms=[
+                {"tar": {}, "remote": True},
                 {"zstd": 7, "remote": True},
                 {"gpg": "/root/backup-key.asc", "remote": True},
             ],
@@ -705,15 +698,17 @@ def test_parse_config_builds_complete_backup():
     assert isinstance(backup.source, BtrfsDriver)
     assert backup.source.location == Path("/home")
     assert backup.source.ssh == ssh
-    assert isinstance(backup.destination, TarDriver)
+    assert isinstance(backup.destination, FileDriver)
     assert backup.destination.location == Path("/backups")
     assert backup.destination.ssh is backup.source.ssh
-    assert isinstance(backup.transforms[0], ZstdDriver)
-    assert backup.transforms[0].level == 7
+    assert isinstance(backup.transforms[0], TarDriver)
     assert backup.transforms[0].ssh is backup.source.ssh
-    assert isinstance(backup.transforms[1], GPGDriver)
-    assert backup.transforms[1].public_key == Path("/root/backup-key.asc")
+    assert isinstance(backup.transforms[1], ZstdDriver)
+    assert backup.transforms[1].level == 7
     assert backup.transforms[1].ssh is backup.source.ssh
+    assert isinstance(backup.transforms[2], GPGDriver)
+    assert backup.transforms[2].public_key == Path("/root/backup-key.asc")
+    assert backup.transforms[2].ssh is backup.source.ssh
     assert backup.schedules == (
         Schedule("daily", CronSchedule("30 4 * * *")),
         Schedule("manual", OnDemandSchedule()),
@@ -955,7 +950,7 @@ def test_parse_config_rejects_nonboolean_skip_unchanged(value):
         parse_config({"home": backup_config(skip_unchanged=value)})
 
 
-@pytest.mark.parametrize("driver", ["rsync", "tar"])
+@pytest.mark.parametrize("driver", ["rsync", "file"])
 def test_parse_config_rejects_skip_unchanged_for_unsupported_driver(driver):
     with pytest.raises(
         ConfigError,
@@ -1148,26 +1143,37 @@ def test_parse_config_rejects_rsync_source():
         )
 
 
+def test_parse_config_rejects_tar_destination():
+    with pytest.raises(ConfigError, match="destination driver tar does not provide: delete, list"):
+        parse_config(
+            {
+                "home": backup_config(
+                    source={"directory": "/source"},
+                    destination={"tar": {}},
+                )
+            }
+        )
+
+
 def test_parse_config_builds_encrypted_tar_archive_pipeline():
     backup = parse_config(
         {
             "home": backup_config(
                 source={"directory": {"location": "/source"}},
-                destination={
-                    "tar": {
-                        "location": "/archives",
-                        "one_file_system": False,
-                    }
-                },
-                transforms=[{"gpg": "/public-key.asc"}],
+                destination={"file": "/archives"},
+                transforms=[
+                    {"tar": {"one_file_system": False}},
+                    {"gpg": "/public-key.asc"},
+                ],
             )
         }
     ).backups["home"]
 
     assert isinstance(backup.source, DirectoryDriver)
-    assert isinstance(backup.destination, TarDriver)
+    assert isinstance(backup.destination, FileDriver)
     assert backup.destination.location == Path("/archives")
-    assert not backup.destination.one_file_system
+    assert isinstance(backup.transforms[0], TarDriver)
+    assert not backup.transforms[0].one_file_system
     assert tuple(
         (step.driver.name(), step.capability)
         for step in Pipeline(backup.source, backup.destination, backup.transforms).steps
@@ -1175,7 +1181,7 @@ def test_parse_config_builds_encrypted_tar_archive_pipeline():
         ("directory", "source"),
         ("tar", "export"),
         ("gpg", "encrypt"),
-        ("tar", "import"),
+        ("file", "import"),
     )
 
 
@@ -1199,7 +1205,8 @@ def test_parse_config_rejects_incompatible_replication_without_artifacts():
             {
                 "archive": backup_config(
                     source={"directory": "/source"},
-                    destination={"tar": "/archives"},
+                    destination={"file": "/archives"},
+                    transforms=[{"tar": {}}],
                 ),
                 "replica": backup_config(
                     source={"backup": "archive"},
@@ -1209,7 +1216,7 @@ def test_parse_config_rejects_incompatible_replication_without_artifacts():
         )
 
     assert "backup 'replica': cannot build backup pipeline" in str(error.value)
-    assert "produced: TarArchive" in str(error.value)
+    assert "produced: FileStream" in str(error.value)
 
 
 @pytest.mark.parametrize("value", [None, [], 1])
@@ -1236,8 +1243,8 @@ def test_parse_config_accepts_settings():
             },
         },
         "home": backup_config(
-            destination={"tar": {"location": "/destination"}},
-            transforms=[{"zstd": {}}],
+            destination={"file": "/destination"},
+            transforms=[{"tar": {}}, {"zstd": {}}],
         ),
     }
 

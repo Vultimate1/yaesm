@@ -15,6 +15,7 @@ from yaesm.command import CommandError, CommandResult, CommandStage
 from yaesm.config import parse_config
 from yaesm.driver.btrfsdriver import BtrfsDriver
 from yaesm.driver.driverbase import DriverBase, DriverError, capability
+from yaesm.driver.filedriver import FileDriver
 from yaesm.driver.gpgdriver import GPGDriver
 from yaesm.driver.tardriver import TarDriver
 from yaesm.driver.zstddriver import ZstdDriver
@@ -490,11 +491,11 @@ def test_pipeline_validates_replication_without_existing_artifact():
 def test_pipeline_rejects_incompatible_replication_without_existing_artifact():
     with pytest.raises(PipelineError) as error:
         Pipeline.validate_replication(
-            TarDriver(Path("/archives")),
+            FileDriver(Path("/archives")),
             BtrfsDriver(Path("/destination")),
         )
 
-    assert "produced: TarArchive" in str(error.value)
+    assert "produced: FileStream" in str(error.value)
     assert "destination accepts: BtrfsStream via btrfs.import" in str(error.value)
 
 
@@ -560,10 +561,11 @@ def test_configured_remote_pipeline_uses_one_ssh_command():
                 },
                 "source": {"btrfs": "/source", "remote": True},
                 "transforms": [
+                    {"tar": {}, "remote": True},
                     {"zstd": {}, "remote": True},
                     {"gpg": "/public-key.asc", "remote": True},
                 ],
-                "destination": {"tar": "/source/backups", "remote": True},
+                "destination": {"file": "/source/backups", "remote": True},
                 "schedules": {
                     "manual": {
                         "on-demand": {},
@@ -575,9 +577,10 @@ def test_configured_remote_pipeline_uses_one_ssh_command():
     )
     backup = config.backups["home"]
     assert isinstance(backup.source, BtrfsDriver)
-    assert isinstance(backup.destination, TarDriver)
-    assert isinstance(backup.transforms[0], ZstdDriver)
-    assert isinstance(backup.transforms[1], GPGDriver)
+    assert isinstance(backup.destination, FileDriver)
+    assert isinstance(backup.transforms[0], TarDriver)
+    assert isinstance(backup.transforms[1], ZstdDriver)
+    assert isinstance(backup.transforms[2], GPGDriver)
     ssh = backup.source.ssh
     assert ssh is not None
 
@@ -715,12 +718,13 @@ def test_pipeline_resolves_compatible_driver_capabilities():
 
 def test_pipeline_automatically_snapshots_snapshot_capable_source():
     source = BtrfsDriver(Path("/source"))
-    destination = TarDriver(Path("/destination"))
+    archive = TarDriver()
+    destination = FileDriver(Path("/destination"))
 
-    assert Pipeline(source, destination).steps == (
+    assert Pipeline(source, destination, (archive,)).steps == (
         PipelineStep(source, "source"),
         PipelineStep(source, "snapshot"),
-        PipelineStep(destination, "export"),
+        PipelineStep(archive, "export"),
         PipelineStep(destination, "import"),
     )
 

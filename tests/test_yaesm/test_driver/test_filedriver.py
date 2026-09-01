@@ -318,7 +318,7 @@ def test_file_pipeline_uses_source_and_destination_without_transform(tmp_path):
 
 def test_file_destination_can_store_a_tar_transform(tmp_path):
     source = DirectoryDriver(Path("/source"))
-    tar = TarDriver(tmp_path)
+    tar = TarDriver()
     destination = FileDriver(tmp_path)
 
     pipeline = Pipeline(source, destination, (tar,))
@@ -338,7 +338,7 @@ def test_file_destination_inside_source_is_excluded_from_tar():
     Pipeline(
         DirectoryDriver(Path("/source")),
         destination,
-        (TarDriver(Path("/unused")),),
+        (TarDriver(),),
     ).execute(operation())
 
     tar_command = runner.pipeline_calls[0][0][0]
