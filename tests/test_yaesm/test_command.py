@@ -5,11 +5,18 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
+from threading import Event, Thread
+from unittest import mock
 
 import pytest
 
 import yaesm.command as command_module
-from yaesm.command import CommandError, CommandRunner, CommandStage
+from yaesm.command import (
+    CommandCancelledError,
+    CommandError,
+    CommandRunner,
+    CommandStage,
+)
 from yaesm.logging import current_backup
 from yaesm.ssh import SSHTarget
 
@@ -102,6 +109,89 @@ def test_pipeline_executes_command_stages():
     )
 
     assert result.stdout == "HELLO\n"
+
+
+def test_pipeline_starts_commands_in_new_sessions(monkeypatch):
+    start_new_session = []
+    popen = subprocess.Popen
+
+    def record_option(*args, **kwargs):
+        start_new_session.append(kwargs.get("start_new_session"))
+        return popen(*args, **kwargs)
+
+    monkeypatch.setattr(command_module.subprocess, "Popen", record_option)
+
+    CommandRunner().pipeline([[sys.executable, "-c", "pass"]])
+
+    assert start_new_session == [True]
+
+
+def test_cancellation_terminates_active_pipeline_and_prevents_new_commands(monkeypatch):
+    monkeypatch.setattr(command_module, "_commands_cancelled", False)
+    started = Event()
+    processes = []
+    signals = []
+    errors = []
+    popen = subprocess.Popen
+    killpg = command_module.os.killpg
+
+    def record_process(*args, **kwargs):
+        process = popen(*args, **kwargs)
+        processes.append(process)
+        started.set()
+        return process
+
+    def record_signal(pid, signum):
+        signals.append((pid, signum))
+        killpg(pid, signum)
+
+    def execute():
+        try:
+            CommandRunner().run([sys.executable, "-c", "import time; time.sleep(60)"])
+        except BaseException as error:
+            errors.append(error)
+
+    monkeypatch.setattr(command_module.subprocess, "Popen", record_process)
+    monkeypatch.setattr(command_module.os, "killpg", record_signal)
+    thread = Thread(target=execute)
+    thread.start()
+    try:
+        assert started.wait(5)
+        command_module.cancel_commands()
+        thread.join(5)
+        command_module.cancel_commands()
+    finally:
+        if thread.is_alive() and processes:
+            processes[0].kill()
+            thread.join(5)
+
+    assert not thread.is_alive()
+    assert processes[0].returncode is not None
+    assert signals == [
+        (processes[0].pid, command_module.signal.SIGTERM),
+        (processes[0].pid, command_module.signal.SIGKILL),
+    ]
+    assert len(errors) == 1
+    assert isinstance(errors[0], CommandCancelledError)
+
+    with pytest.raises(CommandCancelledError, match="forced shutdown"):
+        CommandRunner().run([sys.executable, "-c", "pass"])
+
+
+def test_termination_escalates_to_sigkill(monkeypatch):
+    process = mock.Mock(pid=123, stdout=None)
+    process.poll.return_value = None
+    process.wait.side_effect = (subprocess.TimeoutExpired(("command",), 5), None)
+    killpg = mock.Mock()
+    monkeypatch.setattr(command_module.os, "killpg", killpg)
+
+    command_module._terminate((process,))
+
+    assert killpg.call_args_list == [
+        mock.call(123, command_module.signal.SIGTERM),
+        mock.call(123, command_module.signal.SIGKILL),
+    ]
+    assert process.wait.call_count == 2
 
 
 def test_execution_groups_adjacent_stages_on_the_same_ssh_connection(tmp_path):

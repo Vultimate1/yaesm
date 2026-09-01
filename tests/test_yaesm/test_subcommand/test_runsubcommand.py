@@ -14,6 +14,7 @@ import yaesm.subcommand.runsubcommand as run_module
 from yaesm.config import Config, ConfigError
 from yaesm.control import ControlError
 from yaesm.errors import YaesmError
+from yaesm.scheduler import SchedulerError
 from yaesm.subcommand.runsubcommand import RunError, RunSubcommand
 from yaesm.subcommand.subcommandbase import TargetSelectionMode
 
@@ -227,6 +228,85 @@ def test_run_registers_signal_handlers(monkeypatch, tmp_path):
     assert set(handlers) == {signal.SIGHUP, signal.SIGTERM, signal.SIGINT}
 
 
+def test_shutdown_signal_starts_shutdown_thread(monkeypatch, tmp_path):
+    handlers = {}
+    scheduler = mock.Mock()
+    thread = mock.Mock()
+    thread_type = mock.Mock(return_value=thread)
+    monkeypatch.setattr(run_module, "Scheduler", mock.Mock(return_value=scheduler))
+    monkeypatch.setattr(run_module, "Thread", thread_type)
+    monkeypatch.setattr(
+        signal, "signal", lambda signum, handler: handlers.setdefault(signum, handler)
+    )
+    RunSubcommand().main(Config({}, {}), arguments(tmp_path))
+
+    handlers[signal.SIGTERM](signal.SIGTERM, None)
+
+    thread_type.assert_called_once_with(target=scheduler.stop, name="yaesm-shutdown")
+    thread.start.assert_called_once_with()
+
+
+def test_second_shutdown_signal_forces_shutdown(monkeypatch, tmp_path, caplog):
+    caplog.set_level(logging.INFO)
+    handlers = {}
+    scheduler = mock.Mock()
+    force_shutdown = mock.Mock()
+    threads = (mock.Mock(), mock.Mock())
+    thread_type = mock.Mock(side_effect=threads)
+    monkeypatch.setattr(run_module, "Scheduler", mock.Mock(return_value=scheduler))
+    monkeypatch.setattr(run_module, "_force_shutdown", force_shutdown)
+    monkeypatch.setattr(run_module, "Thread", thread_type)
+    monkeypatch.setattr(
+        signal, "signal", lambda signum, handler: handlers.setdefault(signum, handler)
+    )
+
+    def signal_shutdown():
+        handlers[signal.SIGTERM](signal.SIGTERM, None)
+        handlers[signal.SIGINT](signal.SIGINT, None)
+        handlers[signal.SIGTERM](signal.SIGTERM, None)
+
+    scheduler.start.side_effect = signal_shutdown
+
+    assert RunSubcommand().main(Config({}, {}), arguments(tmp_path)) == 1
+
+    assert thread_type.call_args_list == [
+        mock.call(target=scheduler.stop, name="yaesm-shutdown"),
+        mock.call(target=force_shutdown, name="yaesm-force-shutdown"),
+    ]
+    for thread in threads:
+        thread.start.assert_called_once_with()
+    assert "graceful shutdown requested; waiting for running backups" in caplog.messages
+    assert "forced shutdown requested; terminating running backups" in caplog.messages
+
+
+def test_force_shutdown_cancels_commands_and_exits(monkeypatch):
+    cancel_commands = mock.Mock()
+    exit_process = mock.Mock(side_effect=SystemExit(1))
+    monkeypatch.setattr(run_module, "cancel_commands", cancel_commands)
+    monkeypatch.setattr(run_module.os, "_exit", exit_process)
+
+    with pytest.raises(SystemExit, match="1"):
+        run_module._force_shutdown()
+
+    cancel_commands.assert_called_once_with()
+    exit_process.assert_called_once_with(1)
+
+
+def test_force_shutdown_exits_if_command_cancellation_fails(monkeypatch):
+    monkeypatch.setattr(
+        run_module,
+        "cancel_commands",
+        mock.Mock(side_effect=RuntimeError("failed")),
+    )
+    exit_process = mock.Mock(side_effect=SystemExit(1))
+    monkeypatch.setattr(run_module.os, "_exit", exit_process)
+
+    with pytest.raises(SystemExit, match="1"):
+        run_module._force_shutdown()
+
+    exit_process.assert_called_once_with(1)
+
+
 def test_reload_config(monkeypatch, tmp_path, caplog):
     caplog.set_level(logging.INFO)
     config = Config({}, {})
@@ -255,3 +335,19 @@ def test_reload_invalid_config_keeps_current_jobs(monkeypatch, tmp_path, caplog)
         "    - first error\n"
         "    - second error"
     )
+
+
+def test_reload_during_shutdown_keeps_current_config(monkeypatch, tmp_path, caplog):
+    config = Config({}, {})
+    monkeypatch.setattr(run_module, "parse_config", mock.Mock(return_value=config))
+    scheduler = mock.Mock()
+    scheduler.replace_config.side_effect = SchedulerError("scheduler is stopping")
+
+    assert RunSubcommand._reload_config(scheduler, tmp_path / "config.yaml") == (
+        "scheduler is stopping"
+    )
+
+    scheduler.replace_config.assert_called_once_with(config)
+    assert caplog.messages == [
+        "configuration reload failed; keeping current configuration\n  scheduler is stopping"
+    ]

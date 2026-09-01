@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import voluptuous as vlp
+from apscheduler.events import EVENT_SCHEDULER_STARTED
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.base import BaseTrigger
@@ -85,6 +86,8 @@ class Scheduler:
 
     def __init__(self, config: Config) -> None:
         self._lock = Lock()
+        self._stopping = False
+        self._shutdown_started = False
         self._backup_locks: dict[str, LockType] = {}
         self._requests: dict[UUID, _RequestState] = {}
         self._timer_job_ids: set[str] = set()
@@ -97,11 +100,21 @@ class Scheduler:
             job_defaults={"max_instances": 1},
             logger=_backend_logger,
         )
+        self._scheduler.add_listener(self._stop_if_requested, EVENT_SCHEDULER_STARTED)
         self.replace_config(config)
+
+    def _stop_if_requested(self, _event: object) -> None:
+        with self._lock:
+            if not self._stopping or self._shutdown_started:
+                return
+            self._shutdown_started = True
+        self._scheduler.shutdown(wait=True)
 
     def replace_config(self, config: Config) -> None:
         """Replace scheduled jobs without interrupting running jobs."""
         with self._lock:
+            if self._stopping:
+                raise SchedulerError("scheduler is stopping")
             self._config = config
             for job_id in self._timer_job_ids:
                 if self._scheduler.get_job(job_id) is not None:
@@ -133,6 +146,8 @@ class Scheduler:
     ) -> UUID:
         """Queue the backups represented by targets for immediate execution."""
         with self._lock:
+            if self._stopping:
+                raise SchedulerError("scheduler is stopping")
             config = self._config
             if not target_names:
                 raise SchedulerError("no backup targets specified")
@@ -255,20 +270,34 @@ class Scheduler:
         self._scheduler.add_job(
             _execute_backup,
             trigger=trigger,
-            args=(backup, schedule_name, backups, request_id, messages, timezone, backup_lock),
+            args=(
+                backup,
+                schedule_name,
+                backups,
+                request_id,
+                messages,
+                timezone,
+                backup_lock,
+            ),
             id=job_id,
             name=f"{backup.name} ({schedule_name})",
         )
 
     def start(self) -> None:
         """Start the blocking scheduler."""
-        if not self._scheduler.running:
+        if not self._stopping and not self._scheduler.running:
             self._scheduler.start()
 
     def stop(self) -> None:
-        """Stop accepting jobs without waiting for running jobs."""
-        if self._scheduler.running:
-            self._scheduler.shutdown(wait=False)
+        """Stop accepting jobs and wait for running jobs."""
+        with self._lock:
+            if self._stopping:
+                return
+            self._stopping = True
+            running = self._scheduler.running
+            self._shutdown_started = running
+        if running:
+            self._scheduler.shutdown(wait=True)
 
 
 def _execute_backup(

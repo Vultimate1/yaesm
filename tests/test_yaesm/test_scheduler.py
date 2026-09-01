@@ -2,8 +2,9 @@
 
 import logging
 import queue
+import time
 from datetime import datetime, timezone
-from threading import Event
+from threading import Event, Thread
 from unittest import mock
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -748,4 +749,77 @@ def test_scheduler_start_and_stop_delegate():
 
     implementation.running = True
     scheduler.stop()
-    implementation.shutdown.assert_called_once_with(wait=False)
+    implementation.shutdown.assert_called_once_with(wait=True)
+
+    scheduler.stop()
+    scheduler.start()
+    scheduler._stop_if_requested(mock.Mock())
+    implementation.shutdown.assert_called_once_with(wait=True)
+    implementation.start.assert_called_once_with()
+
+
+def test_scheduler_rejects_work_after_stop():
+    config, _backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
+    scheduler = Scheduler(config)
+    scheduler.stop()
+
+    with pytest.raises(SchedulerError, match="scheduler is stopping"):
+        scheduler.enqueue_backup("home")
+    with pytest.raises(SchedulerError, match="scheduler is stopping"):
+        scheduler.replace_config(config)
+
+
+def test_scheduler_honors_stop_requested_during_startup():
+    config, _backup = configured_backup()
+    scheduler = Scheduler(config)
+    scheduler.stop()
+
+    scheduler._scheduler.start()
+
+    assert not scheduler._scheduler.running
+
+
+def test_scheduler_stop_waits_for_running_backup(monkeypatch):
+    monkeypatch.setattr(scheduler_module, "BlockingScheduler", BackgroundScheduler)
+    config, _backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
+    started = Event()
+    release = Event()
+    shutdown_started = Event()
+    stopped = Event()
+
+    def execute_backup(*_args):
+        started.set()
+        assert release.wait(5)
+        return mock.Mock()
+
+    monkeypatch.setattr(Backup, "execute", execute_backup)
+    scheduler = Scheduler(config)
+    scheduler.start()
+    request_id = scheduler.enqueue_backup("home")
+    assert started.wait(5)
+    for _attempt in range(500):
+        if scheduler._scheduler.get_job(str(request_id)) is None:
+            break
+        time.sleep(0.01)
+    assert scheduler._scheduler.get_job(str(request_id)) is None
+
+    shutdown = scheduler._scheduler.shutdown
+
+    def observe_shutdown(*, wait=True):
+        shutdown_started.set()
+        return shutdown(wait=wait)
+
+    monkeypatch.setattr(scheduler._scheduler, "shutdown", observe_shutdown)
+
+    thread = Thread(target=lambda: (scheduler.stop(), stopped.set()))
+    thread.start()
+    try:
+        assert shutdown_started.wait(5)
+        assert not stopped.is_set()
+        release.set()
+        assert stopped.wait(5)
+    finally:
+        release.set()
+        thread.join(5)
+
+    assert not thread.is_alive()

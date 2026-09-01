@@ -5,9 +5,12 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import logging
+import os
 import shlex
+import signal
 import subprocess
 import tempfile
+import threading
 import time
 
 import yaesm.ty as ty
@@ -20,6 +23,7 @@ if ty.TYPE_CHECKING:
 Command: ty.TypeAlias = ty.Sequence[str | ty.Path]
 logger = logging.getLogger(__name__)
 _STATUS_LOG_INTERVAL_SECONDS = 30
+_TERMINATE_GRACE_SECONDS = 5
 
 
 @dataclasses.dataclass(frozen=True, init=False)
@@ -71,6 +75,15 @@ class CommandError(YaesmError):
         super().__init__(message)
 
 
+class CommandCancelledError(YaesmError):
+    """Raised when forced shutdown cancels a command pipeline."""
+
+
+_active_processes_lock = threading.Lock()
+_active_processes: set[subprocess.Popen[bytes]] = set()
+_commands_cancelled = False
+
+
 class CommandRunner:
     """Run commands without a shell."""
 
@@ -103,55 +116,63 @@ class CommandRunner:
 
         logger.debug("exec: %s", " | ".join(shlex.join(command) for command in normalized))
         processes: list[subprocess.Popen[bytes]] = []
-        with contextlib.ExitStack() as stack:
-            stderr_files = [
-                stack.enter_context(tempfile.TemporaryFile()) for _command in normalized
-            ]
-            previous_stdout = None
-            try:
-                for index, command in enumerate(normalized):
-                    process = subprocess.Popen(
-                        command,
-                        stdin=previous_stdout,
-                        stdout=(
+        try:
+            with contextlib.ExitStack() as stack:
+                stderr_files = [
+                    stack.enter_context(tempfile.TemporaryFile()) for _command in normalized
+                ]
+                previous_stdout = None
+                try:
+                    for index, command in enumerate(normalized):
+                        stdout = (
                             subprocess.PIPE
                             if index < len(normalized) - 1 or capture_output
                             else subprocess.DEVNULL
-                        ),
-                        stderr=stderr_files[index],
-                    )
-                    if previous_stdout is not None:
-                        previous_stdout.close()
-                    previous_stdout = process.stdout
-                    processes.append(process)
-
-                started = time.monotonic()
-                backup = current_backup.get()
-                while True:
-                    try:
-                        output, _stderr = processes[-1].communicate(
-                            timeout=_STATUS_LOG_INTERVAL_SECONDS if backup else None
                         )
-                        break
-                    except subprocess.TimeoutExpired:
-                        logger.info(
-                            "%s: command pipeline still running (%s elapsed)",
-                            backup,
-                            format_duration(time.monotonic() - started),
+                        process = _start_process(
+                            command,
+                            stdin=previous_stdout,
+                            stdout=stdout,
+                            stderr=stderr_files[index],
                         )
-                for process in processes[:-1]:
-                    process.wait()
-            except OSError as error:
-                _terminate(processes)
-                raise CommandError(command, None, str(error)) from error
-            except BaseException:
-                _terminate(processes)
-                raise
+                        if previous_stdout is not None:
+                            previous_stdout.close()
+                        previous_stdout = process.stdout
+                        processes.append(process)
 
-            stderrs = []
-            for stderr_file in stderr_files:
-                stderr_file.seek(0)
-                stderrs.append(stderr_file.read().decode("utf-8", errors="replace"))
+                    started = time.monotonic()
+                    backup = current_backup.get()
+                    while True:
+                        try:
+                            output, _stderr = processes[-1].communicate(
+                                timeout=_STATUS_LOG_INTERVAL_SECONDS if backup else None
+                            )
+                            break
+                        except subprocess.TimeoutExpired:
+                            logger.info(
+                                "%s: command pipeline still running (%s elapsed)",
+                                backup,
+                                format_duration(time.monotonic() - started),
+                            )
+                    for process in processes[:-1]:
+                        process.wait()
+                except OSError as error:
+                    _terminate(processes)
+                    _check_cancelled()
+                    raise CommandError(command, None, str(error)) from error
+                except BaseException:
+                    _terminate(processes)
+                    _check_cancelled()
+                    raise
+
+                stderrs = []
+                for stderr_file in stderr_files:
+                    stderr_file.seek(0)
+                    stderrs.append(stderr_file.read().decode("utf-8", errors="replace"))
+        finally:
+            _finished(processes)
+
+        _check_cancelled()
 
         returncodes = []
         for process in processes:
@@ -180,6 +201,49 @@ def run(
 ) -> CommandResult:
     """Run one command."""
     return CommandRunner().run(command, capture_output=capture_output, check=check)
+
+
+def cancel_commands() -> None:
+    """Prevent new commands and terminate every active process group."""
+    global _commands_cancelled
+    with _active_processes_lock:
+        if _commands_cancelled:
+            return
+        _commands_cancelled = True
+        processes = tuple(_active_processes)
+    _terminate(processes)
+
+
+def _start_process(
+    command: tuple[str, ...],
+    *,
+    stdin: ty.Any,
+    stdout: ty.Any,
+    stderr: ty.Any,
+) -> subprocess.Popen[bytes]:
+    with _active_processes_lock:
+        if _commands_cancelled:
+            raise CommandCancelledError("command cancelled by forced shutdown")
+        process = subprocess.Popen(
+            command,
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            start_new_session=True,
+        )
+        _active_processes.add(process)
+        return process
+
+
+def _finished(processes: ty.Iterable[subprocess.Popen[bytes]]) -> None:
+    with _active_processes_lock:
+        _active_processes.difference_update(processes)
+
+
+def _check_cancelled() -> None:
+    with _active_processes_lock:
+        if _commands_cancelled:
+            raise CommandCancelledError("command cancelled by forced shutdown")
 
 
 def _execution_commands(
@@ -215,7 +279,27 @@ def _terminate(processes: ty.Sequence[subprocess.Popen[bytes]]) -> None:
     for process in processes:
         if process.stdout is not None:
             process.stdout.close()
-        if process.poll() is None:
-            process.terminate()
+    _signal_process_groups(processes, signal.SIGTERM)
+
+    deadline = time.monotonic() + _TERMINATE_GRACE_SECONDS
+    remaining = []
     for process in processes:
+        try:
+            process.wait(timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            remaining.append(process)
+
+    _signal_process_groups(processes, signal.SIGKILL)
+    for process in remaining:
         process.wait()
+
+
+def _signal_process_groups(
+    processes: ty.Iterable[subprocess.Popen[bytes]],
+    signum: int,
+) -> None:
+    for process in processes:
+        try:
+            os.killpg(process.pid, signum)
+        except ProcessLookupError:
+            pass

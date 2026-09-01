@@ -3,14 +3,17 @@
 import argparse
 import fcntl
 import logging
+import os
 import signal
 from pathlib import Path
+from threading import Thread
 
 import yaesm.ty as ty
+from yaesm.command import cancel_commands
 from yaesm.config import Config, ConfigError, parse_config
 from yaesm.control import DEFAULT_CONTROL_SOCKET, ControlError, ControlMessage, ControlServer
 from yaesm.errors import YaesmError
-from yaesm.scheduler import Scheduler
+from yaesm.scheduler import Scheduler, SchedulerError
 from yaesm.subcommand.subcommandbase import (
     SubcommandBase,
     TargetSelection,
@@ -18,6 +21,13 @@ from yaesm.subcommand.subcommandbase import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _force_shutdown() -> ty.NoReturn:
+    try:
+        cancel_commands()
+    finally:
+        os._exit(1)
 
 
 class RunError(YaesmError):
@@ -79,7 +89,8 @@ class RunSubcommand(SubcommandBase):
     def _reload_config(scheduler: Scheduler, path: Path) -> str | None:
         try:
             config = parse_config(path)
-        except ConfigError as error:
+            scheduler.replace_config(config)
+        except (ConfigError, SchedulerError) as error:
             details = "\n".join(f"  {line}" for line in error.format().splitlines())
             logger.error(
                 "configuration reload failed; keeping current configuration\n%s",
@@ -87,7 +98,6 @@ class RunSubcommand(SubcommandBase):
             )
             return error.format()
 
-        scheduler.replace_config(config)
         logger.info("configuration reloaded")
         return None
 
@@ -116,8 +126,27 @@ class RunSubcommand(SubcommandBase):
                 signal.SIGHUP,
                 lambda _signum, _frame: self._reload_config(scheduler, arguments.config),
             )
-            signal.signal(signal.SIGTERM, lambda _signum, _frame: scheduler.stop())
-            signal.signal(signal.SIGINT, lambda _signum, _frame: scheduler.stop())
+            stopping = False
+            forced = False
+
+            def stop(_signum: int, _frame: object) -> None:
+                nonlocal stopping, forced
+                if forced:
+                    return
+                if stopping:
+                    forced = True
+                    logger.warning("forced shutdown requested; terminating running backups")
+                    target = _force_shutdown
+                    name = "yaesm-force-shutdown"
+                else:
+                    stopping = True
+                    logger.info("graceful shutdown requested; waiting for running backups")
+                    target = scheduler.stop
+                    name = "yaesm-shutdown"
+                Thread(target=target, name=name).start()
+
+            signal.signal(signal.SIGTERM, stop)
+            signal.signal(signal.SIGINT, stop)
             control.start()
             try:
                 scheduler.start()
@@ -128,7 +157,7 @@ class RunSubcommand(SubcommandBase):
                 scheduler.stop()
 
         logger.info("scheduler stopped")
-        return 0
+        return int(forced)
 
     @classmethod
     def add_argparser_arguments(cls, parser: argparse.ArgumentParser) -> None:
