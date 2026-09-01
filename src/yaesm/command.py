@@ -299,7 +299,5 @@ def _signal_process_groups(
     signum: int,
 ) -> None:
     for process in processes:
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signum)
-        except ProcessLookupError:
-            pass

@@ -1,505 +1,484 @@
 <!--
-  yaesm(1) man page source. Written in pandoc-flavored Markdown. The CI
-  (build-manual.yml) converts this to roff via pandoc, passing all man page
-  metadata as CLI flags.
+  Source for yaesm(1), written in Pandoc Markdown. The build-manual.yml CI
+  workflow converts it to roff with Pandoc and supplies the man-page metadata.
 -->
 
 # NAME
 
-yaesm - a backup tool with support for multiple file systems
+yaesm - a configurable backup system that connects backup tools into pipelines
 
 # SYNOPSIS
 
-**yaesm** [*OPTIONS*] *SUBCOMMAND* [*SUBCOMMAND-OPTIONS*]
+```text
+yaesm --help
+yaesm --version
+yaesm [OPTIONS] SUBCOMMAND [SUBCOMMAND_OPTIONS]
+```
 
 # DESCRIPTION
 
-Yaesm creates and schedules filesystem backups. Backups may stay on the local
-system, be sent to a remote system, or be pulled from a remote system. Backup
-schedules, retention limits, and storage locations are defined in a YAML
-configuration file.
+Yaesm is a configurable backup system. A single [configuration file](#configuration) defines the backups it runs and how they behave.
 
-Yaesm may be run interactively or continuously as a scheduler under an init
-system.
+Each backup is a pipeline assembled from components. It reads data from a source, may compress, encrypt, or otherwise transform it, and stores the result at a destination. Components may run locally or through OpenSSH, enabling local backups, remote transfers, and replication of existing backups.
 
-# GLOBAL OPTIONS
-
-Global options apply to every subcommand and must appear before the subcommand.
-Running **yaesm --help** shows the global help; running a subcommand with
-**--help** shows help for that subcommand.
-
-**-h**, **--help**
-
-Show help and exit.
-
-**--version**
-
-Show the installed yaesm version and exit.
-
-**-c** *FILE*, **--config** *FILE*
-
-Read configuration from *FILE*. The default is `/etc/yaesm/config.yaml`.
-
-**--log-level** *LEVEL*
-
-Set the minimum logging level. Valid values are **DEBUG**, **INFO**,
-**WARNING**, **ERROR**, and **CRITICAL**. The default is **INFO**. At
-**DEBUG**, every external command executed by yaesm is also logged.
-
-**--log-stderr**
-
-Log to standard error.
-
-**--log-file** *FILE*
-
-Append logs to *FILE*.
-
-**--log-syslog**[=*ADDRESS*]
-
-Log to syslog. *ADDRESS* is the Unix socket path and defaults to `/dev/log`.
-When this option immediately precedes a subcommand, use
-`--log-syslog=/dev/log` to avoid treating the subcommand as *ADDRESS*.
-
-More than one logging destination may be selected. If none is selected, yaesm
-logs to standard error.
-
-# SUBCOMMANDS
-
-## backup
-
-**yaesm** [*OPTIONS*] **backup** *BACKUP*[,*BACKUP*...] [**--keep** *COUNT*]
-
-Create one or more immediate backups. Multiple configured backup names may be
-given as a comma-separated list. The names are validated before any backups
-begin, then the backups run sequentially in the requested order. If one fails,
-the remaining backups still run and the command returns a failure status.
-
-Immediate backups use each selected backup's configured backend. Their
-retention is managed separately from scheduled timeframes.
-
-**--keep** *COUNT*
-
-For each selected backup, keep no more than *COUNT* immediate backups,
-including the newly created backup. *COUNT* must be a positive integer.
-Immediate backups are kept indefinitely when this option is omitted.
-
-## check
-
-**yaesm** [*OPTIONS*] **check** [*BACKUP*[,*BACKUP*...]] [**-q** | **--quiet**]
-
-Check whether configured backups meet the requirements needed to run. With no
-backup names, all configured backups are checked. Multiple names may be given
-as a comma-separated list. The names are validated before any checks begin.
-
-By default, every check is shown as **PASS** or **FAIL**, followed by any error
-messages. The command succeeds only if every selected backup passes all of its
-checks. If all checks pass, the backups are very likely to run successfully,
-though later runtime failures are still possible.
-
-**-q**, **--quiet**
-
-Show only failed checks and their error messages.
-
-Examples:
-
-```console
-$ yaesm check
-$ yaesm check home-backup
-$ yaesm check home-backup,root-backup --quiet
-```
-
-## find
-
-**yaesm** [*OPTIONS*] **find** *BACKUP*[,*BACKUP*...] [*QUERY*...] [**--query** *QUERY*...] [**--timeframe** *TIMEFRAME*[,*TIMEFRAME*...]]
-
-Print the locations of existing backups. For each configured backup, results
-are printed from newest to oldest. Multiple backup names may be given as a
-comma-separated list. Each result is printed as a backup locator. Its format
-depends on the backend and storage location.
-
-With no query, all matching backups are printed. Finding no matching backups
-is not an error.
-
-The following queries are supported:
-
-**all**
-
-Select every backup. This is the default.
-
-**newest**
-
-Select the newest backup.
-
-**oldest**
-
-Select the oldest backup.
-
-**after** *TIME*
-
-Select backups newer than *TIME*.
-
-**before** *TIME*
-
-Select backups older than *TIME*.
-
-**between** *TIME* *TIME*
-
-Select backups between the two times, including the endpoints. The times
-may be given in either order.
-
-**closest** *TIME*
-
-Select the backup closest to *TIME*.
-
-*TIME* may have one of these forms:
-
-- `now-Nm`, `now-Nh`, or `now-Nd` for a positive
-  number of minutes, hours, or days before the current time
-- **YYYY-MM-DD** for midnight on a date
-- **YYYY-MM-DDTHH:MM** for a date and time
-- **HH:MM** for a time today
-
-**-q** *QUERY*, **--query** *QUERY*
-
-Add another query. This option may be repeated. Results from multiple
-queries are combined without duplicates.
-
-**-t** *TIMEFRAME*, **--timeframe** *TIMEFRAME*, **--timeframes** *TIMEFRAME*
-
-Limit results to one or more timeframes. Values may be comma-separated and
-the option may be repeated. Valid values are **5minute**, **hourly**,
-**daily**, **weekly**, **monthly**, **yearly**, and **immediate**.
-
-Examples:
-
-```console
-$ yaesm find home-backup
-$ yaesm find home-backup,root-backup newest
-$ yaesm find home-backup after now-7d --timeframes daily,weekly
-$ yaesm find home-backup before 2026-08-01T12:00
-$ yaesm find home-backup between 2026-08-01 2026-08-15
-$ yaesm find home-backup closest 12:30
-$ yaesm find home-backup,root-backup --query oldest --query newest
-$ yaesm find home-backup --timeframe hourly --timeframe daily
-```
-
-## run
-
-**yaesm** [*OPTIONS*] **run** [**--lockfile** *FILE*]
-
-Start the backup scheduler and continue running until it is stopped. Every
-configured timeframe for every backup is scheduled. This command is intended
-to be managed by an init system, but it may also be run directly in a terminal.
-
-Only one scheduler may use a given lock file. If the lock cannot be acquired,
-the command reports an error and exits with a failure status. **SIGINT** and
-**SIGTERM** stop the scheduler gracefully and wait for running backups to
-finish.
-
-**SIGHUP** reloads the configuration file that yaesm was started with. Backups
-that are already running are allowed to complete using the old configuration.
-Future backups use the new configuration. If the configuration is invalid,
-yaesm reports the errors and keeps the current schedule.
-
-**--lockfile** *FILE*
-
-Use *FILE* as the scheduler lock file. The default is
-`/run/lock/yaesm-run.lock`. The file is created if needed, but its parent
-directory must already exist and be writable by the running user.
+Yaesm runs as a scheduler daemon, executing backups according to their schedules and accepting on-demand requests through a local control socket. A backup may have multiple schedules, each with its own retention policy. Related backups can be collected into groups and operated on together. Its [command-line subcommands](#subcommands) include operations for starting and interacting with the daemon, checking the configuration, and finding stored backups.
 
 # CONFIGURATION
 
-The configuration file is the heart of yaesm. It defines the backups and
-drives how they are created, scheduled, checked, found, and retained. Yaesm
-reads its YAML configuration from `/etc/yaesm/config.yaml` by default. Use
-**--config** to select another file. Configuration files use YAML 1.1.
-
-The top level of the file must be a nonempty mapping defining one or more
-backups. Each entry consists of a backup name, a configured backend, and a list
-of timeframes. Backend-specific settings determine how and where its backups
-are stored.
-
-Yaesm provides no global backup settings or inheritance; each backup is
-configured and validated independently. Unknown settings are rejected. Yaesm
-reports configuration errors before running the selected subcommand.
-
-Backup names must begin with an ASCII letter. The remaining characters may be
-ASCII letters, digits, hyphens, underscores, colons, or `@` signs.
-
-Apart from its name, every backup accepts two common settings:
-
-**backend**
-
-Required. The backend used to create and manage this backup. The currently
-supported values are **btrfs** and **rsync**. Backend names are case-sensitive.
-See [BACKENDS](#backends) for backend-specific settings, requirements,
-behavior, and examples.
-
-**timeframes**
-
-Required. A list containing any of **5minute**, **hourly**, **daily**,
-**weekly**, **monthly**, or **yearly**. Each selected timeframe requires the
-corresponding settings described under [TIMEFRAMES](#timeframes). Timeframe
-names are case-sensitive and each should appear only once. An empty list
-creates no scheduled jobs, but the backup may still be run manually. The
-**immediate** timeframe is reserved for manual backups and is not valid here.
-
-## Timeframes
-
-Timeframes control when scheduled backups run and how many backups are
-retained. Every `*_keep` setting must be an integer greater than zero. After a
-successful backup, yaesm retains at most that many backups for the same backup
-and timeframe. Retention for manual backups is controlled separately by
-**yaesm backup --keep**.
-
-All schedules use the local time zone of the system running yaesm. Values in a
-`*_times` list use 24-hour `HH:MM` notation. Hours range from 00 through 23 and
-minutes from 00 through 59. Quote these values so YAML always treats them as
-times rather than numbers. Every selected list of minutes, times, or days must
-contain at least one value.
-
-Each timeframe is scheduled independently. If two timeframes for the same
-backup select the same time, both jobs may run concurrently. Choose different
-times when concurrent runs are not wanted.
-
-### 5minute
-
-Run every five minutes.
-
-**5minute_keep**
-
-Required positive integer specifying how many five-minute backups to retain.
-
-### hourly
-
-Run every hour at each selected minute.
-
-**hourly_keep**
-
-Required positive integer specifying how many hourly backups to retain.
-
-**hourly_minutes**
-
-Required list of one or more integer minute values from 0 through 59.
-
-### daily
-
-Run every day at each selected time.
-
-**daily_keep**
-
-Required positive integer specifying how many daily backups to retain.
-
-**daily_times**
-
-Required list of one or more quoted `HH:MM` times.
-
-### weekly
-
-Run on every combination of the selected weekdays and times.
-
-**weekly_keep**
-
-Required positive integer specifying how many weekly backups to retain.
-
-**weekly_times**
-
-Required list of one or more quoted `HH:MM` times.
-
-**weekly_days**
-
-Required list of one or more weekday names: **monday**, **tuesday**,
-**wednesday**, **thursday**, **friday**, **saturday**, or **sunday**. Names are
-case-insensitive.
-
-### monthly
-
-Run on every combination of the selected days and times. A day that does not
-exist in a particular month is skipped for that month.
-
-**monthly_keep**
-
-Required positive integer specifying how many monthly backups to retain.
-
-**monthly_times**
-
-Required list of one or more quoted `HH:MM` times.
-
-**monthly_days**
-
-Required list of one or more integer days from 1 through 31.
-
-### yearly
-
-Run on every combination of the selected days and times. Days use their
-position in a non-leap year: 1 is January 1 and 365 is December 31. Day 366 is
-not supported.
-
-**yearly_keep**
-
-Required positive integer specifying how many yearly backups to retain.
-
-**yearly_times**
-
-Required list of one or more quoted `HH:MM` times.
-
-**yearly_days**
-
-Required list of one or more integer days from 1 through 365.
-
-# BACKENDS
-
-A backend determines how backups are created, located, checked, and removed.
-Each backend accepts its own settings and has its own system requirements. See
-[CONFIGURATION](#configuration) for backup names and timeframes.
-
-## SSH settings
-
-Backends that connect to remote systems over SSH may share the following
-settings.
-
-**ssh_key**
-
-Required when a backend uses an SSH target. This must be an absolute path to
-an existing local private-key file used for SSH authentication.
-
-**ssh_config**
-
-Optional. An absolute path to an existing local OpenSSH configuration file.
-When set, the file is passed to OpenSSH with **-F**.
-
-## Path-based backends
-
-The **btrfs** and **rsync** backends operate on local or remote directory paths.
-They share the following path settings and use the SSH settings above when a
-path is remote:
-
-**src_dir**
-
-Required. The directory to back up. This may be an absolute path to an
-existing local directory or an SSH target specification.
-
-**dst_dir**
-
-Required. The directory in which backups are stored. This may be an absolute
-path to an existing local directory or an SSH target specification. Yaesm
-creates backups inside this directory.
-
-Local paths must begin with `/` and must already exist when the configuration
-is read. `~` and environment variables are not expanded.
-
-### Remote sources and destinations
-
-For path-based backends, an SSH target has this form:
-
-```text
-ssh://[pPORT:][USER@]HOST:/ABSOLUTE/PATH
+The configuration file uses YAML 1.1 and is organized around three kinds of top-level entries: one or more backup definitions, optional group definitions, and an optional `settings` section. Each backup definition describes a pipeline, each group definition collects backups and other groups under a single name, and the `settings` section controls behavior shared across backups.
+
+## EXAMPLE CONFIGURATION
+
+The example below shows how the pieces of a yaesm configuration fit together. It deliberately includes several optional features; a basic configuration can be much shorter, and each part is fully explained in the following sections.
+
+```yaml
+settings:
+  ssh:
+    identity_file: /root/.ssh/id_ed25519
+    config_file: /root/.ssh/config
+  scheduler:
+    timezone: America/New_York
+    max_concurrent_backups: 2
+
+primary-backups:
+  group:
+    - encrypted-home
+    - root-snapshots
+
+encrypted-home:
+  previous_names:
+    - home-archive
+  ssh:
+    endpoint: ssh://server.example.com
+  source:
+    directory: /home
+    remote: true
+  transforms:
+    - tar: {}
+      remote: true
+    - zstd: 3
+      remote: true
+    - gpg: /etc/yaesm/backup-key.asc
+      remote: true
+  destination:
+    file: /srv/backups
+  schedules:
+    hourly:
+      previous_names:
+        - frequent
+      cron: "0 * * * *"
+      retention:
+        - keep-last: 24
+        - keep-for: 7d
+    manual:
+      on-demand: {}
+      retention:
+        keep-all: {}
+
+offsite-copy:
+  skip_unchanged: true
+  ssh:
+    endpoint: ssh://backup.example.com
+  source:
+    backup: encrypted-home
+  destination:
+    file: /srv/backups
+    remote: true
+
+root-snapshots:
+  source:
+    btrfs: /
+  destination:
+    btrfs: /.snapshots/yaesm
 ```
 
-The `p` before *PORT* is literal. *USER* and *PORT* are optional. *HOST* may be
-a hostname or an alias from the selected OpenSSH configuration. For example:
+## BACKUP DEFINITIONS
 
-```text
-ssh://backup.example:/srv/backups
-ssh://backup@backup.example:/srv/backups
-ssh://p2222:backup@backup.example:/srv/backups
-```
+Backup definitions are the core of yaesm's configuration: they determine what data is backed up, how it is processed, and where it is stored. Every top-level entry other than `settings` and group definitions is treated as a backup definition. The entry's key is the backup name, and its value is a mapping that defines the backup pipeline and its behavior.
 
-If both **src_dir** and **dst_dir** are remote, they must use the same SSH user,
-host, and port. The backup then runs on that system without transferring its
-data through the system running Yaesm. An explicit **ssh_key** is required even
-if the key is also named in the OpenSSH configuration. Authentication must work
-without interactive input, and the remote host key must already be trusted.
+Backup definitions share a common structure, while the `source`, `transforms`, and `destination` fields select the drivers that make up the pipeline. This section documents the common structure; see [DRIVERS](#drivers) for the settings and supported roles of each driver.
 
-Yaesm rejects invalid SSH target syntax and invalid local key or configuration
-files. Run **yaesm check** to test the connection, remote directory, and backend
-requirements.
+### BACKUP NAMES
 
-## btrfs
+The top-level key of a backup definition is its canonical name. A backup name must contain between 1 and 64 ASCII letters, digits, underscores, or hyphens; its first character cannot be a hyphen. The name `settings` is reserved regardless of capitalization.
 
-The **btrfs** backend accepts the shared path settings above. The source and
-destination must be on btrfs filesystems, and the `btrfs` command must be
-available wherever yaesm operates on them.
+The optional `previous_names` field is a list of earlier names for the backup. These names act as aliases, allowing existing backup artifacts and configuration references to remain associated with the backup after it is renamed. Each previous name follows the same naming rules and must be distinct from the canonical name and every other previous name.
+
+### PIPELINE
+
+Each backup definition requires a `source` and a `destination`. The `source` selects the driver that supplies the data, and the `destination` selects the driver that stores the resulting backup. A source may instead refer to another configured backup, allowing its artifacts to be copied through a new pipeline. Yaesm validates each pipeline while reading the configuration and rejects it if its drivers cannot exchange a compatible form of backup data.
+
+The optional `transforms` field is a list of drivers that process the data between the source and destination, in the order listed. Omitting `transforms` defines a pipeline with no explicit transformations. Each source, transform, and destination driver is selected by a mapping that names one driver and provides its configuration; see [DRIVERS](#drivers) for the available drivers and their settings.
+
+### SSH
+
+The optional `ssh` field configures at most one OpenSSH endpoint for a backup. Each source, transform, or destination driver runs there when configured with `remote: true` and locally otherwise. Pipelines may therefore be local-to-local, local-to-remote, remote-to-local, or remote-to-remote on the same remote system; a pipeline cannot directly connect two different remote systems.
+
+The `ssh` field is a mapping that requires an `endpoint` in the form `ssh://[user@]host[:port]`. The `identity_file` and `config_file` settings may also be specified here, overriding the corresponding defaults from the top-level [`settings`](#settings) section. An `identity_file` must be provided either here or in the defaults.
+
+Yaesm supports only non-interactive OpenSSH public-key authentication; password and private-key passphrase prompts are unavailable.
+
+### SKIP UNCHANGED
+
+The optional `skip_unchanged` field is a boolean that defaults to `false`. When enabled and an earlier artifact exists, yaesm compares the current source with the newest artifact for the backup and skips the pipeline if they are unchanged, regardless of which schedule created that artifact. The destination driver must support change detection. If yaesm cannot determine whether the source changed, it reports a warning and creates the backup normally.
+
+### SCHEDULES
+
+The optional `schedules` field is a mapping of schedule names to schedule definitions. Schedule names follow the same rules as backup names. A schedule may also have a `previous_names` list, which preserves its association with artifacts created under earlier names after the schedule is renamed.
+
+If no on-demand schedule is configured, yaesm implicitly adds an on-demand schedule named `manual` that retains all of its artifacts. The name `manual`, regardless of capitalization, may only identify an on-demand schedule. Omitting `schedules` therefore disables timed backups but still allows the backup to be run manually.
+
+#### SCHEDULE TYPES
+
+Each schedule definition must select exactly one of the following schedule types.
+
+- **`on-demand`**: Defines a schedule with no timer. Its configuration must be an empty mapping, and the schedule runs only when explicitly selected for a manual backup.
+- **`cron`**: Runs the backup when a cron expression matches in the scheduler time zone. Its configuration may be the expression string directly or a mapping containing an `expression` field. The expression contains exactly five whitespace-separated fields in this order: minute, hour, day of month, month, and day of week. Fields accept `*`, comma-separated values, ranges, and `/` steps; months and weekdays may use their three-letter English names. All fields must match. Numeric weekdays run from `0` for Monday through `6` for Sunday. Cron expressions should be quoted so YAML 1.1 treats them as strings.
+
+#### RETENTION
+
+Every explicitly configured schedule requires a `retention` field. Its value may be one retention policy or a nonempty list of policies, with each policy represented by a mapping that selects one policy type. When multiple policies are configured, their results are combined: an artifact is retained if any policy selects it. Retention is applied after a backup artifact is created successfully.
+
+- **`keep-all`**: Retains every artifact created by the schedule. Its configuration must be an empty mapping.
+- **`keep-last`**: Retains the specified positive number of newest artifacts created by the schedule. Its configuration may be the number directly or a mapping containing a `count` field.
+- **`keep-for`**: Retains artifacts created within the specified positive duration. Its configuration may be the duration directly or a mapping containing a `duration` field. A duration is an integer followed by `m`, `h`, `d`, `w`, or `y` for minutes, hours, days, weeks, or 365-day years.
+
+## GROUP DEFINITIONS
+
+Group definitions collect backups and other groups under one name so commands can select them together. A group is a top-level mapping with a single `group` field containing a nonempty list of backup or group names. Group names follow the backup naming rules and cannot duplicate a current or previous backup name.
+
+A group may include other groups, and definitions may appear in any order. Expansion preserves member order and removes duplicate backups. Previous backup names may be used as members; unknown targets and group cycles are configuration errors. A group cannot be used as a backup `source`.
+
+The implicit target `@all` selects every configured backup in definition order and cannot be redefined.
+
+## SETTINGS
+
+The optional `settings` section contains system-wide configuration and defaults shared by backup definitions. Its entries are organized into subsections for the parts of yaesm they configure.
+
+### `ssh`
+
+The optional `ssh` subsection supplies default OpenSSH client settings for backup definitions. A backup can override these defaults in its own `ssh` subsection.
+
+- **`identity_file`**: The absolute path to the private identity file used for OpenSSH authentication. Every backup that uses OpenSSH must specify this setting either here or in its own `ssh` subsection.
+- **`config_file`**: The absolute path to an OpenSSH client configuration file. When specified, yaesm passes the file to OpenSSH with `-F`.
+
+### `scheduler`
+
+The optional `scheduler` subsection configures how scheduled backups are run.
+
+- **`timezone`**: The time zone used to interpret backup schedules and generate the timestamps in backup names. The value must be an IANA time zone name. The default is the system time zone.
+- **`max_concurrent_backups`**: The maximum number of backups that may run concurrently. The value must be a positive integer. The default is `10`.
+
+# DRIVERS
+
+Drivers connect yaesm to backup tools and data formats. A driver may supply source data, transform data, store a destination artifact, or support more than one of these roles. The following sections describe each driver's supported roles, settings, and system requirements.
+
+## directory
+
+The `directory` driver makes an existing local or remote directory tree available as a backup source. It does not create a snapshot or store backup artifacts.
+
+### CONFIGURATION
+
+The `directory` value may be an absolute path or a mapping containing `location`.
+
+- **`location`**: The absolute path of the directory to read.
+
+### PIPELINE ROLES
+
+#### SOURCE
+
+As a source, the `directory` driver supplies the configured directory tree to the pipeline. It is a live view rather than a point-in-time snapshot, so files may change while the pipeline reads them.
+
+## file
+
+The `file` driver makes an existing file available as a byte stream or stores a byte stream as a backup artifact. It may be used locally or remotely as a source or destination.
+
+### CONFIGURATION
+
+The `file` value may be an absolute path or a mapping containing `location`.
+
+- **`location`**: As a source, the absolute path of the file to read. As a destination, the absolute path of the directory beneath which artifact files are stored.
+
+### PIPELINE ROLES
+
+#### SOURCE
+
+As a source, the `file` driver reads the configured file without modifying its contents. It is a live view rather than a point-in-time snapshot, so the file may change while the pipeline reads it.
+
+#### DESTINATION
+
+As a destination, the `file` driver writes the byte stream produced by the pipeline to a new artifact file beneath `location`. Filename suffixes contributed by the source and transformation drivers are preserved. Suffixes accumulate in pipeline order, so `tar` followed by `zstd` and `gpg` produces a filename ending in `.tar.zst.gpg`.
 
 ## rsync
 
-The **rsync** backend accepts the shared path settings above. The `rsync`
-command must be available wherever yaesm operates on the source or destination.
+The `rsync` driver uses the `rsync` utility to create and manage directory-tree backup artifacts. It may be used as a local or remote destination.
 
-**rsync_extra_opts**
+### CONFIGURATION
 
-Optional rsync options, given as a string or a list of strings. Each value is
-split on whitespace and passed to rsync in addition to yaesm's default options.
+The `rsync` value may be an absolute path or a mapping. An absolute path is shorthand for a mapping containing only `location`.
 
-## Examples
+- **`location`**: The absolute path of the directory beneath which backup artifacts are stored.
+- **`exclude`**: An `rsync` exclude pattern or list of exclude patterns. By default, no patterns are excluded.
+- **`one_file_system`**: Whether `rsync` should avoid crossing filesystem boundaries while copying. The default is `false`.
+- **`extra_options`**: Additional options passed to `rsync`, given as a shell-like string or list of shell-like strings. Each string is parsed using shell quoting rules. By default, no additional options are passed.
 
-A local rsync backup using every configurable timeframe:
+### PIPELINE ROLES
+
+#### DESTINATION
+
+As a destination, the `rsync` driver copies the directory tree produced by the pipeline into a new artifact directory beneath `location`. Copies preserve filesystem metadata, symlinks, hard links, ACLs, extended attributes, numeric ownership, and sparse files.
+
+When an earlier compatible `rsync` artifact exists on the same system, yaesm supplies it through `--link-dest`. Rsync then hard-links unchanged files from that artifact instead of storing their data again. Every artifact remains directly browsable as a complete directory tree. The `rsync` driver does not support `skip_unchanged`.
+
+## btrfs
+
+The `btrfs` driver uses the `btrfs` utility to back up Btrfs subvolumes. It can provide a subvolume as a source or store read-only Btrfs snapshots as a destination.
+
+### CONFIGURATION
+
+The `btrfs` value may be an absolute path or a mapping containing `location`.
+
+- **`location`**: As a source, the absolute path of the Btrfs subvolume to back up. As a destination, the absolute path of an existing directory on a Btrfs filesystem beneath which snapshot artifacts are stored.
+
+### PIPELINE ROLES
+
+#### SOURCE
+
+As a source, the `btrfs` driver takes a read-only snapshot of the configured subvolume. The pipeline may read that snapshot as a directory tree or export it as a `btrfs send` stream. Nested subvolumes are not included.
+
+A [`file`](#file) destination may store the full send stream, appending `.btrfs` to the artifact filename. File artifacts are always full send streams, never incremental `-p` streams.
+
+#### DESTINATION
+
+As a destination, the `btrfs` driver stores read-only snapshot artifacts beneath the configured location. When the source is on the same system, yaesm first runs `btrfs subvolume snapshot -r`. If the source is on another system or the snapshot command exits with a failure status, yaesm falls back to piping `btrfs send` into `btrfs receive`.
+
+When matching previous snapshots exist at both ends, the fallback uses `-p` for an incremental transfer. The resulting artifact is still a complete snapshot. A `btrfs` destination accepts only an unmodified Btrfs send stream and supports `skip_unchanged`.
+
+## zfs
+
+The `zfs` driver uses the `zfs` utility to back up ZFS filesystem datasets. It can provide a dataset as a source or store snapshot artifacts in a destination dataset, using `zfs send` and `zfs receive` when a transfer is required.
+
+### CONFIGURATION
+
+The `zfs` value may be a ZFS dataset name or a mapping containing `dataset`.
+
+- **`dataset`**: As a source, the ZFS filesystem dataset to back up. As a destination, the dataset in which snapshot artifacts are stored.
+- **`encryption`**: Whether to preserve native ZFS encryption using raw send streams. The source dataset must already be encrypted. The default is `false`.
+
+### PIPELINE ROLES
+
+#### SOURCE
+
+As a source, the `zfs` driver takes a snapshot of the configured dataset. When the pipeline requires a byte stream, the snapshot is exported with `zfs send`. Child datasets are not included.
+
+A [`file`](#file) destination may store the full send stream, appending `.zfs` to the artifact filename. File artifacts are always full send streams, never incremental `-i` streams.
+
+#### DESTINATION
+
+As a destination, the `zfs` driver stores snapshot artifacts in the configured dataset. When the source is the same dataset on the same system, yaesm creates the snapshot directly. Otherwise, it pipes `zfs send` into `zfs receive`.
+
+When matching previous snapshots exist at both ends, the transfer uses `-i` to send only the changes. The resulting artifact is still a complete snapshot. A `zfs` destination accepts only an unmodified ZFS send stream and supports `skip_unchanged`.
+
+## tar
+
+The `tar` driver uses the `tar` utility to transform a directory tree into an uncompressed POSIX pax archive stream. It does not store the archive itself. The driver works with GNU tar or bsdtar.
+
+### CONFIGURATION
+
+The `tar` value is a mapping with the following optional setting:
+
+- **`one_file_system`**: Whether `tar` should avoid crossing filesystem boundaries while reading the directory tree. The default is `true`.
+
+### PIPELINE ROLES
+
+#### TRANSFORM
+
+As a transform, the `tar` driver reads the directory tree produced by the preceding driver and emits an uncompressed POSIX pax archive stream. Archives preserve filesystem metadata, ACLs, extended attributes, and numeric ownership. When the stream is stored by the [`file`](#file) driver, `.tar` is appended to the artifact filename.
+
+## zstd
+
+The `zstd` driver uses the `zstd` utility to compress a byte stream with Zstandard.
+
+### CONFIGURATION
+
+The `zstd` value may be an integer compression level or a mapping containing `level`.
+
+- **`level`**: An integer from `1` through `19`. Higher levels generally improve compression at the cost of more time and processing. The default is `3`.
+
+### PIPELINE ROLES
+
+#### TRANSFORM
+
+As a transform, the `zstd` driver compresses the byte stream produced by the preceding driver and emits a Zstandard-compressed stream. When it is stored by the [`file`](#file) driver, `.zst` is appended to the artifact filename.
+
+## gpg
+
+The `gpg` driver uses the GnuPG `gpg` utility to encrypt a byte stream with an OpenPGP public key.
+
+### CONFIGURATION
+
+The `gpg` value may be the absolute path of a public-key file or a mapping containing `public_key`.
+
+- **`public_key`**: The absolute path of the OpenPGP public-key file used to encrypt the backup. The path is interpreted on the system where the transform runs, and the key does not need to be imported into a GnuPG keyring.
+
+### PIPELINE ROLES
+
+#### TRANSFORM
+
+As a transform, the `gpg` driver encrypts the byte stream produced by the preceding driver and emits an OpenPGP-encrypted stream. GnuPG's internal compression is disabled; when compression is wanted, a compression transform such as [`zstd`](#zstd) should precede `gpg`. When the stream is stored by the [`file`](#file) driver, `.gpg` is appended to the artifact filename.
+
+# GLOBAL OPTIONS
+
+Global options must appear before the subcommand.
+
+- **`-h`, `--help`**: Show top-level command-line help and exit. Every subcommand accepts the same option to show its own help.
+- **`--version`**: Show the yaesm version and exit.
+- **`-c FILE`, `--config FILE`**: Use `FILE` as the configuration file for subcommands that read it. The default is `/etc/yaesm/config.yaml`.
+- **`--log-level LEVEL`**: Set the minimum logged severity to `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. The default is `INFO`.
+- **`--log-syslog[=ADDRESS]`**: Send logs to the syslog socket at `ADDRESS`. When `ADDRESS` is omitted, `/dev/log` is used.
+- **`--log-stderr`**: Send logs to standard error. Standard error is used automatically when no logging destination is selected.
+- **`--log-file FILE`**: Append logs to `FILE`.
+
+Multiple logging destinations may be selected together.
+
+# SUBCOMMANDS
+
+Where a subcommand accepts `TARGET[,TARGET...]`, each target may name a backup or group. Groups are expanded recursively, and each selected backup is operated on once. The special target `@all` selects every configured backup and cannot be combined with other targets.
+
+## backup
+
+### SYNOPSIS
 
 ```text
-home-backup:
-  backend: rsync
-  src_dir: /home
-  dst_dir: /srv/backups
-  timeframes:
-    - 5minute
-    - hourly
-    - daily
-    - weekly
-    - monthly
-    - yearly
-  5minute_keep: 12
-  hourly_keep: 24
-  hourly_minutes: [1]
-  daily_keep: 7
-  daily_times: ["02:02"]
-  weekly_keep: 4
-  weekly_times: ["03:03"]
-  weekly_days: [sunday]
-  monthly_keep: 12
-  monthly_times: ["04:04"]
-  monthly_days: [1]
-  yearly_keep: 5
-  yearly_times: ["05:06"]
-  yearly_days: [1]
+yaesm [OPTIONS] backup [--schedule SCHEDULE] [--control-socket PATH] TARGET[,TARGET...]
 ```
 
-A btrfs backup sent to a remote destination:
+### DESCRIPTION
+
+The `backup` subcommand asks a running yaesm scheduler to execute the selected backups immediately. It streams their log messages to standard error, waits for every selected backup to finish, and exits unsuccessfully if any backup fails. The scheduler must have been started with [`yaesm run`](#run) and must use the same control socket.
+
+### ARGUMENTS
+
+- **`TARGET[,TARGET...]`**: One or more backup or group names, separated by commas.
+
+### OPTIONS
+
+- **`--schedule SCHEDULE`**: Use the named on-demand schedule for every selected backup. If omitted, each backup must have exactly one on-demand schedule, which yaesm selects automatically.
+- **`--control-socket PATH`**: Connect to the scheduler through this Unix socket. The default is `/run/yaesm/control.sock`.
+
+## check
+
+### SYNOPSIS
 
 ```text
-offsite-home-backup:
-  backend: btrfs
-  src_dir: /home
-  dst_dir: ssh://p2222:backup@backup.example:/srv/backups
-  ssh_key: /root/.ssh/yaesm
-  ssh_config: /root/.ssh/config
-  timeframes: [daily]
-  daily_keep: 7
-  daily_times: ["02:00"]
+yaesm [OPTIONS] check [--config-only] [-q] [TARGET[,TARGET...]]
 ```
+
+### DESCRIPTION
+
+The `check` subcommand verifies that the selected backups are ready to run. It should be used after creating or changing the configuration, before relying on the configured backups, and as the first step when investigating a backup problem. Yaesm first validates the complete configuration, then performs read-only checks to determine whether the selected backup pipelines can run.
+
+The checks depend on the drivers in each pipeline and may cover required utilities, source and destination locations, filesystems, permissions, encryption keys, and OpenSSH installation and connectivity. Each check is reported as `PASS` or `FAIL`. The command exits successfully only when the configuration is valid and every performed check passes.
+
+### ARGUMENTS
+
+- **`TARGET[,TARGET...]`**: Optional backup or group names, separated by commas. The default is `@all`.
+
+### OPTIONS
+
+- **`--config-only`**: Stop after validating the configuration, without running driver checks.
+- **`-q`, `--quiet`**: Show only failed checks.
+
+## find
+
+### SYNOPSIS
+
+```text
+yaesm [OPTIONS] find TARGET[,TARGET...] [QUERY...] [--query QUERY...] [--schedule SCHEDULE[,SCHEDULE...]] [-0]
+```
+
+### DESCRIPTION
+
+The `find` subcommand lists existing backup artifacts for the selected backups. Each result is written to standard output as a destination-specific locator. Results are ordered newest to oldest within each backup. Finding no matching artifacts is successful and produces no output.
+
+### ARGUMENTS
+
+- **`TARGET[,TARGET...]`**: One or more backup or group names, separated by commas.
+- **`QUERY...`**: An optional query selecting artifacts by creation time. Omitting the query is equivalent to `all`.
+
+### QUERIES
+
+Queries are applied separately to each selected backup and use one of the following forms:
+
+- **`all`**: Select every artifact.
+- **`newest`**: Select the newest artifact.
+- **`oldest`**: Select the oldest artifact.
+- **`after TIME`**: Select artifacts created strictly after `TIME`.
+- **`before TIME`**: Select artifacts created strictly before `TIME`.
+- **`between TIME TIME`**: Select artifacts created at or between the two times. The times may be given in either order.
+- **`closest TIME`**: Select the artifact whose creation time is closest to `TIME`. If two artifacts are equally close, the newer one is selected.
+
+### TIME VALUES
+
+`TIME` may be a date in `YYYY-MM-DD` form, a date and time in `YYYY-MM-DDTHH:MM` form, or a time on the current date in `HH:MM` form. A date without a time means midnight. Date-and-time values may include `Z` or an ISO 8601 UTC offset; values without an offset are interpreted in the configured scheduler time zone. Ambiguous local times require an explicit offset, and nonexistent local times are rejected.
+
+A relative time has the form `now-Nm`, `now-Nh`, or `now-Nd`, where `N` is a positive decimal integer without leading zeros and the suffix selects elapsed minutes, hours, or days.
+
+### OPTIONS
+
+- **`-q QUERY...`, `--query QUERY...`**: Add another query. This option may be repeated; an artifact selected by any query is shown once.
+- **`-s SCHEDULE[,SCHEDULE...]`, `--schedule SCHEDULE[,SCHEDULE...]`, `--schedules SCHEDULE[,SCHEDULE...]`**: Limit results to artifacts created by the named schedules. Current or previous schedule names may be used, names may be comma-separated, and the option may be repeated.
+- **`-0`**: Terminate each result with a NUL byte instead of a newline.
+
+## run
+
+### SYNOPSIS
+
+```text
+yaesm [OPTIONS] run [--lockfile FILE] [--control-socket PATH]
+```
+
+### DESCRIPTION
+
+The `run` subcommand starts the yaesm scheduler in the foreground and runs configured timed backups until stopped. It is generally launched and supervised by an init system. It also creates the control socket used by [`yaesm backup`](#backup) to request immediate backups. An exclusive lock prevents more than one scheduler using the same lock file.
+
+### SCHEDULING BEHAVIOR
+
+Executions of the same backup are serialized. An immediate execution, or an occurrence from another schedule for that backup, waits for the current execution to finish. If another timed occurrence of the same scheduled job becomes due while its previous occurrence is still running, the new occurrence is skipped and a warning is logged. Different backups may run concurrently, subject to the configured `max_concurrent_backups` limit.
+
+### OPTIONS
+
+- **`--lockfile FILE`**: Acquire the scheduler lock through `FILE`. The default is `/run/lock/yaesm-run.lock`.
+- **`--control-socket PATH`**: Listen for control requests on this Unix socket. The default is `/run/yaesm/control.sock`; the socket is created with mode `0600`.
+
+### SIGNALS
+
+- **`SIGHUP`**: Reload the configuration file selected by `--config`. A valid configuration becomes active for future scheduled and requested backups without interrupting running backups. If validation fails, the error is logged and the current configuration remains active.
+- **`SIGINT`, `SIGTERM`**: The first signal begins a graceful shutdown. Yaesm stops accepting backups and configuration reloads, lets running backups finish, then closes the control socket and exits. A second signal forcibly terminates running backup commands and causes yaesm to exit unsuccessfully; incomplete temporary or pending artifacts may remain.
+
+An init system should enforce a final stop timeout and forcibly terminate yaesm and its remaining child processes if graceful shutdown exceeds it.
+
+# FILES
+
+- **`/etc/yaesm/config.yaml`**: Default configuration file.
+- **`/run/lock/yaesm-run.lock`**: Default scheduler lock file.
+- **`/run/yaesm/control.sock`**: Default Unix socket used for control requests between `backup` and `run`.
 
 # EXIT STATUS
 
-**0**
+- **`0`**: The requested operation completed successfully.
+- **`1`**: The requested operation failed, a check or backup failed, yaesm encountered an unexpected error, or scheduler shutdown was forced.
+- **`2`**: The command line was invalid.
+- **`78`**: The configuration could not be read or validated.
 
-The command completed successfully. This also applies when **find** has no
-matches and when help or version information is requested.
+# SEE ALSO
 
-**1**
+`ssh(1)`, `ssh_config(5)`, `rsync(1)`, `tar(1)`, `btrfs(8)`, `btrfs-send(8)`, `btrfs-receive(8)`, `zfs(8)`, `zfs-send(8)`, `zfs-receive(8)`, `zstd(1)`, `gpg(1)`
 
-The requested operation failed, a check failed, the scheduler could not run,
-or yaesm encountered an unexpected error.
+# AUTHORS
 
-**2**
-
-The command line was invalid, or **check** or **find** received an invalid
-backup selection or query.
-
-**78**
-
-Yaesm detected a configuration error before running the subcommand.
+Yaesm was developed by Connor Gallivan and Nicholas B. Hubbard through the University of Massachusetts Lowell Open Source Club.
 
 # LICENSE
 
-Yaesm is free software released under the GNU General Public License, version 3
-or later. See the `LICENSE` file distributed with the source code for the full
-license text.
+Yaesm is free software released under the GNU General Public License, version 3 or later. See the `LICENSE` file distributed with yaesm for the full license text.

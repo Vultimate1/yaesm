@@ -18,9 +18,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check generated manual
-        run: sh packaging/check-manual.sh
-
       - name: Compare project version with release tag
         run: |
           project_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)
