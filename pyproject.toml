@@ -41,6 +41,7 @@ yaesm = "yaesm.main:main"
 test = [
     "pytest>=8.3.4",
     "pytest-cov>=7.0.0",
+    "pytest-error-for-skips>=2.0.2",
     "pytest-ruff>=0.4.0",
     "pytest-ty>=0.0.1",
     "freezegun>=1.5.1",
