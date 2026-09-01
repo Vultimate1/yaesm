@@ -23,6 +23,7 @@ def disable_logging_configuration(monkeypatch):
 
 def test_subcommands_are_discovered():
     assert tuple(subcommand.name() for subcommand in main_module._subcommands()) == (
+        "__complete",
         "backup",
         "check",
         "find",
