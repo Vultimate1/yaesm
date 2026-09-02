@@ -147,6 +147,12 @@ Every explicitly configured schedule requires a `retention` field. Its value may
 - **`keep-last`**: Retains the specified positive number of newest artifacts created by the schedule.
 - **`keep-for`**: Retains artifacts created within the specified positive duration. A duration is an integer followed by `m`, `h`, `d`, `w`, or `y` for minutes, hours, days, weeks, or 365-day years.
 
+### ARTIFACT NAMES
+
+Completed artifacts follow the base name pattern `yaesm-{backup_name}-{schedule_name}.{YYYY_MM_DD_HH:MM}.{utc_offset}`. For example, `yaesm-home-hourly.2026_09_01_17:00.m0400` was created at 17:00 at UTC-04:00. The last part of the base name is the UTC offset, with `p` for plus and `m` for minus. Including the offset keeps timestamps unambiguous across daylight saving time transitions and scheduler time-zone changes. Current and previous backup and schedule names are recognized.
+
+File artifacts add format suffixes in pipeline order, such as `.tar.zst.gpg`. Any file or directory whose name starts with `.yaesm` is internal to yaesm and should not normally be modified or removed manually.
+
 ## GROUP DEFINITIONS
 
 Group definitions collect backups and other groups under one name so commands can select them together. A group is a top-level mapping with a single `group` field containing a nonempty list of backup or group names. Group names follow the backup naming rules and cannot duplicate a current or previous backup name.
