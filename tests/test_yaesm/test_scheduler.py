@@ -274,6 +274,40 @@ def test_scheduler_cleans_up_request_when_queueing_fails(monkeypatch):
     assert scheduler._requests == {}
 
 
+def test_requested_jobs_wait_for_worker_capacity(monkeypatch):
+    monkeypatch.setattr(scheduler_module, "BlockingScheduler", BackgroundScheduler)
+    schedule = Schedule("manual", OnDemandSchedule())
+    _first_config, first = configured_backup("first", schedule)
+    _second_config, second = configured_backup("second", schedule)
+    scheduler = Scheduler(
+        Config({"scheduler": {"max_concurrent_backups": 1}}, {"first": first, "second": second})
+    )
+    executions = []
+
+    def execute(backup, *_args):
+        executions.append(backup.name)
+        if backup.name == "first":
+            # Keep the second job queued beyond APScheduler's default grace period.
+            time.sleep(1.1)
+        return mock.Mock()
+
+    monkeypatch.setattr(Backup, "execute", execute)
+    request_id = scheduler.enqueue_targets(("first", "second"))
+    messages = scheduler._requests[request_id].messages
+    get = messages.get
+    scheduler.start()
+    try:
+        # A lost result must fail this test instead of leaving it hanging.
+        with mock.patch.object(messages, "get", side_effect=lambda: get(timeout=5)):
+            responses = tuple(scheduler.request_messages(request_id))
+    finally:
+        scheduler.stop()
+
+    assert executions == ["first", "second"]
+    assert responses[-1] == {"type": "result", "ok": True, "request_id": str(request_id)}
+    assert messages.empty()
+
+
 def test_scheduler_selects_on_demand_schedule():
     config, backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
     scheduler = Scheduler(config)

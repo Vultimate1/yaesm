@@ -281,6 +281,8 @@ class Scheduler:
             ),
             id=job_id,
             name=f"{backup.name} ({schedule_name})",
+            # Manual requests must wait for a worker without expiring.
+            **({"misfire_grace_time": None} if request_id is not None else {}),
         )
 
     def start(self) -> None:
