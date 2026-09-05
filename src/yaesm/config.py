@@ -1,7 +1,7 @@
-"""src/yaesm/config.py."""
+"""Configuration parsing and orchestration."""
 
 import dataclasses
-import re
+import inspect
 from pathlib import Path
 
 import voluptuous as vlp
@@ -9,603 +9,725 @@ import yaml
 
 import yaesm.backup as bckp
 import yaesm.ty as ty
-from yaesm.backend import backendbase
-from yaesm.sshtarget import SSHTarget
-from yaesm.timeframe import tframe_types_configurable
+from yaesm.driver import load_drivers
+from yaesm.driver.driverbase import DriverBase, GlobalSettings
+from yaesm.errors import YaesmError, YaesmValueError
+from yaesm.names import ALL_TARGET_NAME, SETTINGS_NAME
+from yaesm.pipeline import Pipeline
+from yaesm.retention import KeepAll, RetentionPolicyBase
+from yaesm.schedule import OnDemandSchedule, Schedule, ScheduleBase, validate_schedule_name
+from yaesm.scheduler import Scheduler
+from yaesm.ssh import SSHTarget, SSHTargetError
 
 
-@dataclasses.dataclass
-class ConfigErrors(Exception):
-    config_file: str | Path
-    errors: list[ty.Any]
+class _Named(ty.Protocol):
+    @classmethod
+    def name(cls) -> str: ...
 
 
-def parse_config(config_file: str | Path) -> list[bckp.Backup]:
-    """Parse the file `config_file` into a list of `Backup` objects. This is the
-    only function that should be directly used from outside the yaesm.config module.
-    If there are any configuration errors then a `ConfigErrors` exception is raised.
-    """
-    config_file = Path(config_file)
-    if not config_file.is_file():
-        raise ConfigErrors(config_file, [(config_file, "config file does not exist")])
-
-    with open(config_file, encoding="utf-8") as f:
-        try:
-            config_data = yaml.safe_load(f)
-        except yaml.YAMLError as exc:
-            raise ConfigErrors(config_file, [(config_file, exc)]) from exc
-    backup_names = sorted(list(config_data.keys())) if config_data else []
-    if not backup_names:
-        raise ConfigErrors(config_file, [(config_file, "no backups specified")])
-    backup_schema = BackupSchema.schema()
-    backups = []
-    errors = []
-    for backup_name in backup_names:
-        try:
-            backup = backup_schema({backup_name: config_data[backup_name]})
-            backups.append(backup)
-        except vlp.MultipleInvalid as exc:
-            for error in exc.errors:
-                errors += [(backup_name, error)]
-    if errors:
-        raise ConfigErrors(config_file, errors)
-    return backups
-
-
-class Schema:
-    """Base class for all yaesm configuration schema classes."""
-
-    @dataclasses.dataclass
-    class ErrMsg:
-        LOCAL_DIR_INVALID = "Not a complete path to an existing directory"
-        LOCAL_FILE_INVALID = "Not a complete path to an existing file"
-
+class _NamedConfigType(_Named, ty.Protocol):
     @staticmethod
-    def schema() -> vlp.Schema:
-        """The base schema is responsible for doing basic validation and for
-        coercing freshly parsed yaml into usable types.
-        """
-        raise NotImplementedError
-
-    @staticmethod
-    def schema_extra() -> vlp.Schema:
-        """Extra schema is only run in some circumstances. More complicated
-        validation (like testing SSH connectivity) should happen in this schema.
-        This schema should only be applied to data after first applying the 'base_schema'.
-        """
-        return Schema.schema_empty()
-
-    @staticmethod
-    @ty.final
-    def schema_empty() -> vlp.Schema:
-        """A pass-through schema that accepts any input and returns it back unchanged."""
-        return vlp.Schema(lambda x: x)
-
-    @staticmethod
-    def is_file(s: Path | str) -> Path:
-        """Validator to ensure `s` is a string or Path representing a full path
-        to a regular file (not directory) on the system, and if so returns `s`
-        as a Path.
-        """
-        if not s or str(s)[0] != "/" or not Path(s).is_file():
-            raise vlp.Invalid(Schema.ErrMsg.LOCAL_FILE_INVALID)
-        return Path(s)
-
-    @staticmethod
-    def is_dir(s: Path | str) -> Path:
-        """Validator to ensure `s` is a string or Path representing a full path
-        to an existing directory on the system, and if so returns `s` as a Path.
-        """
-        if not s or str(s)[0] != "/" or not Path(s).is_dir():
-            raise vlp.Invalid(Schema.ErrMsg.LOCAL_DIR_INVALID)
-        return Path(s)
+    def config_schema() -> vlp.Schema: ...
 
 
-class BackupSchema(Schema):
-    """BackupSchema is the top-level concrete Schema class."""
+class GlobalSettingsComponent(ty.Protocol):
+    """A component that owns a section of global configuration."""
 
-    @dataclasses.dataclass
-    class ErrMsg:
-        NOT_1_BACKUP = "Not given exactly 1 backup"
-        INVALID_BACKUP_NAME = "Not a valid backup name"
-        UNKNOWN_SETTING = "Unknown configuration setting"
-        INVALID_SETTINGS = "Backup settings must be a mapping of setting names to values"
+    global_settings_key: ty.ClassVar[str]
+    global_settings_schema: ty.ClassVar[vlp.Schema]
 
-    @staticmethod
-    def schema() -> vlp.Schema:
-        """Voluptuous schema that combines together all the other sub-schemas
-        to produce an actual `Backup` object. This is the only schema that is
-        directly used by the `parse_config` function.
-        """
-        return vlp.Schema(
-            vlp.All(
-                dict,
-                BackupSchema._ensure_single_backup,
-                BackupSchema._ensure_backup_name_valid,
-                BackupSchema._apply_sub_schemas,
-                BackupSchema._promote_to_backup_object,
-            )
-        )
 
-    @staticmethod
-    def _reject_unknown_settings(d: dict) -> dict:
-        """Raise a `vlp.Invalid` if the backup settings contain any keys that
-        are not recognized by any schema class or backend.
-        """
-        backup_name = list(d.keys())[0]
-        backup_settings = d[backup_name]
-        valid = BackendSchema.valid_settings() | TimeframeSchema.valid_settings()
-        backend_name = backup_settings.get("backend", "")
-        for cls in backendbase.BackendBase.backend_classes():
-            if cls.name() == backend_name:
-                valid |= cls.config_settings()
-                break
+_NamedType = ty.TypeVar("_NamedType", bound=_Named)
+_NamedConfigTypeT = ty.TypeVar("_NamedConfigTypeT", bound=_NamedConfigType)
+_GLOBAL_SETTINGS_COMPONENTS: tuple[type[GlobalSettingsComponent], ...] = (
+    SSHTarget,
+    Scheduler,
+)
+
+load_drivers()
+
+
+# Configuration model
+
+
+class ConfigError(YaesmError):
+    """Raised when yaesm configuration is invalid."""
+
+    def __init__(self, messages: str | ty.Sequence[str]) -> None:
+        self.messages = (messages,) if isinstance(messages, str) else tuple(messages)
+        super().__init__(*self.messages)
+
+    def format(self) -> str:
+        """Format one error directly or multiple errors as a list."""
+        if len(self.messages) == 1:
+            return self.messages[0]
+        return "configuration errors:\n" + "\n".join(f"  - {message}" for message in self.messages)
+
+    def __str__(self) -> str:
+        return self.format()
+
+
+class BackupTargetError(YaesmValueError):
+    """Raised when a requested backup target does not exist."""
+
+
+def _collect_messages(messages: list[str], error: YaesmError, prefix: str = "") -> None:
+    errors = error.messages if isinstance(error, ConfigError) else (error.format(),)
+    messages.extend(f"{prefix}{message}" for message in errors)
+
+
+@dataclasses.dataclass(frozen=True)
+class BackupGroup:
+    """A named, ordered collection of backup targets."""
+
+    name: str
+    members: tuple[str, ...]
+    _system: dataclasses.InitVar[bool] = False
+
+    def __post_init__(self, _system: bool) -> None:
+        messages = []
+        if _system:
+            if self.name != ALL_TARGET_NAME:
+                messages.append(f"invalid system group name: {self.name!r}")
         else:
-            return d
-        unknown = sorted(set(backup_settings.keys()) - valid)
-        if unknown:
-            raise vlp.Invalid(BackupSchema.ErrMsg.UNKNOWN_SETTING + f"\n\t{unknown}")
-        return d
-
-    @staticmethod
-    def _apply_sub_schemas(d: dict) -> dict:
-        """Apply the common and selected backend schemas to `d`, mutating it.
-
-        Collect all errors and raise `vlp.MultipleInvalid` if any are found.
-        Only call this after ensuring `d` contains one backup.
-        """
-        backup_name = list(d.keys())[0]
-        backup_settings = d[backup_name]
-        if not isinstance(backup_settings, dict):
-            raise vlp.Invalid(BackupSchema.ErrMsg.INVALID_SETTINGS)
-        errors = []
-        try:
-            BackupSchema._reject_unknown_settings(d)
-        except vlp.Invalid as exc:
-            errors.append(exc)
-        for schema_class in [BackendSchema, TimeframeSchema]:
-            schema = schema_class.schema()
             try:
-                backup_settings = schema(backup_settings)
-                if schema_class == BackendSchema:
-                    backend_schema = type(backup_settings["backend"]).config_schema()
-                    backup_settings = backend_schema(backup_settings)
-            except vlp.MultipleInvalid as exc:
-                errors += exc.errors
-            except vlp.Invalid as exc:
-                errors.append(exc)
-        if errors:
-            raise vlp.MultipleInvalid(errors)
-        d[backup_name] = backup_settings
-        return d
-
-    @staticmethod
-    def _promote_to_backup_object(d: dict) -> bckp.Backup:
-        """Promote the backup spec dictionary `d` to an actual `Backup`
-        object. This function should only be called after all other validation
-        has taken place to ensure we have a valid backup spec.
-        """
-        backup_name = list(d.keys())[0]
-        backup_settings = d[backup_name]
-        backend_obj = backup_settings["backend"]
-        timeframes = backup_settings["timeframes"]
-        return bckp.Backup(backup_name, backend_obj, timeframes)
-
-    @staticmethod
-    def _ensure_single_backup(d: dict) -> dict:
-        """Validator to ensure that `d` is a dict with a single key (i.e. just one backup)."""
-        if not len(d) == 1:
-            raise vlp.Invalid(BackupSchema.ErrMsg.NOT_1_BACKUP)
-        return d
-
-    @staticmethod
-    def _ensure_backup_name_valid(d: dict) -> dict:
-        """Ensure that the single key in the dict `d` is a string denoting a valid
-        backup name. Should only be called after first calling `_ensure_single_backup`.
-        """
-        backup_name = list(d.keys())[0]
-        if not bckp.backup_name_valid(backup_name):
-            raise vlp.Invalid(BackupSchema.ErrMsg.INVALID_BACKUP_NAME)
-        return d
+                bckp.validate_backup_name(self.name)
+            except YaesmValueError as error:
+                messages.append(f"invalid group name: {self.name!r} ({error})")
+        if not _system and not self.members:
+            messages.append("group must contain at least one target")
+        for member in self.members:
+            try:
+                bckp.validate_backup_name(member)
+            except YaesmValueError as error:
+                messages.append(f"invalid group member name: {member!r} ({error})")
+        if messages:
+            raise ConfigError(messages)
 
 
-class BackendSchema(Schema):
-    """Validate a backend name and replace it with a backend instance."""
+BackupTarget: ty.TypeAlias = bckp.Backup | BackupGroup
 
-    @dataclasses.dataclass
-    class ErrMsg:
-        INVALID_BACKEND_NAME = "Not a valid backend name"
 
-    @staticmethod
-    def valid_settings() -> set[str]:
-        return {"backend"}
+@dataclasses.dataclass(frozen=True)
+class Config:
+    """Parsed global settings, backups, and backup groups."""
 
-    @staticmethod
-    def schema() -> vlp.Schema:
-        """Return a schema that promotes a valid backend name to an instance."""
-        return vlp.Schema(
-            vlp.All(
-                {
-                    vlp.Required("backend"): vlp.In(
-                        [cls.name() for cls in backendbase.BackendBase.backend_classes()],
-                        msg=BackendSchema.ErrMsg.INVALID_BACKEND_NAME,
+    global_settings: GlobalSettings
+    backups: dict[str, bckp.Backup]
+    groups: dict[str, BackupGroup] = dataclasses.field(default_factory=dict)
+    backups_by_name: dict[str, bckp.Backup] = dataclasses.field(
+        init=False, repr=False, compare=False
+    )
+    targets_by_name: dict[str, BackupTarget] = dataclasses.field(
+        init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        messages = []
+        backups_by_name: dict[str, bckp.Backup] = {}
+        for backup in self.backups.values():
+            for name in backup.names:
+                if owner := backups_by_name.get(name):
+                    messages.append(
+                        f"backup name {name!r} is used by both {owner.name!r} and {backup.name!r}"
                     )
-                },
-                BackendSchema._dict_promote_backend_name_to_backend_instance,
-            ),
-            extra=vlp.ALLOW_EXTRA,
-        )
-
-    @staticmethod
-    def _dict_promote_backend_name_to_backend_instance(d: dict) -> dict:
-        """Promote a backend name to an instance of its backend class."""
-        backend_name = d["backend"]
-        for backend_class in backendbase.BackendBase.backend_classes():
-            if backend_name == backend_class.name():
-                d["backend"] = backend_class()  # Create an instance!
-                break
-        return d
-
-
-class TimeframeSchema(Schema):
-    """Voluptuous schema and validator for timeframe configuration."""
-
-    @dataclasses.dataclass
-    class ErrMsg:
-        SETTING_MISSING = "A setting required by one of your timeframe types is missing"
-        TIME_MALFORMED = "Not a valid time specification"
-        HOUR_OUT_OF_RANGE = "Hour portion of time specification not within range [0, 23]"
-        MINUTE_OUT_OF_RANGE = "Minute portion of time specification not within range [0, 59]"
-        INVALID_KEEP = "Invalid *_keep settings not a positive integer"
-
-    # Be Scared, BE AFRAID!!! Due to an oversight, devs must ensure the settings for
-    # each key are in the same order as they appear in the Timeframe class'
-    # constructor. Fix this when convenient.
-    REQUIRED_SETTINGS = {
-        "5minute": ["5minute_keep"],
-        "hourly": ["hourly_keep", "hourly_minutes"],
-        "daily": ["daily_keep", "daily_times"],
-        "weekly": ["weekly_keep", "weekly_times", "weekly_days"],
-        "monthly": ["monthly_keep", "monthly_times", "monthly_days"],
-        "yearly": ["yearly_keep", "yearly_times", "yearly_days"],
-    }
-
-    @staticmethod
-    def valid_settings() -> set[str]:
-        settings = {"timeframes"}
-        for tf_settings in TimeframeSchema.REQUIRED_SETTINGS.values():
-            settings.update(tf_settings)
-        return settings
-
-    @staticmethod
-    def schema() -> vlp.Schema:
-        """Voluptuous Schema to validate timeframe configs.
-
-        This Schema is meant to be applied to a `dict` containing the freshly parsed values
-        for the backup. This returns a `dict` which preserves the keys, but will modify any
-        '*_times' settings to a pair of `int` representing the hour and minute. Assuming all
-        prior tests pass, the 'timeframes' key will have its value replaced with a list of
-        `Timeframe`.
-
-        This schema implements the following checks:
-            * 'timeframes' is a `list` and contains only valid timeframe types
-            * for every type listed in 'timeframes', check that the required settings have been
-              provided
-            * all '*_keep' settings are an `int` and no less than 0
-            * 'hourly_minutes' (if given) contains `int`'s within the range of 0-59, inclusive
-            * all '*_times' settings contain correctly formatted timespecs (`hh-mm`), each with
-              valid hour and minute part (this tool uses military time)
-            * 'weekly_days' (if given) contains only valid weekdays (not case sensitive)
-            * 'monthly_days' (if given) contains only days found within *any* month, that is,
-              1-31. Be advised that months that do *not* contain a given day are skipped. For
-              example: a timeframe with a month day of 29 only makes a backup in February on
-              leap years.
-            * 'yearly_days' (if given) contains a valid day within the range 1-365 (TODO: Add
-              support for leap years with 366 days.)
-        """
-        return vlp.Schema(
-            vlp.All(
-                {
-                    vlp.Required("timeframes"): vlp.All(
-                        list,
-                        [vlp.All(vlp.In(tframe_types_configurable(names=True)))],
-                    )
-                },
-                TimeframeSchema.has_required_settings,
-                TimeframeSchema._keeps_are_positive_ints,
-                {
-                    "hourly_minutes": [vlp.All(int, vlp.Range(min=0, max=59))],
-                    vlp.Optional("daily_times"): vlp.All(
-                        TimeframeSchema.are_valid_timespecs,
-                        TimeframeSchema.are_valid_hours,
-                        TimeframeSchema.are_valid_minutes,
-                    ),
-                    vlp.Optional("weekly_times"): vlp.All(
-                        TimeframeSchema.are_valid_timespecs,
-                        TimeframeSchema.are_valid_hours,
-                        TimeframeSchema.are_valid_minutes,
-                    ),
-                    vlp.Optional("monthly_times"): vlp.All(
-                        TimeframeSchema.are_valid_timespecs,
-                        TimeframeSchema.are_valid_hours,
-                        TimeframeSchema.are_valid_minutes,
-                    ),
-                    vlp.Optional("yearly_times"): vlp.All(
-                        TimeframeSchema.are_valid_timespecs,
-                        TimeframeSchema.are_valid_hours,
-                        TimeframeSchema.are_valid_minutes,
-                    ),
-                    "weekly_days": [
-                        vlp.All(
-                            vlp.Lower,
-                            vlp.In(
-                                [
-                                    "monday",
-                                    "tuesday",
-                                    "wednesday",
-                                    "thursday",
-                                    "friday",
-                                    "saturday",
-                                    "sunday",
-                                ]
-                            ),
-                        )
-                    ],
-                    "monthly_days": [vlp.All(int, vlp.Range(min=1, max=31))],
-                    "yearly_days": [vlp.All(int, vlp.Range(min=1, max=365))],
-                },
-                TimeframeSchema._promote_timeframes_spec_to_list_of_timeframes,
-            ),
-            extra=vlp.ALLOW_EXTRA,
-        )
-
-    @staticmethod
-    def has_required_settings(spec: dict) -> dict:
-        """Takes the `spec` passed to the schema.
-
-        Raises a `voluptuous.Invalid` if not all the settings for the given timeframe
-        types are present.
-        """
-        for tf_type in spec["timeframes"]:
-            missing_settings = list(
-                filter(lambda s: s not in spec, TimeframeSchema.REQUIRED_SETTINGS[tf_type])
-            )
-            if len(missing_settings) > 0:
-                raise vlp.Invalid(
-                    TimeframeSchema.ErrMsg.SETTING_MISSING + f"\n\t{tf_type}: {missing_settings}"
-                )
-        return spec
-
-    @staticmethod
-    def are_valid_timespecs(spec: list[int | str]) -> list[tuple[int, int]]:
-        """Takes a list of supposed timespecs. Returns a list of hour:minute pairings if
-        successful. This does NOT check if the hour and minute parts are valid, use
-        `are_valid_hours` and `are_valid_minutes` to do this.
-
-        Accepts integers (base-60, as produced by PyYAML from unquoted 'HH:MM' values)
-        or strings in 'HH:MM' format (as produced by PyYAML from quoted timespecs).
-
-        Raises `voluptuous.Invalid` if a timespec is formatted incorrectly, or if the minute or
-        hour parts cannot be converted to `int`.
-        """
-        res: list[tuple[int, int]] = []
-        for timespec in spec:
-            if isinstance(timespec, int):
-                res.append((timespec // 60, timespec % 60))
-            else:
-                timespec_re = re.compile("([0-9]{2}):([0-9]{2})")
-                if re_result := timespec_re.match(timespec):
-                    res.append((int(re_result.group(1)), int(re_result.group(2))))
                 else:
-                    raise vlp.Invalid(
-                        TimeframeSchema.ErrMsg.TIME_MALFORMED
-                        + f"\n\tExpected format 'hh:mm', got {timespec}"
+                    backups_by_name[name] = backup
+
+        groups = dict(self.groups)
+        groups[ALL_TARGET_NAME] = BackupGroup(
+            ALL_TARGET_NAME,
+            tuple(backup.name for backup in self.backups.values()),
+            _system=True,
+        )
+        targets_by_name: dict[str, BackupTarget] = dict(backups_by_name)
+        for group in groups.values():
+            if owner := targets_by_name.get(group.name):
+                messages.append(
+                    f"target name {group.name!r} is used by both "
+                    f"{_describe_target(owner)} and group {group.name!r}"
+                )
+            else:
+                targets_by_name[group.name] = group
+
+        messages.extend(_validate_backup_groups(groups, targets_by_name))
+        if messages:
+            raise ConfigError(messages)
+        object.__setattr__(self, "groups", groups)
+        object.__setattr__(self, "backups_by_name", backups_by_name)
+        object.__setattr__(self, "targets_by_name", targets_by_name)
+
+    def backups_for_targets(self, *names: str) -> tuple[bckp.Backup, ...]:
+        """Return backups for named targets in order, removing duplicates."""
+        backups: dict[str, bckp.Backup] = {}
+
+        def expand(name: str) -> None:
+            target = self.targets_by_name.get(name)
+            if target is None:
+                raise BackupTargetError(f"unknown backup target: {name!r}")
+            if isinstance(target, bckp.Backup):
+                backups.setdefault(target.name, target)
+                return
+            for member in target.members:
+                expand(member)
+
+        for name in names:
+            expand(name)
+        return tuple(backups.values())
+
+
+def _describe_target(target: BackupTarget) -> str:
+    kind = "backup" if isinstance(target, bckp.Backup) else "group"
+    return f"{kind} {target.name!r}"
+
+
+def _validate_backup_groups(
+    groups: ty.Mapping[str, BackupGroup],
+    targets_by_name: ty.Mapping[str, BackupTarget],
+) -> tuple[str, ...]:
+    messages = []
+    visiting: list[str] = []
+    visited = set()
+
+    for group in groups.values():
+        for member in group.members:
+            if member not in targets_by_name:
+                messages.append(f"group {group.name!r} references unknown target {member!r}")
+
+    def visit(group: BackupGroup) -> None:
+        if group.name in visiting:
+            cycle = (*visiting[visiting.index(group.name) :], group.name)
+            messages.append(f"backup group cycle: {' -> '.join(cycle)}")
+            return
+        if group.name in visited:
+            return
+        visiting.append(group.name)
+        for member in group.members:
+            target = targets_by_name.get(member)
+            if isinstance(target, BackupGroup):
+                visit(target)
+        visiting.pop()
+        visited.add(group.name)
+
+    for group in groups.values():
+        visit(group)
+    return tuple(dict.fromkeys(messages))
+
+
+# Top-level parsing
+
+
+def parse_config(value: object) -> Config:
+    """Parse a YAML file or configuration data."""
+    if isinstance(value, str | Path):
+        path = Path(value)
+        try:
+            value = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except OSError as error:
+            raise ConfigError(f"could not read configuration file {path}: {error}") from error
+        except yaml.YAMLError as error:
+            raise ConfigError(f"invalid YAML in configuration file {path}: {error}") from error
+
+    if not isinstance(value, dict):
+        raise ConfigError("configuration must be a mapping")
+
+    messages = []
+    try:
+        global_settings = _parse_global_settings(value.get(SETTINGS_NAME, {}))
+    except ConfigError as error:
+        messages.extend(error.messages)
+        global_settings = {}
+
+    definition_is_group = {
+        name: _is_group_definition(definition)
+        for name, definition in value.items()
+        if isinstance(name, str) and name != SETTINGS_NAME
+    }
+    group_names = {name for name, is_group in definition_is_group.items() if is_group}
+    backup_names = set(definition_is_group) - group_names
+
+    backups = {}
+    groups = {}
+    for name, definition in value.items():
+        if name == SETTINGS_NAME:
+            continue
+        if not isinstance(name, str):
+            messages.append("backup names must be strings")
+            continue
+        is_group = definition_is_group[name]
+        kind = "group" if is_group else "backup"
+        try:
+            if is_group:
+                groups[name] = _parse_backup_group(name, definition)
+            else:
+                backups[name] = _parse_backup(name, definition, global_settings)
+        except YaesmError as error:
+            _collect_messages(messages, error, f"{kind} {name!r}: ")
+
+    if not backup_names:
+        messages.append("at least one backup is required")
+
+    config = None
+    if not messages:
+        try:
+            config = Config(global_settings, backups, groups)
+        except ConfigError as error:
+            messages.extend(error.messages)
+    if config is not None:
+        try:
+            _validate_backup_sources(
+                backups,
+                backup_names,
+                group_names,
+                config.backups_by_name,
+            )
+        except ConfigError as error:
+            messages.extend(error.messages)
+    if messages:
+        raise ConfigError(messages)
+    assert config is not None
+    return config
+
+
+def _is_group_definition(value: object) -> bool:
+    return isinstance(value, dict) and "group" in value
+
+
+def _parse_backup_group(name: str, value: object) -> BackupGroup:
+    assert isinstance(value, dict) and "group" in value
+    messages = []
+    group = None
+    if unknown := sorted(value.keys() - {"group"}, key=str):
+        messages.append(f"unknown settings: {', '.join(str(item) for item in unknown)}")
+
+    members = value["group"]
+    if not isinstance(members, list):
+        messages.append("group must be a list")
+    else:
+        try:
+            group = BackupGroup(name, ty.cast(tuple[str, ...], tuple(members)))
+        except ConfigError as error:
+            messages.extend(error.messages)
+
+    if messages:
+        raise ConfigError(messages)
+    assert group is not None
+    return group
+
+
+def _parse_global_settings(value: object) -> GlobalSettings:
+    if not isinstance(value, dict):
+        raise ConfigError("settings must be a mapping")
+    if any(not isinstance(name, str) for name in value):
+        raise ConfigError("setting names must be strings")
+
+    schema = vlp.Schema(
+        {
+            vlp.Optional(component.global_settings_key): component.global_settings_schema
+            for component in _GLOBAL_SETTINGS_COMPONENTS
+        }
+    )
+    try:
+        return ty.cast(GlobalSettings, schema(value))
+    except vlp.MultipleInvalid as error:
+        raise ConfigError([f"invalid settings: {message}" for message in error.errors]) from error
+
+
+# Backup parsing
+
+
+def _parse_backup(
+    name: str,
+    value: object,
+    global_settings: GlobalSettings,
+) -> bckp.Backup:
+    if not isinstance(value, dict):
+        raise ConfigError("settings must be a mapping")
+
+    messages = []
+    required = {"source", "destination"}
+    allowed = required | {
+        "previous_names",
+        "schedules",
+        "skip_unchanged",
+        "ssh",
+        "transforms",
+    }
+    if missing := sorted(required - value.keys()):
+        messages.append(f"missing required settings: {', '.join(missing)}")
+    if unknown := sorted(value.keys() - allowed, key=str):
+        messages.append(f"unknown settings: {', '.join(str(item) for item in unknown)}")
+
+    try:
+        previous_names = _parse_previous_names(
+            name,
+            value.get("previous_names", []),
+            bckp.validate_backup_name,
+            "backup",
+        )
+    except ConfigError as error:
+        _collect_messages(messages, error)
+        previous_names = ()
+
+    ssh = None
+    if "ssh" in value:
+        try:
+            ssh_defaults = global_settings.get(SSHTarget.global_settings_key, {})
+            assert isinstance(ssh_defaults, dict)
+            ssh = SSHTarget.from_config(value["ssh"], ssh_defaults)
+        except SSHTargetError as error:
+            messages.append(error.format())
+            raise ConfigError(messages) from error
+
+    source = None
+    if "source" in value:
+        try:
+            source = _parse_source(value["source"], global_settings, ssh)
+        except YaesmError as error:
+            _collect_messages(messages, error)
+
+    destination = None
+    if "destination" in value:
+        try:
+            destination = _parse_driver(
+                value["destination"],
+                "destination",
+                global_settings,
+                ssh,
+            )
+            _validate_destination(destination)
+        except YaesmError as error:
+            _collect_messages(messages, error)
+
+    try:
+        transforms = _parse_transforms(value.get("transforms", []), global_settings, ssh)
+    except YaesmError as error:
+        _collect_messages(messages, error)
+        transforms = ()
+
+    try:
+        schedules, retention = parse_schedules(value.get("schedules", {}))
+    except YaesmError as error:
+        _collect_messages(messages, error)
+        schedules = ()
+        retention = ()
+
+    skip_unchanged = value.get("skip_unchanged", False)
+    if not isinstance(skip_unchanged, bool):
+        messages.append("skip_unchanged must be a boolean")
+
+    if messages:
+        raise ConfigError(messages)
+    assert source is not None and destination is not None
+    backup = bckp.Backup(
+        name,
+        source,
+        destination,
+        transforms,
+        schedules,
+        retention,
+        previous_names=previous_names,
+        skip_unchanged=skip_unchanged,
+    )
+
+    if isinstance(source, DriverBase):
+        Pipeline(source, destination, transforms)
+    return backup
+
+
+def _parse_source(
+    value: object,
+    global_settings: GlobalSettings,
+    ssh: SSHTarget | None,
+) -> DriverBase | bckp.BackupSource:
+    if isinstance(value, dict) and set(value) == {"backup"}:
+        return bckp.BackupSource(value["backup"])
+    return _parse_driver(value, "source", global_settings, ssh)
+
+
+def _parse_transforms(
+    value: object,
+    global_settings: GlobalSettings,
+    ssh: SSHTarget | None,
+) -> tuple[DriverBase, ...]:
+    if not isinstance(value, list):
+        raise ConfigError("transforms must be a list")
+    transforms = []
+    messages = []
+    for index, definition in enumerate(value, start=1):
+        try:
+            transforms.append(_parse_driver(definition, f"transform {index}", global_settings, ssh))
+        except YaesmError as error:
+            _collect_messages(messages, error)
+    if messages:
+        raise ConfigError(messages)
+    return tuple(transforms)
+
+
+def _parse_driver(
+    value: object,
+    label: str,
+    global_settings: GlobalSettings,
+    ssh: SSHTarget | None,
+) -> DriverBase:
+    remote = False
+    if isinstance(value, dict) and ("driver" in value or "remote" in value):
+        if "driver" not in value:
+            raise ConfigError(f"{label} expanded definition requires driver")
+        if unknown := sorted(value.keys() - {"driver", "remote"}, key=str):
+            raise ConfigError(
+                f"{label} has unknown settings: {', '.join(str(item) for item in unknown)}"
+            )
+        remote = value.get("remote", False)
+        if not isinstance(remote, bool):
+            raise ConfigError(f"{label} remote must be a boolean")
+        value = value["driver"]
+
+    driver_type, config = _parse_named_config(value, DriverBase, label, "driver")
+    if remote and ssh is None:
+        raise ConfigError(f"{label} remote requires backup SSH configuration")
+
+    constructor = ty.cast(ty.Callable[..., DriverBase], driver_type)
+    if remote:
+        config["ssh"] = ssh
+    return constructor(**config, global_settings=global_settings)
+
+
+def _validate_destination(driver: DriverBase) -> None:
+    capabilities = driver.capabilities()
+    missing = {"list", "delete"} - capabilities
+    if missing:
+        raise ConfigError(
+            f"destination driver {driver.name()} does not provide: {', '.join(sorted(missing))}"
+        )
+    if not {"store", "import"} & driver.pipeline_capabilities():
+        raise ConfigError(f"destination driver {driver.name()} cannot store backup artifacts")
+
+
+# Cross-backup validation
+
+
+def _validate_backup_sources(
+    backups: ty.Mapping[str, bckp.Backup],
+    declared_names: set[str],
+    declared_group_names: set[str],
+    backups_by_name: ty.Mapping[str, bckp.Backup],
+) -> None:
+    messages = []
+    visiting = []
+    visited = set()
+
+    def visit(name: str) -> None:
+        if name in visiting:
+            cycle = (*visiting[visiting.index(name) :], name)
+            messages.append(f"backup source cycle: {' -> '.join(cycle)}")
+            return
+        if name in visited:
+            return
+        visiting.append(name)
+        source = backups[name].source
+        if isinstance(source, bckp.BackupSource):
+            source_name = source.backup_name
+            source_backup = backups_by_name.get(source_name)
+            if source_backup is not None:
+                visit(source_backup.name)
+                try:
+                    Pipeline.validate_replication(
+                        source_backup.destination,
+                        backups[name].destination,
+                        backups[name].transforms,
                     )
-        return res
+                except YaesmError as error:
+                    _collect_messages(messages, error, f"backup {name!r}: ")
+                source_ssh = source_backup.destination.ssh
+                backup_ssh = next(
+                    (
+                        driver.ssh
+                        for driver in (backups[name].destination, *backups[name].transforms)
+                        if driver.ssh is not None
+                    ),
+                    None,
+                )
+                if source_ssh is not None and backup_ssh is not None and source_ssh != backup_ssh:
+                    messages.append(
+                        f"backup {name!r} and source backup {source_backup.name!r} "
+                        "use different SSH configurations"
+                    )
+            elif source_name in declared_group_names:
+                messages.append(
+                    f"backup {name!r} references group {source_name!r} as its source; "
+                    "backup sources must reference a backup"
+                )
+            elif source_name not in declared_names:
+                messages.append(f"backup {name!r} references unknown source backup {source_name!r}")
+        visiting.pop()
+        visited.add(name)
 
-    @staticmethod
-    def _keeps_are_positive_ints(spec: dict) -> dict:
-        bad_keeps = []
-        for setting in [
-            "5minute_keep",
-            "hourly_keep",
-            "daily_keep",
-            "weekly_keep",
-            "monthly_keep",
-            "yearly_keep",
-        ]:
-            if setting in spec:
-                keep = spec[setting]
-                if not isinstance(keep, int) or isinstance(keep, bool) or keep < 1:
-                    bad_keeps.append(setting)
-        if bad_keeps:
-            raise vlp.Invalid(TimeframeSchema.ErrMsg.INVALID_KEEP + f":\n\t{bad_keeps}")
-        return spec
+    for name in backups:
+        visit(name)
+    if messages:
+        raise ConfigError(messages)
 
-    @staticmethod
-    def are_valid_hours(spec: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        """Takes a list of hour:minute pairings.
 
-        Raises `voluptuous.Invalid` if the hour part is not within the accepted range.
-        """
-        for time in spec:
-            if time[0] < 0 or time[0] > 23:
-                raise vlp.Invalid(TimeframeSchema.ErrMsg.HOUR_OUT_OF_RANGE + f"\n\tGot {time}")
-        return spec
+# Schedule and retention parsing
 
-    @staticmethod
-    def are_valid_minutes(spec: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        """Takes a list of hour:minute pairings.
 
-        Raises `voluptuous.Invalid` if the minute part is not within the accepted range.
-        """
-        for time in spec:
-            if time[1] < 0 or time[1] > 59:
-                raise vlp.Invalid(TimeframeSchema.ErrMsg.MINUTE_OUT_OF_RANGE + f"\n\tGot {time}")
-        return spec
+def parse_schedules(
+    value: object,
+) -> tuple[tuple[Schedule, ...], tuple[RetentionPolicyBase, ...]]:
+    """Parse named schedules and their nested retention policies."""
+    if not isinstance(value, dict):
+        raise ConfigError("schedules must be a mapping")
 
-    @staticmethod
-    def _promote_timeframes_spec_to_list_of_timeframes(spec: dict) -> dict:
-        """Maintains the 'timeframes' key, but replaces its value with a list of
-        `yaesm.timeframe.Timeframe`.
+    schedules = []
+    policies = []
+    messages = []
+    for schedule_name, definition in value.items():
+        try:
+            try:
+                validate_schedule_name(schedule_name)
+            except YaesmValueError as error:
+                raise ConfigError(f"invalid schedule name: {schedule_name!r} ({error})") from error
+            schedule, retention = _parse_schedule(schedule_name, definition)
+            if schedule_name.casefold() == "manual" and not isinstance(
+                schedule.trigger, OnDemandSchedule
+            ):
+                raise ConfigError(f"schedule {schedule_name!r} must be on-demand")
+            schedules.append(schedule)
+            policies.extend(retention)
+        except YaesmError as error:
+            _collect_messages(messages, error)
 
-        The value paired with 'timeframes' in `spec` is assumed to be entirely valid.
-        """
-        timeframe_dict = dict(
-            zip(
-                tframe_types_configurable(names=True),
-                tframe_types_configurable(),
-                strict=True,
+    if messages:
+        raise ConfigError(messages)
+    if not any(isinstance(schedule.trigger, OnDemandSchedule) for schedule in schedules):
+        schedules.append(Schedule("manual", OnDemandSchedule()))
+        policies.append(KeepAll("manual"))
+    return tuple(schedules), tuple(policies)
+
+
+def _parse_schedule(
+    schedule_name: str,
+    value: object,
+) -> tuple[Schedule, tuple[RetentionPolicyBase, ...]]:
+    if not isinstance(value, dict):
+        raise ConfigError(f"schedule {schedule_name!r} must be a mapping")
+    if "retention" not in value:
+        raise ConfigError(f"schedule {schedule_name!r} has no retention policy")
+    if "trigger" not in value:
+        raise ConfigError(f"schedule {schedule_name!r} has no trigger")
+    if unknown := sorted(value.keys() - {"previous_names", "retention", "trigger"}, key=str):
+        raise ConfigError(
+            f"schedule {schedule_name!r} has unknown settings: "
+            f"{', '.join(str(item) for item in unknown)}"
+        )
+
+    previous_names = _parse_previous_names(
+        schedule_name,
+        value.get("previous_names", []),
+        validate_schedule_name,
+        "schedule",
+    )
+    schedule_type, config = _parse_named_config(
+        value["trigger"],
+        ScheduleBase,
+        f"schedule {schedule_name!r} trigger",
+        "schedule type",
+    )
+    trigger = ty.cast(ty.Callable[..., ScheduleBase], schedule_type)(**config)
+    return Schedule(
+        schedule_name,
+        trigger,
+        previous_names=previous_names,
+    ), _parse_retention(schedule_name, value["retention"])
+
+
+def _parse_previous_names(
+    current_name: str,
+    value: object,
+    validate: ty.Callable[[object], str],
+    kind: str,
+) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise ConfigError("previous_names must be a list")
+    names = tuple(value)
+    seen = {current_name}
+    for name in names:
+        try:
+            validate(name)
+        except YaesmValueError as error:
+            raise ConfigError(f"invalid previous {kind} name: {name!r} ({error})") from error
+        if name in seen:
+            raise ConfigError(f"duplicate {kind} name: {name!r}")
+        seen.add(name)
+    return ty.cast(tuple[str, ...], names)
+
+
+def _parse_retention(
+    schedule_name: str,
+    value: object,
+) -> tuple[RetentionPolicyBase, ...]:
+    entries = value if isinstance(value, list) else [value]
+    if not entries:
+        raise ConfigError(f"schedule {schedule_name!r} has no retention policy")
+
+    policies = []
+    messages = []
+    for entry in entries:
+        try:
+            policy_type, config = _parse_named_config(
+                entry,
+                RetentionPolicyBase,
+                f"schedule {schedule_name!r} retention",
+                "retention policy",
             )
-        )
-        timeframes = []
-        for timeframe_name in spec["timeframes"]:
-            timeframe_obj = timeframe_dict[timeframe_name](
-                *[spec[s] for s in TimeframeSchema.REQUIRED_SETTINGS[timeframe_name]]
+            policy = ty.cast(ty.Callable[..., RetentionPolicyBase], policy_type)(
+                **config,
+                schedule_name=schedule_name,
             )
-            timeframes.append(timeframe_obj)
-        spec["timeframes"] = timeframes  # mutation
-        return spec
+            policies.append(policy)
+        except YaesmError as error:
+            _collect_messages(messages, error)
+    if messages:
+        raise ConfigError(messages)
+    return tuple(policies)
 
 
-class SrcDirDstDirSchema(Schema):
-    """Voluptuous schema and validator functions for a 'src_dir' and 'dst_dir' configuration."""
+# A named configuration is either a bare type name or a one-entry mapping from
+# the selected type name to its settings.
 
-    @dataclasses.dataclass
-    class ErrMsg:
-        REMOTE_DIR_INVALID = "Not a path to an existing directory at the SSH target remote path"
-        REMOTE_FILE_INVALID = "Not a path to an existing file at the SSH target remote path"
-        SSH_TARGET_SPEC_INVALID = "Not a valid SSH target spec"
-        NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR = (
-            "Not an existing directory or a valid SSH target spec"
-        )
-        SSH_TARGETS_DIFFER = "remote src_dir and dst_dir must use the same SSH user, host, and port"
-        SSH_KEY_MISSING = "Failed to specify a 'ssh_key' which is required when using a SSH target"
-        SSH_CONNECTION_FAILED_TO_ESTABLISH = (
-            "Could not establish an SSH connection to the SSHtarget"
-        )
 
-    @staticmethod
-    def valid_settings() -> set[str]:
-        return {"src_dir", "dst_dir", "ssh_key", "ssh_config"}
+def _parse_named_config(
+    value: object,
+    base: type[_NamedConfigTypeT],
+    label: str,
+    kind: str,
+) -> tuple[type[_NamedConfigTypeT], dict[str, object]]:
+    if isinstance(value, str):
+        name, config = value, {}
+        explicit = False
+    elif isinstance(value, dict) and len(value) == 1:
+        name, config = next(iter(value.items()))
+        explicit = True
+    else:
+        raise ConfigError(f"{label} must select one {kind}")
 
-    @staticmethod
-    def schema() -> vlp.Schema:
-        """Voluptuous Schema to validate a basic 'src_dir' and 'dst_dir' config.
+    selected_type = _type_named(base, name)
+    if selected_type is None:
+        raise ConfigError(f"{label} uses unknown {kind} {name!r}")
+    if explicit and config == {}:
+        raise ConfigError(f"{label} has empty {name} configuration; use {name!r} directly")
+    try:
+        parsed = selected_type.config_schema()(config)
+    except vlp.Invalid as error:
+        raise ConfigError(f"{label} has invalid {name} configuration: {error}") from error
+    return selected_type, ty.cast(dict[str, object], parsed)
 
-        This Schema is meant to be applied to a dict whos values are still just
-        strings (I.E. have been freshly parsed). The data structure returned by
-        applying this schema is a dict that preserves the keys, but all dirs/files
-        are mutated to pathlib.Path's, and a SSH target spec strings are mutated
-        to an SSHTarget object.
 
-        This schema implements the following error/sanity checks:
-            * both 'src_dir' and 'dst_dir' are existing local directorys or SSH
-              target spec strings
-
-            * if both directories are SSH targets, they use the same endpoint
-
-            * if we are using an SSH target, ensure we were given an 'ssh_key'
-              which is an existing local file.
-
-            * Promotes strings denoting file paths to Path objects, and promotes
-              SSH target spec strings to SSHTarget objects.
-        """
-        return vlp.Schema(
-            vlp.All(
-                {
-                    vlp.Required("src_dir"): SrcDirDstDirSchema._is_dir_or_sshtarget_spec,
-                    vlp.Required("dst_dir"): SrcDirDstDirSchema._is_dir_or_sshtarget_spec,
-                    vlp.Optional("ssh_key"): Schema.is_file,
-                    vlp.Optional("ssh_config"): Schema.is_file,
-                },
-                SrcDirDstDirSchema._dict_ssh_key_required_if_ssh_target,
-                SrcDirDstDirSchema._dict_promote_ssh_target_spec_to_ssh_target,
-                SrcDirDstDirSchema._dict_sshtargets_same_endpoint,
-            ),
-            extra=vlp.ALLOW_EXTRA,
-        )
-
-    @staticmethod
-    def schema_extra() -> vlp.Schema:
-        """Ensure that if we are using an SSH target, that we can connect to it,
-        and the remote directory being targeted exists on the remote server.
-        """
-        return vlp.Schema(vlp.All(SrcDirDstDirSchema._dict_ssh_target_connectable))
-
-    @staticmethod
-    def _is_sshtarget_spec(spec: str) -> str:
-        """Validator to ensure `spec` is a string representing a valid SSHTarget
-        spec as per the function `SSHTarget.is_sshtarget_spec()`, and if so just
-        returns `spec` back directly.
-        """
-        if not spec or not SSHTarget.is_sshtarget_spec(spec):
-            raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.SSH_TARGET_SPEC_INVALID)
-        return spec
-
-    @staticmethod
-    def _is_dir_or_sshtarget_spec(s: str | Path) -> Path | str:
-        """Validator to ensure `s` is a string representing either an existing
-        directory on the system, or a valid SSH target spec.
-        """
-        validator = vlp.Any(
-            SrcDirDstDirSchema._is_sshtarget_spec,
-            Schema.is_dir,
-            msg=SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR,
-        )
-        return validator(s)
-
-    @staticmethod
-    def _dict_sshtargets_same_endpoint(d: dict) -> dict:
-        """Ensure two SSH targets use the same endpoint."""
-        src_dir = d["src_dir"]
-        dst_dir = d["dst_dir"]
-        if (
-            isinstance(src_dir, SSHTarget)
-            and isinstance(dst_dir, SSHTarget)
-            and not src_dir.same_endpoint(dst_dir)
-        ):
-            raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.SSH_TARGETS_DIFFER)
-        return d
-
-    @staticmethod
-    def _dict_ssh_key_required_if_ssh_target(d: dict) -> dict:
-        """Ensure that if either the key 'src_dir' or 'dst_dir' associates to
-        an SSH target spec that we also have a key 'ssh_key' that associates to
-        an existing file.
-        """
-        if SSHTarget.is_sshtarget_spec(d["src_dir"]) or SSHTarget.is_sshtarget_spec(d["dst_dir"]):
-            if not d.get("ssh_key"):
-                raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.SSH_KEY_MISSING)
-            d["ssh_key"] = Schema.is_file(d["ssh_key"])
-        return d
-
-    @staticmethod
-    def _dict_promote_ssh_target_spec_to_ssh_target(d: dict) -> dict:
-        """Promote SSH target spec strings to SSHTarget objects.
-
-        This validator should only be called in a schema, after first calling
-        `_dict_ssh_key_required_if_ssh_target` in a schema.
-        """
-        for dir_key in ["src_dir", "dst_dir"]:
-            if SSHTarget.is_sshtarget_spec(d[dir_key]):
-                d[dir_key] = SSHTarget(d[dir_key], d["ssh_key"], sshconfig=d.get("ssh_config"))
-
-        return d
-
-    @staticmethod
-    def _dict_ssh_target_connectable(d: dict) -> dict:
-        """Ensure that if an SSH target is being used, that we can establish a
-        connection to the specified SSH server, and the target directory exists
-        on the server. This validator should be called as a part of
-        `schema_extra`, meaning it is only called on the output of the base
-        schema.
-        """
-        targets = [d[key] for key in ["src_dir", "dst_dir"] if isinstance(d[key], SSHTarget)]
-        if targets:
-            if not targets[0].can_connect():
-                raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.SSH_CONNECTION_FAILED_TO_ESTABLISH)
-            for target in targets:
-                if not target.is_dir():
-                    raise vlp.Invalid(SrcDirDstDirSchema.ErrMsg.REMOTE_DIR_INVALID)
-        return d
+def _type_named(base: type[_NamedType], name: object) -> type[_NamedType] | None:
+    for candidate in base.__subclasses__():
+        if not inspect.isabstract(candidate) and candidate.name() == name:
+            return candidate
+        if found := _type_named(candidate, name):
+            return found
+    return None

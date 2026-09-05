@@ -1,0 +1,841 @@
+"""Tests for yaesm.driver.rsyncdriver."""
+
+import hashlib
+import shlex
+import shutil
+from datetime import datetime, timedelta
+
+import pytest
+import voluptuous as vlp
+
+import yaesm.command as command_module
+import yaesm.ty as ty
+from yaesm.backup import Backup, BackupArtifact, BackupOperation
+from yaesm.check import CheckRole
+from yaesm.command import Command, CommandResult, CommandRunner
+from yaesm.driver.btrfsdriver import BtrfsDriver, BtrfsSubvolume
+from yaesm.driver.directorydriver import DirectoryDriver
+from yaesm.driver.rsyncdriver import RsyncDriver, RsyncDriverError, RsyncTree
+from yaesm.errors import YaesmValueError
+from yaesm.pipeline import Pipeline, PipelineStep
+from yaesm.representation import PathTree, ReadableTree
+from yaesm.ssh import SSHTarget
+
+_RSYNC_OPTIONS = (
+    "rsync",
+    "--archive",
+    "--hard-links",
+    "--acls",
+    "--xattrs",
+    "--sparse",
+    "--numeric-ids",
+    "--delete",
+    "--delete-excluded",
+    "-s",
+)
+_MARKER_PREFIX = ".yaesm-rsync-artifact-"
+
+
+def marker(path: ty.Path) -> ty.Path:
+    digest = hashlib.sha256(path.name.encode()).hexdigest()
+    return path.with_name(f"{_MARKER_PREFIX}{digest}")
+
+
+class RecordingRunner(CommandRunner):
+    def __init__(
+        self,
+        failures: ty.Iterable[BaseException | None] = (),
+        stdouts: ty.Iterable[str | None] = (),
+    ) -> None:
+        self.commands: list[tuple[str, ...]] = []
+        self.failures = list(failures)
+        self.stdouts = list(stdouts)
+
+    def run(
+        self,
+        command: Command,
+        *,
+        capture_output: bool = False,
+        check: bool = True,
+    ) -> CommandResult:
+        self.commands.append(tuple(str(argument) for argument in command))
+        if self.failures:
+            failure = self.failures.pop(0)
+            if failure is not None:
+                raise failure
+        stdout = self.stdouts.pop(0) if self.stdouts else None
+        return CommandResult(stdout, "", (0,))
+
+
+def with_runner(driver: RsyncDriver, runner: RecordingRunner) -> RsyncDriver:
+    driver.runner = runner
+    return driver
+
+
+def operation(offset: int = 0) -> BackupOperation:
+    return BackupOperation(
+        "example",
+        "manual",
+        datetime(2026, 8, 27, 12, 30) + timedelta(minutes=offset),
+    )
+
+
+def replicated_operation() -> BackupOperation:
+    return BackupOperation(
+        "example",
+        "manual",
+        datetime(2026, 8, 27, 12, 30),
+        "yaesm-local-hourly.2026_08_27_12:30.p0000",
+    )
+
+
+def test_name():
+    assert RsyncDriver.name() == "rsync"
+
+
+def test_config_schema_defaults(tmp_path):
+    assert RsyncDriver.config_schema()({"location": str(tmp_path)}) == {
+        "location": tmp_path,
+        "extra_options": (),
+        "exclude": (),
+        "one_file_system": False,
+    }
+
+
+def test_config_schema_accepts_path_location(tmp_path):
+    assert RsyncDriver.config_schema()({"location": tmp_path})["location"] == tmp_path
+
+
+def test_config_schema_accepts_shorthand(tmp_path):
+    assert RsyncDriver.config_schema()(tmp_path) == {
+        "location": tmp_path,
+        "extra_options": (),
+        "exclude": (),
+        "one_file_system": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("--one-file-system", ("--one-file-system",)),
+        ("--exclude='a b' --checksum", ("--exclude=a b", "--checksum")),
+        (["--exclude cache", "--checksum"], ("--exclude", "cache", "--checksum")),
+        ([], ()),
+    ],
+)
+def test_config_schema_parses_extra_options(tmp_path, value, expected):
+    assert (
+        RsyncDriver.config_schema()({"location": tmp_path, "extra_options": value})["extra_options"]
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (".cache/", (".cache/",)),
+        ([".cache/", "*.tmp"], (".cache/", "*.tmp")),
+        ((), ()),
+    ],
+)
+def test_config_schema_parses_exclude(tmp_path, value, expected):
+    assert (
+        RsyncDriver.config_schema()({"location": tmp_path, "exclude": value})["exclude"] == expected
+    )
+
+
+@pytest.mark.parametrize("location", [None, 42])
+def test_config_schema_rejects_invalid_location_type(location):
+    with pytest.raises(vlp.Invalid, match="location must be a path"):
+        RsyncDriver.config_schema()({"location": location})
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {},
+        {"location": "relative"},
+        {"location": "/tmp", "ssh": None},
+        {"location": "/tmp", "ssh": "ssh://host"},
+        {"location": "/tmp", "extra_options": None},
+        {"location": "/tmp", "extra_options": 1},
+        {"location": "/tmp", "extra_options": True},
+        {"location": "/tmp", "extra_options": ["--archive", 1]},
+        {"location": "/tmp", "exclude": None},
+        {"location": "/tmp", "exclude": 1},
+        {"location": "/tmp", "exclude": True},
+        {"location": "/tmp", "exclude": [".cache/", ""]},
+        {"location": "/tmp", "exclude": [".cache/", 1]},
+        {"location": "/tmp", "one_file_system": None},
+        {"location": "/tmp", "one_file_system": 1},
+        {"location": "/tmp", "one_file_system": "true"},
+        {"location": "/tmp", "unknown": True},
+    ],
+)
+def test_config_schema_rejects_invalid_config(config):
+    with pytest.raises(vlp.Invalid):
+        RsyncDriver.config_schema()(config)
+
+
+def test_config_schema_rejects_malformed_extra_options(tmp_path):
+    with pytest.raises(vlp.Invalid, match="invalid extra_options"):
+        RsyncDriver.config_schema()({"location": tmp_path, "extra_options": "'"})
+
+
+def test_config_schema_output_constructs_driver(tmp_path):
+    config = RsyncDriver.config_schema()(
+        {
+            "location": tmp_path,
+            "extra_options": ["--checksum"],
+            "exclude": [".cache/"],
+            "one_file_system": True,
+        }
+    )
+
+    driver = RsyncDriver(**config)
+
+    assert driver.location == tmp_path
+    assert driver.ssh is None
+    assert driver.extra_options == ("--checksum",)
+    assert driver.exclude == (".cache/",)
+    assert driver.one_file_system is True
+
+
+@pytest.mark.parametrize("extra_options", ["--checksum", ("",), (1,)])
+def test_constructor_rejects_invalid_extra_options(tmp_path, extra_options):
+    with pytest.raises(YaesmValueError, match="must contain nonempty strings"):
+        RsyncDriver(tmp_path, extra_options=ty.cast(ty.Any, extra_options))
+
+
+@pytest.mark.parametrize("exclude", [".cache/", ("",), (1,)])
+def test_constructor_rejects_invalid_exclude(tmp_path, exclude):
+    with pytest.raises(YaesmValueError, match="exclude must contain nonempty strings"):
+        RsyncDriver(tmp_path, exclude=ty.cast(ty.Any, exclude))
+
+
+@pytest.mark.parametrize("one_file_system", [None, 0, 1, "true"])
+def test_constructor_rejects_invalid_one_file_system(tmp_path, one_file_system):
+    with pytest.raises(YaesmValueError, match="one_file_system must be a boolean"):
+        RsyncDriver(tmp_path, one_file_system=ty.cast(ty.Any, one_file_system))
+
+
+def test_capabilities(tmp_path):
+    driver = RsyncDriver(tmp_path)
+
+    assert driver.capabilities() == {"store", "list", "delete"}
+    assert driver.capability_metadata("store").base == "destination"
+
+
+def test_destination_checks_directory_requirements_remotely(tmp_path, monkeypatch):
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    runner = RecordingRunner()
+    monkeypatch.setattr(command_module, "run", runner.run)
+    driver = RsyncDriver(tmp_path, target)
+
+    checks = driver.check(CheckRole.DESTINATION)
+    for check in checks:
+        check.run()
+
+    assert tuple(check.description for check in checks) == (
+        f"rsync is installed on {target}",
+        f"directory exists: {tmp_path} on {target}",
+        f"directory is readable: {tmp_path} on {target}",
+        f"directory is writable: {tmp_path} on {target}",
+        f"directory is searchable: {tmp_path} on {target}",
+    )
+    assert runner.commands == [
+        target.openssh_command(("rsync", "--version")),
+        target.openssh_command(("test", "-d", tmp_path)),
+        target.openssh_command(("test", "-r", tmp_path)),
+        target.openssh_command(("test", "-w", tmp_path)),
+        target.openssh_command(("test", "-x", tmp_path)),
+    ]
+
+
+def test_artifact_source_checks_storage_read_requirements(tmp_path):
+    checks = RsyncDriver(tmp_path)._checks(CheckRole.ARTIFACT_SOURCE)
+
+    assert tuple(check.description for check in checks) == (
+        f"directory exists: {tmp_path}",
+        f"directory is readable: {tmp_path}",
+        f"directory is searchable: {tmp_path}",
+    )
+
+
+@pytest.mark.parametrize(
+    ("role", "index"),
+    [
+        (CheckRole.ARTIFACT_SOURCE, 0),
+        (CheckRole.ARTIFACT_SOURCE, 1),
+        (CheckRole.ARTIFACT_SOURCE, 2),
+        (CheckRole.DESTINATION, 0),
+        (CheckRole.DESTINATION, 1),
+        (CheckRole.DESTINATION, 2),
+        (CheckRole.DESTINATION, 3),
+    ],
+)
+def test_each_directory_check_reports_failure(role, index, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        command_module,
+        "run",
+        lambda *args, **kwargs: CommandResult(None, "permission denied", (6,)),
+    )
+    check = RsyncDriver(tmp_path)._checks(role)[index]
+
+    result = check.run()
+
+    assert result.description == check.description
+    assert result.passed is False
+    assert result.failure == "test exited with status 6"
+    assert result.stderr == "permission denied"
+
+
+@pytest.mark.parametrize("role", [CheckRole.SOURCE, CheckRole.TRANSFORM])
+def test_unused_roles_do_not_validate_directory(role, tmp_path):
+    driver = RsyncDriver(tmp_path)
+    checks = driver.check(role)
+
+    assert tuple(check.description for check in checks) == ("rsync is installed",)
+    assert driver._checks(role) == ()
+
+
+def test_cap_store_local(tmp_path):
+    runner = RecordingRunner()
+    source = PathTree(tmp_path / "source")
+    destination_dir = tmp_path / "destination"
+    driver = with_runner(RsyncDriver(destination_dir, extra_options=("--checksum",)), runner)
+
+    artifact = driver.cap_store(source, operation())
+
+    destination = destination_dir / operation().artifact_name
+    assert artifact == BackupArtifact(operation(), RsyncTree(destination))
+    assert runner.commands == [
+        (*_RSYNC_OPTIONS, "--checksum", f"{source.path}/", f"{destination}/"),
+        ("touch", str(marker(destination))),
+    ]
+
+
+def test_cap_store_uses_exclude_patterns(tmp_path):
+    runner = RecordingRunner()
+    source = PathTree(tmp_path / "source")
+    destination_dir = tmp_path / "destination"
+    driver = with_runner(
+        RsyncDriver(destination_dir, exclude=(".cache/", "*.tmp")),
+        runner,
+    )
+
+    driver.cap_store(source, operation())
+
+    destination = destination_dir / operation().artifact_name
+    assert runner.commands[0] == (
+        *_RSYNC_OPTIONS,
+        "--exclude=.cache/",
+        "--exclude=*.tmp",
+        f"{source.path}/",
+        f"{destination}/",
+    )
+
+
+def test_cap_store_uses_protected_path_exclusions(tmp_path):
+    runner = RecordingRunner()
+    source_path = tmp_path / "source"
+    source = PathTree(
+        source_path,
+        excluded_paths=(ty.Path("backups[1]*?"),),
+    )
+    destination_dir = tmp_path / "destination"
+    driver = with_runner(RsyncDriver(destination_dir), runner)
+
+    driver.cap_store(source, operation())
+
+    assert "--exclude=/backups\\[1\\]\\*\\?/" in runner.commands[0]
+
+
+@pytest.mark.parametrize(
+    "extra_options",
+    [
+        ("--filter=!",),
+        ("--include-from=/filters",),
+        ("--exclude-from=/filters",),
+        ("-f", "- *.tmp"),
+        ("-avf- *.tmp",),
+    ],
+)
+def test_cap_store_rejects_custom_filters_when_paths_are_protected(
+    tmp_path,
+    extra_options,
+):
+    runner = RecordingRunner()
+    source = PathTree(
+        tmp_path / "source",
+        excluded_paths=(ty.Path("backups"),),
+    )
+    driver = with_runner(RsyncDriver(tmp_path / "destination", extra_options=extra_options), runner)
+
+    with pytest.raises(
+        RsyncDriverError,
+        match="extra_options could override required protected-path filters",
+    ):
+        driver.cap_store(source, operation())
+
+    assert runner.commands == []
+
+
+def test_cap_store_keeps_protected_exclusions_before_simple_extra_filters(tmp_path):
+    runner = RecordingRunner()
+    source = PathTree(
+        tmp_path / "source",
+        excluded_paths=(ty.Path("backups"),),
+    )
+    driver = with_runner(
+        RsyncDriver(
+            tmp_path / "destination",
+            extra_options=("--include=/backups/***", "--exclude=*.tmp"),
+        ),
+        runner,
+    )
+
+    driver.cap_store(source, operation())
+
+    command = runner.commands[0]
+    assert command.index("--exclude=/backups/") < command.index("--include=/backups/***")
+
+
+def test_cap_store_can_stay_on_one_file_system(tmp_path):
+    runner = RecordingRunner()
+    source = PathTree(tmp_path / "source")
+    destination_dir = tmp_path / "destination"
+    driver = with_runner(RsyncDriver(destination_dir, one_file_system=True), runner)
+
+    driver.cap_store(source, operation())
+
+    assert runner.commands[0].count("--one-file-system") == 1
+
+
+def test_cap_store_marks_replicated_artifact(tmp_path):
+    runner = RecordingRunner()
+    source = PathTree(tmp_path / "source")
+    destination_dir = tmp_path / "destination"
+    operation_ = replicated_operation()
+
+    artifact = with_runner(RsyncDriver(destination_dir), runner).cap_store(source, operation_)
+
+    destination = destination_dir / operation_.artifact_name
+    assert artifact == BackupArtifact(operation_, RsyncTree(destination))
+    assert runner.commands == [
+        (*_RSYNC_OPTIONS, f"{source.path}/", f"{destination}/"),
+        ("touch", str(marker(destination))),
+    ]
+
+
+def test_cap_store_root_source_has_one_trailing_slash(tmp_path):
+    runner = RecordingRunner()
+
+    with_runner(RsyncDriver(tmp_path), runner).cap_store(PathTree(ty.Path("/")), operation())
+
+    assert runner.commands[0][-2] == "/"
+
+
+def test_cap_store_uses_link_dest(tmp_path):
+    runner = RecordingRunner()
+    source = PathTree(tmp_path / "source")
+    base = RsyncTree(tmp_path / "destination" / "base")
+    driver = with_runner(RsyncDriver(tmp_path / "destination"), runner)
+
+    driver.cap_store(source, operation(), base)
+
+    assert f"--link-dest={base.path}" in runner.commands[0]
+
+
+def test_cap_store_rejects_base_on_different_endpoint(tmp_path):
+    target = SSHTarget("ssh://destination", tmp_path / "key")
+    base = RsyncTree(tmp_path / "base", SSHTarget("ssh://base", tmp_path / "key"))
+
+    with pytest.raises(RsyncDriverError, match="base and destination use different"):
+        RsyncDriver(tmp_path, target).cap_store(PathTree(tmp_path / "source"), operation(), base)
+
+
+def test_incremental_base_requires_rsync_tree_on_destination_endpoint(tmp_path):
+    target = SSHTarget("ssh://destination", tmp_path / "key")
+    driver = RsyncDriver(tmp_path, target)
+    source = PathTree(tmp_path / "source")
+    base = RsyncTree(tmp_path / "base", target)
+
+    assert driver.validate_base("store", source, None, base)
+    assert not driver.validate_base("store", source, None, PathTree(base.path, target))
+    assert not driver.validate_base(
+        "store",
+        source,
+        None,
+        RsyncTree(base.path, SSHTarget("ssh://other", tmp_path / "key")),
+    )
+    assert not driver.validate_base("export", source, None, base)
+
+
+def test_cap_store_local_to_remote(tmp_path):
+    runner = RecordingRunner()
+    target = SSHTarget("ssh://user@host:2222", tmp_path / "key")
+    source = PathTree(tmp_path / "source")
+    destination_dir = tmp_path / "destination"
+
+    with_runner(RsyncDriver(destination_dir, target), runner).cap_store(source, operation())
+
+    destination = destination_dir / operation().artifact_name
+    assert runner.commands == [
+        (
+            *_RSYNC_OPTIONS,
+            f"--rsh={shlex.join(('ssh', *target.openssh_options()))}",
+            f"{source.path}/",
+            f"user@host:{destination}/",
+        ),
+        target.openssh_command(("touch", marker(destination))),
+    ]
+
+
+def test_cap_store_remote_to_local(tmp_path):
+    runner = RecordingRunner()
+    target = SSHTarget("ssh://user@host", tmp_path / "key")
+    source = PathTree(tmp_path / "source", target)
+    destination_dir = tmp_path / "destination"
+
+    with_runner(RsyncDriver(destination_dir), runner).cap_store(source, operation())
+
+    destination = destination_dir / operation().artifact_name
+    assert runner.commands == [
+        (
+            *_RSYNC_OPTIONS,
+            f"--rsh={shlex.join(('ssh', *target.openssh_options()))}",
+            f"user@host:{source.path}/",
+            f"{destination}/",
+        ),
+        ("touch", str(marker(destination))),
+    ]
+
+
+def test_cap_store_remote_ipv6(tmp_path):
+    runner = RecordingRunner()
+    target = SSHTarget("ssh://user@[2001:db8::1]", tmp_path / "key")
+    source = PathTree(tmp_path / "source", target)
+
+    with_runner(RsyncDriver(tmp_path), runner).cap_store(source, operation())
+
+    assert runner.commands[0][-2] == f"user@[2001:db8::1]:{source.path}/"
+
+
+def test_cap_store_on_same_remote_endpoint(tmp_path):
+    runner = RecordingRunner()
+    source_target = SSHTarget("ssh://host", tmp_path / "source-key")
+    destination_target = SSHTarget("ssh://host", tmp_path / "destination-key")
+    source = PathTree(tmp_path / "source", source_target)
+    destination_dir = tmp_path / "destination"
+
+    with_runner(RsyncDriver(destination_dir, destination_target), runner).cap_store(
+        source,
+        operation(),
+    )
+
+    destination = destination_dir / operation().artifact_name
+    assert runner.commands == [
+        destination_target.openssh_command((*_RSYNC_OPTIONS, f"{source.path}/", f"{destination}/")),
+        destination_target.openssh_command(("touch", marker(destination))),
+    ]
+
+
+def test_cap_store_rejects_different_remote_endpoints(tmp_path):
+    runner = RecordingRunner()
+    source = PathTree(
+        tmp_path / "source",
+        SSHTarget("ssh://source", tmp_path / "source-key"),
+    )
+    destination = SSHTarget("ssh://destination", tmp_path / "destination-key")
+
+    with pytest.raises(RsyncDriverError, match="cannot copy between different SSH endpoints"):
+        with_runner(RsyncDriver(tmp_path, destination), runner).cap_store(source, operation())
+
+    assert runner.commands == []
+
+
+def test_cap_store_cleans_up_failure(tmp_path):
+    runner = RecordingRunner((RuntimeError("rsync failed"), None))
+    source = PathTree(tmp_path / "source")
+    destination_dir = tmp_path / "destination"
+
+    with pytest.raises(RuntimeError, match="rsync failed"):
+        with_runner(RsyncDriver(destination_dir), runner).cap_store(source, operation())
+
+    destination = destination_dir / operation().artifact_name
+    assert runner.commands[-1] == (
+        "rm",
+        "-rf",
+        str(destination),
+        str(marker(destination)),
+    )
+
+
+def test_cap_store_cleans_up_marker_failure(tmp_path):
+    runner = RecordingRunner((None, RuntimeError("marker failed"), None))
+    source = PathTree(tmp_path / "source")
+    destination_dir = tmp_path / "destination"
+
+    with pytest.raises(RuntimeError, match="marker failed"):
+        with_runner(RsyncDriver(destination_dir), runner).cap_store(source, operation())
+
+    destination = destination_dir / operation().artifact_name
+    assert runner.commands[-1] == (
+        "rm",
+        "-rf",
+        str(destination),
+        str(marker(destination)),
+    )
+
+
+def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
+    destination = tmp_path / "destination"
+    older = operation()
+    newer = BackupOperation(
+        "example",
+        "manual",
+        datetime(2026, 8, 27, 12, 31),
+    )
+    unmarked = operation(2)
+    runner = RecordingRunner(
+        stdouts=(
+            "\n".join(
+                (
+                    str(destination / older.artifact_name),
+                    str(destination / "unrelated"),
+                    str(destination / "yaesm-other-manual.2026_08_27_12:32.p0000"),
+                    str(destination / newer.artifact_name),
+                    str(destination / unmarked.artifact_name),
+                    str(marker(destination / older.artifact_name)),
+                    str(marker(destination / newer.artifact_name)),
+                    str(marker(destination / "missing")),
+                )
+            ),
+        )
+    )
+
+    artifacts = with_runner(RsyncDriver(destination), runner).cap_list("example")
+
+    assert artifacts == (
+        BackupArtifact(newer, RsyncTree(destination / newer.artifact_name)),
+        BackupArtifact(older, RsyncTree(destination / older.artifact_name)),
+    )
+    assert runner.commands == [
+        (
+            "find",
+            str(destination),
+            "!",
+            "-path",
+            str(destination),
+            "-prune",
+            "(",
+            "-type",
+            "d",
+            "-o",
+            "-type",
+            "f",
+            "-name",
+            f"{_MARKER_PREFIX}*",
+            ")",
+            "-print",
+        ),
+    ]
+
+
+def test_cap_list_remote(tmp_path):
+    runner = RecordingRunner()
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    destination = tmp_path / "destination"
+
+    assert with_runner(RsyncDriver(destination, target), runner).cap_list("example") == ()
+    assert runner.commands == [
+        target.openssh_command(
+            (
+                "find",
+                destination,
+                "!",
+                "-path",
+                destination,
+                "-prune",
+                "(",
+                "-type",
+                "d",
+                "-o",
+                "-type",
+                "f",
+                "-name",
+                f"{_MARKER_PREFIX}*",
+                ")",
+                "-print",
+            )
+        ),
+    ]
+
+
+def test_formats_local_and_remote_artifact_locators(tmp_path):
+    operation_ = operation()
+    path = tmp_path / operation_.artifact_name
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    driver = RsyncDriver(tmp_path)
+
+    assert driver.format_locator(BackupArtifact(operation_, RsyncTree(path))) == str(path)
+    assert driver.format_locator(
+        BackupArtifact(operation_, RsyncTree(path, target))
+    ) == target.format_location(path)
+
+
+def test_cap_delete_batches_artifacts(tmp_path):
+    runner = RecordingRunner()
+    artifacts = (
+        BackupArtifact(operation(), RsyncTree(tmp_path / "one")),
+        BackupArtifact(operation(), RsyncTree(tmp_path / "two")),
+    )
+
+    with_runner(RsyncDriver(tmp_path), runner).cap_delete(artifacts)
+
+    assert runner.commands == [
+        (
+            "rm",
+            "-rf",
+            str(tmp_path / "one"),
+            str(marker(tmp_path / "one")),
+            str(tmp_path / "two"),
+            str(marker(tmp_path / "two")),
+        )
+    ]
+
+
+def test_cap_delete_batches_remote_artifacts(tmp_path):
+    runner = RecordingRunner()
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    artifacts = (
+        BackupArtifact(operation(), RsyncTree(tmp_path / "one", target)),
+        BackupArtifact(operation(), RsyncTree(tmp_path / "two", target)),
+    )
+
+    with_runner(RsyncDriver(tmp_path, target), runner).cap_delete(artifacts)
+
+    assert runner.commands == [
+        target.openssh_command(
+            (
+                "rm",
+                "-rf",
+                tmp_path / "one",
+                marker(tmp_path / "one"),
+                tmp_path / "two",
+                marker(tmp_path / "two"),
+            )
+        )
+    ]
+
+
+def test_cap_delete_accepts_empty_sequence(tmp_path):
+    runner = RecordingRunner()
+
+    with_runner(RsyncDriver(tmp_path), runner).cap_delete(())
+
+    assert runner.commands == []
+
+
+def test_cap_delete_rejects_different_endpoint(tmp_path):
+    artifact_target = SSHTarget("ssh://artifact", tmp_path / "key")
+    driver_target = SSHTarget("ssh://driver", tmp_path / "key")
+    artifact = BackupArtifact(operation(), RsyncTree(tmp_path / "snapshot", artifact_target))
+
+    with pytest.raises(RsyncDriverError, match="different SSH endpoint"):
+        RsyncDriver(tmp_path, driver_target).cap_delete((artifact,))
+
+
+def test_rsync_does_not_support_unchanged(tmp_path):
+    assert "unchanged" not in RsyncDriver(tmp_path).capabilities()
+
+
+def test_pipeline_uses_rsync_store(tmp_path):
+    source = DirectoryDriver(tmp_path / "source")
+    destination = RsyncDriver(tmp_path / "destination")
+
+    assert Pipeline(source, destination).steps == (
+        PipelineStep(source, "source"),
+        PipelineStep(destination, "store"),
+    )
+
+
+def test_pipeline_excludes_nested_rsync_destination(tmp_path):
+    source_path = tmp_path / "source"
+    destination_path = source_path / "backups"
+    runner = RecordingRunner()
+    destination = with_runner(RsyncDriver(destination_path), runner)
+
+    Pipeline(DirectoryDriver(source_path), destination).execute(operation())
+
+    assert "--exclude=/backups/" in runner.commands[0]
+
+
+def test_pipeline_snapshots_btrfs_tree_before_storing_with_rsync(tmp_path):
+    source = BtrfsDriver(tmp_path / "source")
+    destination = RsyncDriver(tmp_path / "destination")
+
+    assert Pipeline(source, destination).steps == (
+        PipelineStep(source, "source"),
+        PipelineStep(source, "snapshot"),
+        PipelineStep(destination, "store"),
+    )
+    assert issubclass(BtrfsSubvolume, PathTree)
+
+
+def test_rsync_representation_types():
+    assert issubclass(RsyncTree, PathTree)
+    assert issubclass(RsyncTree, ReadableTree)
+
+
+def test_rsync_integration(tmp_path):
+    if shutil.which("rsync") is None:
+        pytest.skip("rsync is not installed")
+
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    destination.mkdir()
+    (source / "unchanged").write_text("same")
+    (source / "changed").write_text("before")
+    source_driver = DirectoryDriver(source)
+    driver = RsyncDriver(destination)
+    backup = Backup("example", source_driver, driver)
+
+    first = backup.execute("manual", operation().created_at)
+    (source / "changed").write_text("after")
+    second = backup.execute("manual", operation(1).created_at)
+
+    assert (second.representation.path / "changed").read_text() == "after"
+    assert (first.representation.path / "unchanged").stat().st_ino == (
+        second.representation.path / "unchanged"
+    ).stat().st_ino
+    assert driver.cap_list("example") == (second, first)
+
+    driver.cap_delete((first, second))
+    assert not first.representation.path.exists()
+    assert not second.representation.path.exists()
+    assert not any(destination.iterdir())
+
+
+def test_rsync_does_not_copy_nested_destination(tmp_path):
+    if shutil.which("rsync") is None:
+        pytest.skip("rsync is not installed")
+
+    source = tmp_path / "source"
+    destination = source / "backups[1]*?"
+    decoy = source / "backups1fooX"
+    destination.mkdir(parents=True)
+    decoy.mkdir()
+    (source / "content").write_text("backup content")
+    (destination / "old-backup").write_text("must not be copied")
+    (decoy / "included").write_text("must be copied")
+
+    result = Pipeline(DirectoryDriver(source), RsyncDriver(destination)).execute(operation())
+
+    artifact = result.representation.path
+    assert (artifact / "content").read_text() == "backup content"
+    assert (artifact / "backups1fooX" / "included").read_text() == "must be copied"
+    assert not (artifact / destination.name).exists()

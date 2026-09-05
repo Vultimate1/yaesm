@@ -1,111 +1,124 @@
+"""Tests for yaesm.subcommand.findsubcommand."""
+
 import argparse
-import logging
-from datetime import datetime
-from pathlib import Path
-from unittest.mock import MagicMock
+from datetime import datetime, timedelta, timezone
+from unittest import mock
+from zoneinfo import ZoneInfo
 
 import pytest
 
-import yaesm.backup as bckp
-from yaesm.backup import Backup
-from yaesm.sshtarget import SSHTarget
-from yaesm.subcommand.findsubcommand import FindQuery, FindQueryError, FindSubcommand
-from yaesm.timeframe import DailyTimeframe, HourlyTimeframe
+from yaesm.backup import Backup, BackupArtifact, BackupOperation
+from yaesm.config import BackupGroup, BackupTargetError, Config
+from yaesm.errors import YaesmError, YaesmValueError
+from yaesm.representation import Representation
+from yaesm.schedule import CronSchedule, Schedule
+from yaesm.subcommand.findsubcommand import (
+    FindError,
+    FindQuery,
+    FindQueryError,
+    FindSubcommand,
+)
+from yaesm.subcommand.subcommandbase import TargetSelection, TargetSelectionMode
 
 
-def _parse_args(argv: list[str]) -> argparse.Namespace:
+def find_config(backups: dict[str, Backup]) -> Config:
+    return Config({"scheduler": {"timezone": ZoneInfo("UTC")}}, backups)
+
+
+def arguments(*values: str) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    FindSubcommand.add_argparser_arguments(parser)
-    return parser.parse_args(argv)
+    FindSubcommand.configure_argparser(parser)
+    return parser.parse_args(values)
 
 
-def _snapshot(hour: int, minute: int = 0, timeframe: str = "hourly") -> bckp.BackupArtifact:
-    name = f"yaesm-foo-{timeframe}.2026_08_20_{hour:02}:{minute:02}"
-    return bckp.BackupArtifact(
-        name=name,
-        timeframe=timeframe,
-        created_at=datetime(2026, 8, 20, hour, minute),
-        locator=str(Path("/backups", name)),
+def artifact(
+    hour: int,
+    minute: int = 0,
+    schedule: str = "hourly",
+    backup_name: str = "home",
+) -> BackupArtifact:
+    return BackupArtifact(
+        BackupOperation(
+            backup_name,
+            schedule,
+            datetime(2026, 8, 20, hour, minute),
+        ),
+        Representation(),
     )
 
 
-def _make_backup(tmp_path: Path, name: str) -> Backup:
-    src_dir = tmp_path / f"{name}-src"
-    dst_dir = tmp_path / f"{name}-dst"
-    src_dir.mkdir()
-    dst_dir.mkdir()
-    backend = MagicMock()
-    backend.src_dir = src_dir
-    backend.dst_dir = dst_dir
-    backend.collect.side_effect = lambda backup, timeframes=None: bckp.path_artifacts_collect(
-        backup, dst_dir, timeframes
+def configured_backup(name: str, artifacts: tuple[BackupArtifact, ...]) -> tuple[Backup, mock.Mock]:
+    destination = mock.Mock()
+    destination.cap_list.return_value = artifacts
+    destination.format_locator.side_effect = lambda item: f"locator:{item.name}"
+    backup = Backup(name, mock.Mock(), destination)
+    return backup, destination
+
+
+def hours(artifacts) -> list[int]:
+    return [item.operation.created_at.hour for item in artifacts]
+
+
+def test_find_errors_are_expected_value_errors():
+    assert issubclass(FindError, (YaesmError, YaesmValueError, ValueError))
+    assert issubclass(FindQueryError, (FindError, YaesmError, ValueError))
+
+
+def test_find_arguments_with_positional_query():
+    parsed = arguments("home", "after", "2026-01-01")
+
+    assert FindSubcommand.target_selection is TargetSelectionMode.REQUIRED
+    assert parsed.targets == TargetSelection(("home",))
+    assert parsed.query == ["after", "2026-01-01"]
+    assert parsed.additional_queries == []
+
+
+def test_find_arguments_with_additional_queries():
+    parsed = arguments(
+        "home",
+        "newest",
+        "--query",
+        "oldest",
+        "--query",
+        "closest",
+        "12:30",
     )
-    backend.format_locator.side_effect = lambda artifact: artifact.locator
-    return Backup(
-        name,
-        backend,
-        [HourlyTimeframe(keep=24, minutes=[0]), DailyTimeframe(keep=7, times=[(0, 0)])],
+
+    assert parsed.query == ["newest"]
+    assert parsed.additional_queries == [["oldest"], ["closest", "12:30"]]
+
+
+def test_find_arguments_with_only_optional_queries():
+    parsed = arguments("home", "-q", "oldest", "-q", "closest", "12:30")
+
+    assert parsed.query == []
+    assert parsed.additional_queries == [["oldest"], ["closest", "12:30"]]
+
+
+def test_find_argument_defaults():
+    parsed = arguments("home")
+
+    assert parsed.query == []
+    assert parsed.additional_queries == []
+    assert parsed.schedules == []
+    assert parsed.null is False
+
+
+def test_find_null_argument():
+    assert arguments("home", "-0").null is True
+
+
+def test_find_arguments_normalize_names_and_schedules():
+    parsed = arguments(
+        "home,,root, home, ,root",
+        "--schedules",
+        "hourly,,daily,hourly",
+        "--schedule",
+        "weekly",
     )
 
-
-def _create_backup_dir(backup: Backup, timeframe: str, hour: int, minute: int = 0) -> Path:
-    assert isinstance(backup.backend.dst_dir, Path)
-    path = backup.backend.dst_dir / (
-        f"yaesm-{backup.name}-{timeframe}.2026_08_20_{hour:02}:{minute:02}"
-    )
-    path.mkdir()
-    return path
-
-
-def test_add_argparser_arguments_with_positional_query():
-    args = _parse_args(["foo", "after", "2026-01-01"])
-    assert args.query == ["after", "2026-01-01"]
-    assert args.additional_queries == []
-
-
-def test_add_argparser_arguments_with_multiple_queries():
-    args = _parse_args(["foo", "newest", "--query", "oldest", "--query", "closest", "12:30"])
-    assert args.query == ["newest"]
-    assert args.additional_queries == [["oldest"], ["closest", "12:30"]]
-
-
-def test_add_argparser_arguments_with_only_optional_query():
-    args = _parse_args(["foo", "--query", "after", "2026-01-01"])
-    assert args.query == []
-    assert args.additional_queries == [["after", "2026-01-01"]]
-
-
-def test_add_argparser_arguments_with_multiple_optional_queries():
-    args = _parse_args(["foo", "-q", "oldest", "-q", "closest", "12:30"])
-    assert args.query == []
-    assert args.additional_queries == [["oldest"], ["closest", "12:30"]]
-
-
-def test_add_argparser_arguments_without_query():
-    args = _parse_args(["foo"])
-    assert args.query == []
-    assert args.additional_queries == []
-    assert args.timeframes == []
-
-
-def test_add_argparser_arguments_normalizes_backup_names():
-    args = _parse_args(["foo,,bar, foo, ,bar"])
-    assert args.backup_names == ["foo", "bar"]
-
-
-def test_add_argparser_arguments_with_repeated_timeframes():
-    args = _parse_args(["foo", "--timeframes", "hourly", "--timeframes", "daily"])
-    assert args.timeframes == ["hourly", "daily"]
-
-
-def test_add_argparser_arguments_with_comma_separated_timeframes():
-    args = _parse_args(["foo", "--timeframe", "hourly,,daily,hourly", "-t", "weekly"])
-    assert args.timeframes == ["hourly", "daily", "weekly"]
-
-
-def test_add_argparser_arguments_rejects_invalid_timeframe():
-    with pytest.raises(SystemExit):
-        _parse_args(["foo", "--timeframe", "hourly,invalid"])
+    assert parsed.targets == TargetSelection(("home", "root"))
+    assert parsed.schedules == ["hourly", "daily", "weekly"]
 
 
 @pytest.mark.parametrize(
@@ -119,6 +132,7 @@ def test_add_argparser_arguments_rejects_invalid_timeframe():
 )
 def test_find_query_without_times(tokens, query_type):
     query = FindQuery(tokens)
+
     assert query.type is query_type
     assert query.target is None
     assert query.start is None
@@ -128,16 +142,41 @@ def test_find_query_without_times(tokens, query_type):
 @pytest.mark.parametrize(
     ("tokens", "query_type", "expected"),
     [
-        (["after", "now-2h"], FindQuery.Type.AFTER, datetime(2026, 8, 20, 10, 34)),
-        (["before", "now-30m"], FindQuery.Type.BEFORE, datetime(2026, 8, 20, 12, 4)),
-        (["closest", "now-7d"], FindQuery.Type.CLOSEST, datetime(2026, 8, 13, 12, 34)),
-        (["after", "2026-07-04T14:30"], FindQuery.Type.AFTER, datetime(2026, 7, 4, 14, 30)),
-        (["before", "2026-07-04"], FindQuery.Type.BEFORE, datetime(2026, 7, 4)),
-        (["closest", "08:15"], FindQuery.Type.CLOSEST, datetime(2026, 8, 20, 8, 15)),
+        (
+            ["after", "now-2h"],
+            FindQuery.Type.AFTER,
+            datetime(2026, 8, 20, 10, 34, tzinfo=timezone.utc),
+        ),
+        (
+            ["before", "now-30m"],
+            FindQuery.Type.BEFORE,
+            datetime(2026, 8, 20, 12, 4, tzinfo=timezone.utc),
+        ),
+        (
+            ["closest", "now-7d"],
+            FindQuery.Type.CLOSEST,
+            datetime(2026, 8, 13, 12, 34, tzinfo=timezone.utc),
+        ),
+        (
+            ["after", "2026-07-04T14:30"],
+            FindQuery.Type.AFTER,
+            datetime(2026, 7, 4, 14, 30, tzinfo=timezone.utc),
+        ),
+        (
+            ["before", "2026-07-04"],
+            FindQuery.Type.BEFORE,
+            datetime(2026, 7, 4, tzinfo=timezone.utc),
+        ),
+        (
+            ["closest", "08:15"],
+            FindQuery.Type.CLOSEST,
+            datetime(2026, 8, 20, 8, 15, tzinfo=timezone.utc),
+        ),
     ],
 )
 def test_find_query_with_target(tokens, query_type, expected):
     query = FindQuery(tokens, now=datetime(2026, 8, 20, 12, 34, 56, 123456))
+
     assert query.type is query_type
     assert query.target == expected
 
@@ -145,11 +184,64 @@ def test_find_query_with_target(tokens, query_type, expected):
 def test_find_query_between_normalizes_endpoints():
     query = FindQuery(
         ["between", "2026-08-20T10:00", "now-3d"],
-        now=datetime(2026, 8, 20, 12, 0),
+        now=datetime(2026, 8, 20, 12),
     )
+
     assert query.type is FindQuery.Type.BETWEEN
-    assert query.start == datetime(2026, 8, 17, 12, 0)
-    assert query.end == datetime(2026, 8, 20, 10, 0)
+    assert query.start == datetime(2026, 8, 17, 12, tzinfo=timezone.utc)
+    assert query.end == datetime(2026, 8, 20, 10, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (
+            "2026-11-01T01:30-04:00",
+            datetime(2026, 11, 1, 5, 30, tzinfo=timezone.utc),
+        ),
+        (
+            "2026-11-01T01:30-0500",
+            datetime(2026, 11, 1, 6, 30, tzinfo=timezone.utc),
+        ),
+        ("2026-11-01T05:30Z", datetime(2026, 11, 1, 5, 30, tzinfo=timezone.utc)),
+    ],
+)
+def test_find_query_accepts_explicit_utc_offsets(value, expected):
+    query = FindQuery(["after", value], zone=ZoneInfo("America/New_York"))
+
+    assert query.target == expected
+
+
+def test_find_query_rejects_ambiguous_local_time():
+    with pytest.raises(FindQueryError, match="ambiguous; include a UTC offset"):
+        FindQuery(
+            ["after", "2026-11-01T01:30"],
+            zone=ZoneInfo("America/New_York"),
+        )
+
+
+def test_find_query_rejects_nonexistent_local_time():
+    with pytest.raises(FindQueryError, match="does not exist"):
+        FindQuery(
+            ["after", "2026-03-08T02:30"],
+            zone=ZoneInfo("America/New_York"),
+        )
+
+
+def test_find_query_supports_non_hour_timezone_offsets():
+    query = FindQuery(
+        ["after", "2026-08-20T12:00"],
+        zone=ZoneInfo("Asia/Kathmandu"),
+    )
+
+    assert query.target == datetime(2026, 8, 20, 6, 15, tzinfo=timezone.utc)
+
+
+def test_find_query_relative_time_is_elapsed_time_across_dst():
+    now = datetime(2026, 3, 9, 4, 30, tzinfo=timezone.utc)
+    query = FindQuery(["after", "now-1d"], now, ZoneInfo("America/New_York"))
+
+    assert query.target == now - timedelta(days=1)
 
 
 @pytest.mark.parametrize(
@@ -173,66 +265,41 @@ def test_find_query_rejects_invalid_grammar(tokens):
     [
         "now",
         "now-0m",
+        "now-01h",
         "now-2w",
+        "now-" + "9" * 1000 + "d",
         "2026-02-29",
         "2026-08-20T24:00",
+        "2026-08-20 12:00",
         "8:15",
     ],
 )
 def test_find_query_rejects_invalid_times(value):
     with pytest.raises(FindQueryError, match="invalid time"):
-        FindQuery(["after", value], now=datetime(2026, 8, 20, 12, 0))
+        FindQuery(["after", value], now=datetime(2026, 8, 20, 12))
 
 
 @pytest.mark.parametrize(
-    ("tokens", "expected"),
+    ("tokens", "expected_hours"),
     [
-        (["all"], [_snapshot(12), _snapshot(11), _snapshot(10), _snapshot(9)]),
-        (["newest"], [_snapshot(12)]),
-        (["oldest"], [_snapshot(9)]),
+        (["all"], [12, 11, 10, 9]),
+        (["newest"], [12]),
+        (["oldest"], [9]),
+        (["after", "2026-08-20T10:00"], [12, 11]),
+        (["before", "2026-08-20T11:00"], [10, 9]),
+        (["between", "2026-08-20T10:00", "2026-08-20T11:00"], [11, 10]),
+        (["between", "2026-08-20T11:00", "2026-08-20T10:00"], [11, 10]),
+        (["between", "2026-08-20T10:00", "2026-08-20T10:00"], [10]),
+        (["closest", "2026-08-20T10:30"], [11]),
+        (["closest", "2026-08-20T10:00"], [10]),
+        (["closest", "2026-08-20T13:00"], [12]),
+        (["closest", "2026-08-20T08:00"], [9]),
     ],
 )
-def test_find_query_selects_by_position(tokens, expected):
-    snapshots = [_snapshot(12), _snapshot(11), _snapshot(10), _snapshot(9)]
-    assert FindQuery(tokens).select(snapshots) == expected
+def test_find_query_selects_artifacts(tokens, expected_hours):
+    artifacts = [artifact(hour) for hour in (12, 11, 10, 9)]
 
-
-@pytest.mark.parametrize(
-    ("tokens", "expected"),
-    [
-        (["after", "2026-08-20T10:00"], [_snapshot(12), _snapshot(11)]),
-        (["before", "2026-08-20T11:00"], [_snapshot(10), _snapshot(9)]),
-        (
-            ["between", "2026-08-20T10:00", "2026-08-20T11:00"],
-            [_snapshot(11), _snapshot(10)],
-        ),
-        (
-            ["between", "2026-08-20T11:00", "2026-08-20T10:00"],
-            [_snapshot(11), _snapshot(10)],
-        ),
-        (["between", "2026-08-20T10:00", "2026-08-20T10:00"], [_snapshot(10)]),
-        (["closest", "2026-08-20T10:30"], [_snapshot(11)]),
-        (["closest", "2026-08-20T10:00"], [_snapshot(10)]),
-        (["closest", "2026-08-20T13:00"], [_snapshot(12)]),
-        (["closest", "2026-08-20T08:00"], [_snapshot(9)]),
-    ],
-)
-def test_find_query_selects_by_time(tokens, expected):
-    snapshots = [_snapshot(12), _snapshot(11), _snapshot(10), _snapshot(9)]
-    assert FindQuery(tokens).select(snapshots) == expected
-
-
-@pytest.mark.parametrize(
-    "tokens",
-    [
-        ["after", "2026-08-20T13:00"],
-        ["before", "2026-08-20T08:00"],
-        ["between", "2026-08-20T07:00", "2026-08-20T08:00"],
-    ],
-)
-def test_find_query_selects_nothing_from_nonempty_list(tokens):
-    snapshots = [_snapshot(12), _snapshot(11), _snapshot(10), _snapshot(9)]
-    assert FindQuery(tokens).select(snapshots) == []
+    assert hours(FindQuery(tokens).select(artifacts)) == expected_hours
 
 
 @pytest.mark.parametrize(
@@ -251,111 +318,185 @@ def test_find_query_selects_nothing_from_empty_list(tokens):
     assert FindQuery(tokens).select([]) == []
 
 
-def test_find_main_defaults_to_all(tmp_path, capsys):
-    backup = _make_backup(tmp_path, "foo")
-    newest = _create_backup_dir(backup, "hourly", 12)
-    oldest = _create_backup_dir(backup, "daily", 10)
+def test_find_defaults_to_all_and_formats_locators(capsys):
+    artifacts = (artifact(12), artifact(10, schedule="daily"))
+    backup, destination = configured_backup("home", artifacts)
 
-    assert FindSubcommand().main([backup], _parse_args(["foo"])) == 0
-    assert capsys.readouterr().out.splitlines() == [str(newest), str(oldest)]
+    assert FindSubcommand().main(find_config({"home": backup}), arguments("home")) == 0
 
-
-def test_find_main_combines_queries_without_duplicates(tmp_path, capsys):
-    backup = _make_backup(tmp_path, "foo")
-    newest = _create_backup_dir(backup, "hourly", 12)
-    next_newest = _create_backup_dir(backup, "hourly", 11)
-    _create_backup_dir(backup, "hourly", 10)
-
-    args = _parse_args(["foo", "newest", "--query", "after", "2026-08-20T10:00"])
-    assert FindSubcommand().main([backup], args) == 0
-    assert capsys.readouterr().out.splitlines() == [str(newest), str(next_newest)]
-
-
-def test_find_main_optional_queries_do_not_implicitly_add_all(tmp_path, capsys):
-    backup = _make_backup(tmp_path, "foo")
-    _create_backup_dir(backup, "hourly", 12)
-    closest = _create_backup_dir(backup, "hourly", 11)
-    oldest = _create_backup_dir(backup, "hourly", 10)
-
-    args = _parse_args(["foo", "--query", "oldest", "--query", "closest", "2026-08-20T11:00"])
-    assert FindSubcommand().main([backup], args) == 0
-    assert capsys.readouterr().out.splitlines() == [str(closest), str(oldest)]
-
-
-def test_find_main_supports_multiple_backup_names(tmp_path, capsys):
-    foo = _make_backup(tmp_path, "foo")
-    bar = _make_backup(tmp_path, "bar")
-    foo_snapshot = _create_backup_dir(foo, "hourly", 12)
-    bar_snapshot = _create_backup_dir(bar, "hourly", 11)
-
-    assert FindSubcommand().main([bar, foo], _parse_args(["foo,bar", "all"])) == 0
-    assert capsys.readouterr().out.splitlines() == [str(foo_snapshot), str(bar_snapshot)]
-
-
-def test_find_main_supports_remote_backups(capsys):
-    target = SSHTarget("ssh://p2222:backup@backup.example:/backups", Path("/key"))
-    backend = MagicMock()
-    backend.src_dir = Path("/source")
-    backend.dst_dir = target
-    backend.format_locator.side_effect = lambda artifact: str(
-        target.with_path(Path(artifact.locator))
-    )
-    backup = Backup(
-        "foo",
-        backend,
-        [HourlyTimeframe(keep=24, minutes=[0])],
-    )
-    snapshot = _snapshot(12)
-    collect = backup.backend.collect
-    collect.return_value = [snapshot]
-
-    args = _parse_args(["foo", "after", "2026-08-20T11:00"])
-    assert FindSubcommand().main([backup], args) == 0
     assert capsys.readouterr().out.splitlines() == [
-        f"ssh://p2222:backup@backup.example:{snapshot.locator}"
+        f"locator:{artifacts[0].name}",
+        f"locator:{artifacts[1].name}",
     ]
-    collect.assert_called_once_with(backup, timeframes=None)
+    destination.cap_list.assert_called_once_with("home")
+    assert destination.format_locator.call_args_list == [
+        mock.call(artifacts[0]),
+        mock.call(artifacts[1]),
+    ]
 
 
-def test_find_main_filters_multiple_timeframes_including_immediate(tmp_path, capsys):
-    backup = _make_backup(tmp_path, "foo")
-    immediate = _create_backup_dir(backup, "immediate", 12)
-    daily = _create_backup_dir(backup, "daily", 11)
-    _create_backup_dir(backup, "hourly", 10)
+def test_find_can_separate_locators_with_null_bytes(capsys):
+    artifacts = (artifact(12), artifact(10))
+    backup, _destination = configured_backup("home", artifacts)
 
-    args = _parse_args(["foo", "all", "--timeframes", "daily,immediate"])
-    assert FindSubcommand().main([backup], args) == 0
-    assert capsys.readouterr().out.splitlines() == [str(immediate), str(daily)]
+    assert FindSubcommand().main(find_config({"home": backup}), arguments("home", "-0")) == 0
+
+    assert capsys.readouterr().out == (
+        f"locator:{artifacts[0].name}\0locator:{artifacts[1].name}\0"
+    )
 
 
-def test_find_main_returns_no_results_for_unconfigured_timeframe(tmp_path, capsys):
-    backup = _make_backup(tmp_path, "foo")
-    _create_backup_dir(backup, "hourly", 12)
+def test_find_includes_artifacts_under_previous_names(capsys):
+    stored = artifact(12, schedule="daily", backup_name="old-home")
+    destination = mock.Mock()
+    destination.cap_list.side_effect = lambda name: (stored,) if name == "old-home" else ()
+    destination.format_locator.return_value = "/backups/old-artifact"
+    backup = Backup(
+        "home",
+        mock.Mock(),
+        destination,
+        schedules=(
+            Schedule(
+                "nightly",
+                CronSchedule("0 1 * * *"),
+                previous_names=("daily",),
+            ),
+        ),
+        previous_names=("old-home",),
+    )
 
-    args = _parse_args(["foo", "all", "--timeframe", "weekly"])
-    assert FindSubcommand().main([backup], args) == 0
+    assert (
+        FindSubcommand().main(
+            find_config({"home": backup}),
+            arguments("home,old-home", "--schedule", "daily"),
+        )
+        == 0
+    )
+
+    assert capsys.readouterr().out == "/backups/old-artifact\n"
+    assert destination.cap_list.call_args_list == [mock.call("home"), mock.call("old-home")]
+    found = destination.format_locator.call_args.args[0]
+    assert found.operation.backup_name == "home"
+    assert found.operation.schedule_name == "nightly"
+    assert found.representation is stored.representation
+
+
+def test_find_combines_queries_without_duplicates(capsys):
+    artifacts = (artifact(12), artifact(11), artifact(10))
+    backup, _destination = configured_backup("home", artifacts)
+    parsed = arguments(
+        "home",
+        "newest",
+        "--query",
+        "after",
+        "2026-08-20T10:00",
+    )
+
+    assert FindSubcommand().main(find_config({"home": backup}), parsed) == 0
+
+    assert capsys.readouterr().out.splitlines() == [
+        f"locator:{artifacts[0].name}",
+        f"locator:{artifacts[1].name}",
+    ]
+
+
+def test_find_uses_configured_timezone(capsys):
+    artifacts = (artifact(16), artifact(15))
+    backup, _destination = configured_backup("home", artifacts)
+    config = Config(
+        {"scheduler": {"timezone": ZoneInfo("America/New_York")}},
+        {"home": backup},
+    )
+
+    FindSubcommand().main(config, arguments("home", "after", "2026-08-20T11:30"))
+
+    assert capsys.readouterr().out.splitlines() == [f"locator:{artifacts[0].name}"]
+
+
+def test_optional_queries_do_not_implicitly_add_all(capsys):
+    artifacts = (artifact(12), artifact(11), artifact(10))
+    backup, _destination = configured_backup("home", artifacts)
+    parsed = arguments(
+        "home",
+        "--query",
+        "oldest",
+        "--query",
+        "closest",
+        "2026-08-20T11:00",
+    )
+
+    assert FindSubcommand().main(find_config({"home": backup}), parsed) == 0
+
+    assert capsys.readouterr().out.splitlines() == [
+        f"locator:{artifacts[1].name}",
+        f"locator:{artifacts[2].name}",
+    ]
+
+
+def test_find_supports_multiple_backup_names_in_requested_order(capsys):
+    home_artifact = artifact(12, backup_name="home")
+    root_artifact = artifact(11, backup_name="root")
+    home, _ = configured_backup("home", (home_artifact,))
+    root, _ = configured_backup("root", (root_artifact,))
+    config = Config(
+        {"scheduler": {"timezone": ZoneInfo("UTC")}},
+        {"root": root, "home": home},
+        {"selected": BackupGroup("selected", ("home", "root"))},
+    )
+
+    assert FindSubcommand().main(config, arguments("selected,home")) == 0
+
+    assert capsys.readouterr().out.splitlines() == [
+        f"locator:{home_artifact.name}",
+        f"locator:{root_artifact.name}",
+    ]
+
+
+def test_find_filters_schedules(capsys):
+    hourly = artifact(12)
+    daily = artifact(11, schedule="daily")
+    weekly = artifact(10, schedule="weekly")
+    backup, _destination = configured_backup("home", (hourly, daily, weekly))
+
+    assert (
+        FindSubcommand().main(
+            find_config({"home": backup}),
+            arguments("home", "--schedules", "daily,weekly"),
+        )
+        == 0
+    )
+
+    assert capsys.readouterr().out.splitlines() == [
+        f"locator:{daily.name}",
+        f"locator:{weekly.name}",
+    ]
+
+
+def test_find_returns_success_without_matches(capsys):
+    backup, _destination = configured_backup("home", (artifact(12),))
+
+    assert (
+        FindSubcommand().main(
+            find_config({"home": backup}),
+            arguments("home", "after", "2026-08-21"),
+        )
+        == 0
+    )
     assert capsys.readouterr().out == ""
 
 
-def test_find_main_rejects_unknown_backup_name(tmp_path, caplog):
-    backup = _make_backup(tmp_path, "foo")
-    caplog.set_level(logging.ERROR)
-
-    assert FindSubcommand().main([backup], _parse_args(["missing"])) == 2
-    assert "no backup named 'missing' in config" in caplog.text
+def test_find_rejects_unknown_backup_target():
+    with pytest.raises(BackupTargetError, match="unknown backup target: 'missing'"):
+        FindSubcommand().main(find_config({}), arguments("missing"))
 
 
-def test_find_main_rejects_empty_backup_names(tmp_path, caplog):
-    backup = _make_backup(tmp_path, "foo")
-    caplog.set_level(logging.ERROR)
+def test_find_rejects_invalid_query_before_listing():
+    backup, destination = configured_backup("home", ())
 
-    assert FindSubcommand().main([backup], _parse_args([","])) == 2
-    assert "no backup names specified" in caplog.text
+    with pytest.raises(FindQueryError, match="invalid query"):
+        FindSubcommand().main(
+            find_config({"home": backup}),
+            arguments("home", "after"),
+        )
 
-
-def test_find_main_rejects_invalid_query(tmp_path, caplog):
-    backup = _make_backup(tmp_path, "foo")
-    caplog.set_level(logging.ERROR)
-
-    assert FindSubcommand().main([backup], _parse_args(["foo", "after"])) == 2
-    assert "query error: invalid query" in caplog.text
+    destination.cap_list.assert_not_called()

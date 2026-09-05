@@ -1,59 +1,44 @@
+"""The backup subcommand."""
+
 import argparse
-import logging
 import sys
+from pathlib import Path
 
-from yaesm.backup import Backup
-from yaesm.cli import parse_comma_separated
-from yaesm.subcommand.subcommandbase import SubcommandBase
-from yaesm.timeframe import ImmediateTimeframe
-
-logger = logging.getLogger(__name__)
+from yaesm.config import Config
+from yaesm.control import DEFAULT_CONTROL_SOCKET, ControlError, send_request
+from yaesm.subcommand.subcommandbase import SubcommandBase, TargetSelectionMode
 
 
 class BackupSubcommand(SubcommandBase):
-    """Perform one or more manual backups."""
+    """Run a configured backup immediately."""
 
-    def main(self, backups: list[Backup], parsed_args: argparse.Namespace) -> int:
-        keep = parsed_args.keep if parsed_args.keep is not None else sys.maxsize
-        if keep < 1:
-            logger.error(f"--keep must be a positive integer, got {keep}")
-            return 1
+    target_selection = TargetSelectionMode.REQUIRED
+    config_required = False
 
-        backups_by_name = {backup.name: backup for backup in backups}
-        unknown_names = [name for name in parsed_args.backup_names if name not in backups_by_name]
-        if not parsed_args.backup_names:
-            logger.error("no backup names specified")
-            return 1
-        if unknown_names:
-            for name in unknown_names:
-                logger.error(f"backup not found: {name}")
-            return 1
+    def main(self, config: Config, arguments: argparse.Namespace) -> int:
+        del config
+        request = {"command": "backup", "targets": arguments.targets.names}
+        if arguments.schedule is not None:
+            request["schedule"] = arguments.schedule
 
-        timeframe = ImmediateTimeframe(keep=keep)
-        backups_succeeded = True
-        for name in parsed_args.backup_names:
-            backup = backups_by_name[name]
-            logger.info(f"starting backup '{backup.name}'")
-            try:
-                backup.backend.do_backup(backup, timeframe)
-            except Exception:
-                logger.error(f"backup '{backup.name}' failed", exc_info=True)
-                backups_succeeded = False
-                continue
-            logger.info(f"backup '{backup.name}' completed successfully")
-        return 0 if backups_succeeded else 1
+        for response in send_request(arguments.control_socket, request):
+            match response.get("type"):
+                case "log":
+                    print(response.get("message", ""), file=sys.stderr)
+                case "result":
+                    if response.get("ok") is True:
+                        return 0
+                    if response.get("error_logged") is True:
+                        return 1
+                    raise ControlError(str(response.get("error", "backup request failed")))
+        raise ControlError("backup request returned no result")
 
     @classmethod
     def add_argparser_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--schedule", help="on-demand schedule to use")
         parser.add_argument(
-            "backup_names",
-            metavar="BACKUP[,BACKUP...]",
-            type=parse_comma_separated,
-            help="names of backups from the config",
-        )
-        parser.add_argument(
-            "--keep",
-            type=int,
-            default=None,
-            help="maximum number of immediate backups to keep (default: unlimited)",
+            "--control-socket",
+            type=Path,
+            default=DEFAULT_CONTROL_SOCKET,
+            help="path to the control socket",
         )

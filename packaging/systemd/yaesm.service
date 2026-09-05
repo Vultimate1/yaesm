@@ -5,7 +5,12 @@ ConditionPathExists=/etc/yaesm/config.yaml
 
 [Service]
 Type=exec
-ExecStart=/usr/bin/yaesm --config /etc/yaesm/config.yaml --log-stderr run
+RuntimeDirectory=yaesm
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+KillMode=mixed
+ExecStart=/usr/bin/yaesm --config /etc/yaesm/config.yaml --log-stderr run --no-stderr-timestamps
 ExecReload=/bin/kill -HUP $MAINPID
 StandardOutput=journal
 StandardError=journal

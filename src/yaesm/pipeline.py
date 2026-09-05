@@ -1,0 +1,440 @@
+"""Backup execution pipelines."""
+
+import collections
+import dataclasses
+import inspect
+import logging
+import posixpath
+import typing
+
+import yaesm.ty as ty
+from yaesm.backup import BackupArtifact, BackupError, BackupOperation
+from yaesm.driver.driverbase import DriverBase
+from yaesm.errors import YaesmError
+from yaesm.representation import DataProperty, PathTree, Representation
+from yaesm.ssh import same_endpoint
+
+logger = logging.getLogger(__name__)
+
+
+class PipelineError(BackupError):
+    """Raised when a backup pipeline cannot be built or executed."""
+
+
+@dataclasses.dataclass(frozen=True)
+class PipelineStep:
+    """One driver capability invocation in a pipeline."""
+
+    driver: DriverBase
+    capability: str
+
+
+_Route: ty.TypeAlias = tuple[
+    type[Representation],
+    frozenset[DataProperty],
+    tuple[PipelineStep, ...],
+]
+
+
+@dataclasses.dataclass(frozen=True)
+class IncrementalBase:
+    """Matching source and destination states used for incremental transfers."""
+
+    source: Representation | None
+    destination: Representation | None
+    created_at: ty.datetime
+
+
+@dataclasses.dataclass(frozen=True, init=False)
+class Pipeline:
+    """A resolved sequence using every configured transform in order."""
+
+    source_driver: DriverBase
+    destination: DriverBase
+    source_artifact: BackupArtifact | None
+    steps: tuple[PipelineStep, ...]
+
+    def __init__(
+        self,
+        source_driver: DriverBase,
+        destination: DriverBase,
+        transforms: ty.Sequence[DriverBase] = (),
+        *,
+        source_artifact: BackupArtifact | None = None,
+    ) -> None:
+        source_type = None if source_artifact is None else type(source_artifact.representation)
+        steps = _resolve(source_driver, destination, transforms, source_type)
+        _validate_steps(steps)
+        object.__setattr__(self, "source_driver", source_driver)
+        object.__setattr__(self, "destination", destination)
+        object.__setattr__(self, "source_artifact", source_artifact)
+        object.__setattr__(self, "steps", steps)
+
+    @staticmethod
+    def validate_replication(
+        source_driver: DriverBase,
+        destination: DriverBase,
+        transforms: ty.Sequence[DriverBase] = (),
+    ) -> None:
+        """Validate a replication pipeline without requiring a stored artifact."""
+        steps = _resolve(
+            source_driver,
+            destination,
+            transforms,
+            _stored_representation_type(source_driver),
+        )
+        _validate_steps(steps)
+
+    def execute(
+        self,
+        operation: BackupOperation,
+        base: IncrementalBase | None = None,
+    ) -> BackupArtifact:
+        """Execute one backup, omitting a rejected incremental base from every step."""
+        value: object | None = (
+            None if self.source_artifact is None else self.source_artifact.representation
+        )
+        artifact: BackupArtifact | None = None
+        temporaries: list[tuple[PipelineStep, Representation]] = []
+        approved_base: IncrementalBase | None = None
+        base_checked = base is None
+        try:
+            for step in self.steps:
+                if step.capability != "source" and isinstance(value, PathTree):
+                    value = _exclude_artifact_roots(
+                        value,
+                        self.destination,
+                        operation.backup_name,
+                    )
+                method = step.driver.capability_method(step.capability)
+                metadata = step.driver.capability_metadata(step.capability)
+                logger.info(
+                    "backup %r: %s.%s",
+                    operation.backup_name,
+                    step.driver.name(),
+                    step.capability,
+                )
+                try:
+                    input_tree = value if isinstance(value, PathTree) else None
+                    if not base_checked and metadata.base is not None:
+                        assert base is not None
+                        if step.driver.validate_base(
+                            step.capability,
+                            ty.cast(Representation, value),
+                            base.source,
+                            base.destination,
+                        ):
+                            approved_base = base
+                        base_checked = True
+                    step_base = (
+                        None
+                        if approved_base is None or metadata.base is None
+                        else getattr(approved_base, metadata.base)
+                    )
+                    if step.capability == "source":
+                        value = method()
+                    elif step.capability in {"store", "import"}:
+                        value = method(value, operation, step_base)
+                    elif step.capability == "export":
+                        value = method(value, step_base)
+                    else:
+                        value = method(value)
+                    if input_tree is not None and isinstance(value, PathTree):
+                        value = _preserve_excluded_paths(input_tree, value)
+                except YaesmError as error:
+                    raise PipelineError(
+                        f"backup {operation.backup_name!r} failed in "
+                        f"{step.driver.name()}.{step.capability}"
+                    ) from error
+
+                if metadata.temporary and isinstance(value, Representation):
+                    temporaries.append((step, value))
+
+            if not isinstance(value, BackupArtifact):
+                final_step = self.steps[-1]
+                raise PipelineError(
+                    f"backup {operation.backup_name!r}: "
+                    f"{final_step.driver.name()}.{final_step.capability} "
+                    "did not produce a backup artifact"
+                )
+            artifact = value
+            return artifact
+        finally:
+            final_representation = None if artifact is None else artifact.representation
+            for step, representation in reversed(temporaries):
+                if representation is final_representation:
+                    continue
+                try:
+                    step.driver.cap_cleanup(representation)
+                except YaesmError as error:
+                    raise PipelineError(
+                        f"backup {operation.backup_name!r} failed while cleaning up "
+                        f"{step.driver.name()}.{step.capability}"
+                    ) from error
+
+
+def _exclude_artifact_roots(
+    source: PathTree,
+    destination: DriverBase,
+    backup_name: str,
+) -> PathTree:
+    excluded_paths = list(source.excluded_paths)
+    source_path = ty.Path(posixpath.normpath(source.path))
+    for root in destination.artifact_roots():
+        if not same_endpoint(source.ssh, root.ssh):
+            continue
+        try:
+            relative = ty.Path(posixpath.normpath(root.path)).relative_to(source_path)
+        except ValueError:
+            continue
+        if relative == ty.Path("."):
+            raise PipelineError(
+                f"backup {backup_name!r}: destination artifact root is also the source: "
+                f"{source_path}"
+            )
+        if relative not in excluded_paths:
+            excluded_paths.append(relative)
+    if tuple(excluded_paths) == source.excluded_paths:
+        return source
+    return dataclasses.replace(source, excluded_paths=tuple(excluded_paths))
+
+
+def _preserve_excluded_paths(source: PathTree, destination: PathTree) -> PathTree:
+    excluded_paths = (*source.excluded_paths, *destination.excluded_paths)
+    excluded_paths = tuple(dict.fromkeys(excluded_paths))
+    if excluded_paths == destination.excluded_paths:
+        return destination
+    return dataclasses.replace(destination, excluded_paths=excluded_paths)
+
+
+def _validate_steps(steps: ty.Sequence[PipelineStep]) -> None:
+    for step in steps:
+        if (
+            step.driver.capability_metadata(step.capability).temporary
+            and "cleanup" not in step.driver.capabilities()
+        ):
+            raise PipelineError(
+                f"{step.driver.name()}.{step.capability} produces a temporary "
+                "representation but the driver provides no cleanup capability"
+            )
+
+
+def _resolve(
+    source_driver: DriverBase,
+    destination: DriverBase,
+    transforms: ty.Sequence[DriverBase],
+    source_type: type[Representation] | None,
+) -> tuple[PipelineStep, ...]:
+    storage_steps = _storage_steps(destination)
+    if not storage_steps:
+        raise PipelineError(
+            "cannot build backup pipeline:\n"
+            f"  destination driver {destination.name()} provides no storage capability"
+        )
+
+    required_properties: frozenset[DataProperty] = frozenset()
+    properties: frozenset[DataProperty]
+    steps: tuple[PipelineStep, ...]
+    used: frozenset[tuple[int, str]]
+    if source_type is None:
+        if "source" not in source_driver.pipeline_capabilities():
+            raise PipelineError(f"{source_driver.name()} driver cannot provide a backup source")
+        first = PipelineStep(source_driver, "source")
+        resolved_source_type = _output_type(first)
+        if not issubclass(resolved_source_type, Representation):
+            raise PipelineError("source capability does not produce a representation")
+        properties = source_driver.capability_metadata("source").adds
+        if "snapshot" in source_driver.pipeline_capabilities():
+            required_properties = frozenset({DataProperty.SNAPSHOT})
+        steps = (first,)
+        used = frozenset({(id(source_driver), "source")})
+    else:
+        resolved_source_type = source_type
+        properties = frozenset()
+        steps = ()
+        used = frozenset()
+
+    available = (source_driver, *transforms, destination)
+    transform_indexes = {id(transform): index for index, transform in enumerate(transforms)}
+
+    queue: collections.deque[
+        tuple[
+            type[Representation],
+            frozenset[DataProperty],
+            tuple[PipelineStep, ...],
+            frozenset[tuple[int, str]],
+            int,
+        ]
+    ] = collections.deque(
+        [
+            (
+                resolved_source_type,
+                properties,
+                steps,
+                used,
+                0,
+            )
+        ]
+    )
+    furthest = (resolved_source_type, properties, steps)
+    complete_route: _Route | None = None
+    rejected_route: (
+        tuple[
+            int,
+            frozenset[DataProperty],
+            tuple[PipelineStep, ...],
+        ]
+        | None
+    ) = None
+
+    while queue:
+        current_type, properties, steps, used, transform_index = queue.popleft()
+        for driver in available:
+            for capability in sorted(driver.pipeline_capabilities() - {"source"}):
+                step = PipelineStep(driver, capability)
+                step_id = (id(driver), capability)
+                metadata = driver.capability_metadata(capability)
+                if step_id in used or not issubclass(current_type, _input_type(step)):
+                    continue
+
+                configured_transform_index = transform_indexes.get(id(driver))
+                if configured_transform_index not in (
+                    None,
+                    transform_index - 1,
+                    transform_index,
+                ):
+                    continue
+                next_transform_index = (
+                    transform_index + 1
+                    if configured_transform_index == transform_index
+                    else transform_index
+                )
+
+                output_type = _output_type(step)
+                next_properties = properties | metadata.adds
+                next_steps = (*steps, step)
+                if driver is destination and issubclass(output_type, BackupArtifact):
+                    missing = (metadata.requires - properties) | (
+                        required_properties - next_properties
+                    )
+                    if not missing and next_transform_index == len(transforms):
+                        return next_steps
+                    rejected = (next_transform_index, missing, next_steps)
+                    if rejected_route is None or len(transforms) - next_transform_index + len(
+                        missing
+                    ) < len(transforms) - rejected_route[0] + len(rejected_route[1]):
+                        rejected_route = rejected
+                    continue
+                if not metadata.requires <= properties:
+                    continue
+                if issubclass(output_type, Representation):
+                    queue.append(
+                        (
+                            output_type,
+                            next_properties,
+                            next_steps,
+                            used | {step_id},
+                            next_transform_index,
+                        )
+                    )
+                    if next_transform_index == len(transforms) and complete_route is None:
+                        complete_route = (output_type, next_properties, next_steps)
+                    if len(next_steps) > len(furthest[2]):
+                        furthest = (output_type, next_properties, next_steps)
+
+    if rejected_route is not None and rejected_route[0] == len(transforms):
+        _, missing, steps = rejected_route
+        raise PipelineError(
+            "cannot build backup pipeline:\n"
+            f"  compatible route: {_format_steps(steps)}\n"
+            f"  missing required properties: {_format_properties(missing)}"
+        )
+    if complete_route is not None:
+        raise _incompatible_pipeline_error(complete_route, storage_steps)
+    if rejected_route is not None:
+        next_transform_index, _, steps = rejected_route
+        raise PipelineError(
+            "cannot build backup pipeline:\n"
+            f"  compatible route: {_format_steps(steps)}\n"
+            f"  next configured transform cannot be used: "
+            f"{transforms[next_transform_index].name()}"
+        )
+
+    raise _incompatible_pipeline_error(furthest, storage_steps)
+
+
+def _incompatible_pipeline_error(
+    route: _Route,
+    storage_steps: ty.Sequence[PipelineStep],
+) -> PipelineError:
+    representation, properties, steps = route
+    accepted = ", ".join(
+        f"{_input_type(step).__name__} via {step.driver.name()}.{step.capability}"
+        for step in storage_steps
+    )
+    return PipelineError(
+        "cannot build backup pipeline:\n"
+        f"  last usable route: {_format_steps(steps) or 'existing artifact'}\n"
+        f"  produced: {representation.__name__}\n"
+        f"  available properties: {_format_properties(properties)}\n"
+        f"  destination accepts: {accepted}"
+    )
+
+
+def _storage_steps(driver: DriverBase) -> tuple[PipelineStep, ...]:
+    steps = []
+    for capability in sorted(driver.pipeline_capabilities() - {"source"}):
+        step = PipelineStep(driver, capability)
+        if issubclass(_output_type(step), BackupArtifact):
+            steps.append(step)
+    return tuple(steps)
+
+
+def _stored_representation_type(driver: DriverBase) -> type[Representation]:
+    annotation = typing.get_type_hints(driver.capability_method("list"))["return"]
+    artifact_type = next(
+        (
+            argument
+            for argument in typing.get_args(annotation)
+            if typing.get_origin(argument) is BackupArtifact
+        ),
+        None,
+    )
+    arguments = typing.get_args(artifact_type)
+    if (
+        len(arguments) != 1
+        or not isinstance(arguments[0], type)
+        or not issubclass(arguments[0], Representation)
+    ):
+        raise PipelineError(f"{driver.name()}.list must declare its stored representation type")
+    return arguments[0]
+
+
+def _format_steps(steps: ty.Sequence[PipelineStep]) -> str:
+    return " -> ".join(f"{step.driver.name()}.{step.capability}" for step in steps)
+
+
+def _format_properties(properties: ty.Iterable[DataProperty]) -> str:
+    return ", ".join(sorted(prop.value for prop in properties)) or "none"
+
+
+def _input_type(step: PipelineStep) -> type[Representation]:
+    method = step.driver.capability_method(step.capability)
+    parameters = tuple(inspect.signature(method).parameters.values())
+    if not parameters:
+        raise PipelineError(f"{step.capability} capability does not accept a representation")
+    input_type = typing.get_type_hints(method)[parameters[0].name]
+    if not isinstance(input_type, type) or not issubclass(input_type, Representation):
+        raise PipelineError(f"{step.capability} capability has an invalid input type")
+    return input_type
+
+
+def _output_type(step: PipelineStep) -> type[Representation] | type[BackupArtifact]:
+    method = step.driver.capability_method(step.capability)
+    annotation = typing.get_type_hints(method)["return"]
+    output_type = typing.get_origin(annotation) or annotation
+    if not isinstance(output_type, type) or not issubclass(
+        output_type, Representation | BackupArtifact
+    ):
+        raise PipelineError(f"{step.capability} capability has an invalid output type")
+    return output_type

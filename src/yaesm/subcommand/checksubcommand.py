@@ -1,66 +1,139 @@
-"""src/yaesm/subcommand/checksubcommand.py."""
+"""The check subcommand."""
 
 import argparse
-import logging
 
-from yaesm.backup import Backup
-from yaesm.cli import parse_comma_separated
-from yaesm.subcommand.subcommandbase import SubcommandBase
+import yaesm.ty as ty
+from yaesm.backup import Backup, BackupSource
+from yaesm.check import Check, CheckResult, CheckRole
+from yaesm.config import Config
+from yaesm.errors import YaesmError
+from yaesm.ssh import SSHTarget
+from yaesm.subcommand.subcommandbase import SubcommandBase, TargetSelectionMode
 
-logger = logging.getLogger(__name__)
+
+class CheckError(YaesmError):
+    """Raised when configured backups cannot be checked."""
 
 
 class CheckSubcommand(SubcommandBase):
-    """Validate that all preconditions for a backup are met."""
+    """Check whether configured backups can run."""
 
-    def main(self, backups: list[Backup], parsed_args: argparse.Namespace) -> int:
-        if parsed_args.backup_names is not None:
-            backups_by_name = {backup.name: backup for backup in backups}
-            unknown_names = [
-                name for name in parsed_args.backup_names if name not in backups_by_name
-            ]
-            if not parsed_args.backup_names:
-                logger.error("no backup names specified")
-                return 2
-            if unknown_names:
-                for name in unknown_names:
-                    logger.error(f"no backup named '{name}' in config")
-                return 2
-            backups = [backups_by_name[name] for name in parsed_args.backup_names]
-        checks_passed = True
+    target_selection = TargetSelectionMode.DEFAULT_ALL
+
+    def main(self, config: Config, arguments: argparse.Namespace) -> int:
+        if arguments.config_only:
+            return 0
+
+        backups = config.backups_for_targets(*arguments.targets.names)
+        openssh_result = None
+        connection_results: dict[SSHTarget, CheckResult] = {}
+        passed = True
+
         for backup in backups:
-            results = backup.backend.check(backup)
-            failed = [result for result in results if not result.passed]
-            if not parsed_args.quiet:
+            if not arguments.quiet:
+                print(f"backup: {backup.name}", flush=True)
+            checks = self._unique_checks(self._backup_checks(backup, config.backups_by_name))
+            ssh_connections = tuple(
+                dict.fromkeys(check.ssh for check in checks if check.ssh is not None)
+            )
+            results = []
+
+            if ssh_connections:
+                if openssh_result is None:
+                    openssh_result = Check.command("OpenSSH is installed", ("ssh", "-V")).run()
+                results.append(openssh_result)
+                if openssh_result.passed:
+                    for ssh in ssh_connections:
+                        if ssh not in connection_results:
+                            connection_results[ssh] = Check.command(
+                                "SSH connection works",
+                                ("true",),
+                                ssh=ssh,
+                                failure_message=f"could not connect to {ssh}",
+                            ).run()
+                        results.append(connection_results[ssh])
+
+            for check in checks:
+                if check.ssh is None or (
+                    openssh_result is not None
+                    and openssh_result.passed
+                    and connection_results[check.ssh].passed
+                ):
+                    results.append(check.run())
+
+            failures = tuple(result for result in results if not result.passed)
+            if failures:
+                passed = False
+            if arguments.quiet and failures:
                 print(f"backup: {backup.name}")
-                for result in results:
-                    if result.passed:
-                        print(f"    PASS  {result.description}")
-                    else:
-                        for error in result.errors:
-                            print(f"    FAIL  {error}")
-            if failed:
-                checks_passed = False
-                if parsed_args.quiet:
-                    print(f"backup: {backup.name}")
-                    for result in failed:
-                        for error in result.errors:
-                            print(f"    {error}")
-        return 0 if checks_passed else 1
+            for result in failures if arguments.quiet else results:
+                self._print_result(result)
+
+        return 0 if passed else 1
+
+    @staticmethod
+    def _backup_checks(
+        backup: Backup,
+        backups: ty.Mapping[str, Backup],
+    ) -> tuple[Check, ...]:
+        if not isinstance(backup.source, BackupSource):
+            source = backup.source
+            source_checks = source.check(CheckRole.SOURCE)
+        else:
+            source_backup = backups[backup.source.backup_name]
+            source = source_backup.destination
+            source_checks = source.check(CheckRole.ARTIFACT_SOURCE)
+        return (
+            *source_checks,
+            *(
+                check
+                for transform in backup.transforms
+                for check in transform.check(CheckRole.TRANSFORM)
+            ),
+            *backup.destination.check(CheckRole.DESTINATION),
+        )
+
+    @staticmethod
+    def _unique_checks(checks: ty.Iterable[Check]) -> tuple[Check, ...]:
+        unique: dict[Check, Check] = {}
+        descriptions: dict[str, Check] = {}
+        for check in checks:
+            if check.description in descriptions and descriptions[check.description] != check:
+                raise CheckError(f"ambiguous check description: {check.description!r}")
+            if check in unique and unique[check].description != check.description:
+                raise CheckError(
+                    f"check has conflicting descriptions: "
+                    f"{unique[check].description!r} and {check.description!r}"
+                )
+            descriptions.setdefault(check.description, check)
+            unique.setdefault(check, check)
+        return tuple(unique)
+
+    @staticmethod
+    def _print_result(result: CheckResult) -> None:
+        status = "PASS" if result.passed else "FAIL"
+        print(f"    {status}  {result.description}")
+        if result.passed:
+            return
+        details = dict.fromkeys(
+            line
+            for detail in (result.failure, result.stdout, result.stderr)
+            if detail
+            for line in detail.rstrip().splitlines()
+        )
+        for line in details:
+            print(f"          {line}")
 
     @classmethod
     def add_argparser_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
-            "backup_names",
-            nargs="?",
-            default=None,
-            metavar="BACKUP[,BACKUP...]",
-            type=parse_comma_separated,
-            help="names of specific backups to check (default: check all)",
+            "--config-only",
+            action="store_true",
+            help="only validate the configuration",
         )
         parser.add_argument(
             "-q",
             "--quiet",
             action="store_true",
-            help="only show failed checks",
+            help="show only failed checks",
         )

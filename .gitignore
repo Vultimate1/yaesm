@@ -1,6 +1,7 @@
 /.venv
 /venv
 /build
+/.coverage
 *.pyc
 /__pycache__
 /.vagrant

@@ -1,62 +1,45 @@
+"""Shell-completion support for yaesm's Bash, Fish, and Zsh integrations.
+
+The hidden ``__complete`` subcommand receives the already completed command-line
+words and the word currently being typed, then prints one completion candidate
+per line. It derives commands and options from yaesm's argparse configuration and
+adds context-dependent candidates such as configured targets, schedules, queries,
+and filesystem paths. New subcommands and ordinary argparse arguments are therefore
+completed automatically; only new context-sensitive value types require specialized
+logic here. This is an internal interface used by the packaged shell completion
+scripts, not a user-facing command.
+"""
+
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 
-import yaesm.config
-from yaesm.backup import Backup
-from yaesm.cli import parse_comma_separated
+from yaesm.config import BackupTargetError, Config, ConfigError, parse_config
+from yaesm.names import ALL_TARGET_NAME
+from yaesm.schedule import OnDemandSchedule
 from yaesm.subcommand.findsubcommand import FindQuery
-from yaesm.subcommand.subcommandbase import SubcommandBase
-from yaesm.timeframe import tframe_types
-
-_GLOBAL_OPTIONS = [
-    "-h",
-    "--help",
-    "--version",
-    "-c",
-    "--config",
-    "--log-level",
-    "--log-stderr",
-    "--log-file",
-    "--log-syslog",
-]
-_GLOBAL_VALUE_OPTIONS = {"-c", "--config", "--log-level", "--log-file", "--log-syslog"}
-_SUBCOMMAND_OPTIONS = {
-    "backup": ["-h", "--help", "--keep"],
-    "check": ["-h", "--help", "-q", "--quiet"],
-    "find": [
-        "-h",
-        "--help",
-        "-q",
-        "--query",
-        "-t",
-        "--timeframe",
-        "--timeframes",
-    ],
-    "run": ["-h", "--help", "--lockfile"],
-}
-_LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-_FIND_QUERIES = [query_type.value for query_type in FindQuery.Type]
-_TIMEFRAMES = tframe_types(names=True)
-_PATH_OPTIONS = {"-c", "--config", "--log-file", "--lockfile"}
-_TIMEFRAME_OPTIONS = ("-t", "--timeframe", "--timeframes")
-_TIMEFRAME_LONG_OPTIONS = _TIMEFRAME_OPTIONS[1:]
-_TIMEFRAME_ASSIGNMENTS = tuple(option + "=" for option in _TIMEFRAME_LONG_OPTIONS)
-_QUERY_OPTIONS = ("-q", "--query")
+from yaesm.subcommand.subcommandbase import SubcommandBase, TargetSelectionMode
 
 
 def _matching(values: list[str], current: str) -> list[str]:
-    return [value for value in values if value.startswith(current)]
+    partial = current.casefold()
+    return [value for value in values if value.casefold().startswith(partial)]
 
 
-def _comma_candidates(values: list[str], current: str) -> list[str]:
+def _comma_candidates(
+    values: list[str], current: str, *, exclusive: str | None = None
+) -> list[str]:
     prefix, separator, partial = current.rpartition(",")
-    selected = parse_comma_separated(prefix) if separator else []
-    used = set(selected)
+    selected = list(dict.fromkeys(filter(None, map(str.strip, prefix.split(",")))))
+    if exclusive in selected:
+        return []
+    if selected and exclusive is not None:
+        values = [value for value in values if value != exclusive]
     output_prefix = ",".join(selected) + (separator if selected else "")
     return [
         output_prefix + value
-        for value in values
-        if value not in used and value.startswith(partial.strip())
+        for value in _matching(values, partial.strip())
+        if value not in selected
     ]
 
 
@@ -78,7 +61,6 @@ def _path_candidates(current: str) -> list[str]:
         entries = sorted(directory.iterdir(), key=lambda entry: entry.name)
     except OSError:
         return []
-
     return [
         output_prefix + entry.name + ("/" if entry.is_dir() else "")
         for entry in entries
@@ -87,194 +69,279 @@ def _path_candidates(current: str) -> list[str]:
     ]
 
 
-def _option_value_candidates(
-    previous: str, current: str, subcommand: str | None = None
-) -> list[str] | None:
-    if previous == "--keep":
-        return []
-    if previous == "--log-level":
-        return _matching(_LOG_LEVELS, current.upper())
-    if previous in _PATH_OPTIONS:
-        return _path_candidates(current)
-    if previous == "--log-syslog":
-        return _matching(["/dev/log"], current)
-    if subcommand == "find" and previous in _TIMEFRAME_OPTIONS:
-        return _comma_candidates(_TIMEFRAMES, current)
-    if subcommand == "find" and previous in _QUERY_OPTIONS:
-        return _matching(_FIND_QUERIES, current)
-    return None
+def _option_actions(parser: argparse.ArgumentParser) -> dict[str, argparse.Action]:
+    return {option: action for action in parser._actions for option in action.option_strings}
 
 
-def _assignment_candidates(current: str, subcommand: str | None = None) -> list[str] | None:
+def _option_candidates(parser: argparse.ArgumentParser, current: str) -> list[str]:
+    return _matching(list(_option_actions(parser)), current)
+
+
+def _attached_value(
+    current: str, actions: dict[str, argparse.Action]
+) -> tuple[argparse.Action, str, str] | None:
     option, separator, partial = current.partition("=")
-    if not separator:
-        return None
-    if option in _PATH_OPTIONS:
-        values = _path_candidates(partial)
-    elif option == "--log-level":
-        values = _matching(_LOG_LEVELS, partial.upper())
-    elif option == "--log-syslog":
-        values = _matching(["/dev/log"], partial)
-    elif subcommand == "find" and option in _TIMEFRAME_LONG_OPTIONS:
-        values = _comma_candidates(_TIMEFRAMES, partial)
-    elif subcommand == "find" and option == "--query":
-        values = _matching(_FIND_QUERIES, partial)
-    else:
-        return None
-    return [option + separator + value for value in values]
-
-
-def _config_path(words: list[str], default: Path) -> Path:
-    config_path = default
-    for index, word in enumerate(words):
-        if word in {"-c", "--config"} and index + 1 < len(words):
-            config_path = Path(words[index + 1]).expanduser()
-        elif word.startswith("--config="):
-            config_path = Path(word.removeprefix("--config=")).expanduser()
-        elif word.startswith("-c") and len(word) > 2:
-            config_path = Path(word[2:]).expanduser()
-    return config_path
-
-
-def _backup_names(words: list[str], default_config: Path) -> list[str]:
-    try:
-        backups = yaesm.config.parse_config(_config_path(words, default_config))
-    except yaesm.config.ConfigErrors:
-        return []
-    return [backup.name for backup in backups]
-
-
-def _subcommand_names() -> list[str]:
-    return sorted(
-        cls.name()
-        for cls in SubcommandBase.__subclasses__()
-        if cls.__module__.startswith("yaesm.subcommand.") and not cls.hidden
-    )
-
-
-def _subcommand_index(words: list[str], subcommands: list[str]) -> int | None:
-    skip_value = False
-    for index, word in enumerate(words):
-        if skip_value:
-            skip_value = False
-        elif word in _GLOBAL_VALUE_OPTIONS:
-            skip_value = True
-        elif word in subcommands:
-            return index
+    if separator and option in actions and actions[option].nargs != 0:
+        return actions[option], option + separator, partial
+    for option, action in actions.items():
+        if (
+            len(option) == 2
+            and current.startswith(option)
+            and len(current) > 2
+            and action.nargs != 0
+        ):
+            return action, option, current[2:]
     return None
 
 
-def _has_positional(words: list[str], value_options: set[str]) -> bool:
-    skip_value = False
-    options_ended = False
-    for word in words:
-        if skip_value:
-            skip_value = False
-        elif not options_ended and word == "--":
-            options_ended = True
-        elif not options_ended and word in value_options:
-            skip_value = True
-        elif not options_ended and word.startswith("-"):
-            continue
-        else:
-            return True
-    return False
+@dataclass(frozen=True)
+class _Scan:
+    positionals: tuple[str, ...]
+    value_action: argparse.Action | None = None
+    value_count: int = 0
 
 
-def _find_state(words: list[str]) -> tuple[str | None, list[str], list[str] | None]:
-    backup_name = None
-    positional_query = []
-    additional_query = None
-    iterator = iter(words)
-    for word in iterator:
-        if word in _TIMEFRAME_OPTIONS:
-            additional_query = None
-            next(iterator, None)
+def _scan(words: list[str], parser: argparse.ArgumentParser) -> _Scan:
+    actions = _option_actions(parser)
+    positionals = []
+    index = 0
+    while index < len(words):
+        word = words[index]
+        if word == "--":
+            positionals.extend(words[index + 1 :])
+            break
+        if _attached_value(word, actions) is not None:
+            index += 1
             continue
-        if word.startswith(_TIMEFRAME_ASSIGNMENTS):
-            additional_query = None
+        action = actions.get(word)
+        if action is None:
+            if not word.startswith("-"):
+                positionals.append(word)
+            index += 1
             continue
-        if word in _QUERY_OPTIONS:
-            additional_query = []
+
+        index += 1
+        nargs = action.nargs
+        if nargs == 0:
             continue
-        if word.startswith("--query="):
-            additional_query = [word.removeprefix("--query=")]
+        if nargs is None:
+            if index == len(words):
+                return _Scan(tuple(positionals), action)
+            index += 1
             continue
-        if word.startswith("-"):
-            additional_query = None
+        if isinstance(nargs, int):
+            available = min(nargs, len(words) - index)
+            index += available
+            if available < nargs:
+                return _Scan(tuple(positionals), action, available)
             continue
-        if backup_name is None:
-            backup_name = word
-        elif additional_query is not None:
-            additional_query.append(word)
+        if nargs == "?":
+            if index == len(words):
+                return _Scan(tuple(positionals), action)
+            if not words[index].startswith("-"):
+                index += 1
+            continue
+        if nargs in {"*", "+"}:
+            count = 0
+            while index < len(words) and not words[index].startswith("-"):
+                count += 1
+                index += 1
+            if index == len(words):
+                return _Scan(tuple(positionals), action, count)
+            continue
+        index += 1
+    return _Scan(tuple(positionals))
+
+
+def _minimum_values(action: argparse.Action) -> int:
+    if action.nargs in {"?", "*"}:
+        return 0
+    if isinstance(action.nargs, int):
+        return action.nargs
+    return 1
+
+
+def _subcommand_context(
+    parser: argparse.ArgumentParser, words: list[str]
+) -> tuple[str, argparse.ArgumentParser, int] | None:
+    subparsers = next(
+        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+    )
+    actions = _option_actions(parser)
+    index = 0
+    while index < len(words):
+        word = words[index]
+        if word == "--":
+            index += 1
+            break
+        attached = _attached_value(word, actions)
+        if attached is not None:
+            index += 1
+            continue
+        action = actions.get(word)
+        if action is None:
+            break
+        index += 1
+        if index < len(words) and (
+            action.nargs is None or (action.nargs == "?" and not words[index].startswith("-"))
+        ):
+            index += 1
+    if index >= len(words):
+        return None
+    name = words[index]
+    subparser = subparsers.choices.get(name)
+    if subparser is None:
+        return None
+    subcommand_type = subparser.get_default("subcommand_type")
+    if subcommand_type.hidden:
+        return None
+    return name, subparser, index
+
+
+def _config_path(parser: argparse.ArgumentParser, words: list[str], default: Path) -> Path:
+    action = next(action for action in parser._actions if action.dest == "config")
+    path = default
+    for index, word in enumerate(words):
+        if word in action.option_strings and index + 1 < len(words):
+            path = Path(words[index + 1]).expanduser()
         else:
-            positional_query.append(word)
-    return backup_name, positional_query, additional_query
+            for option in action.option_strings:
+                if word.startswith(option + "="):
+                    path = Path(word.removeprefix(option + "=")).expanduser()
+                elif len(option) == 2 and word.startswith(option) and len(word) > 2:
+                    path = Path(word[2:]).expanduser()
+    return path
+
+
+def _read_config(parser: argparse.ArgumentParser, words: list[str], default: Path) -> Config | None:
+    try:
+        return parse_config(_config_path(parser, words, default))
+    except ConfigError:
+        return None
+
+
+def _schedule_names(config: Config, targets: str, *, on_demand: bool) -> list[str]:
+    names = tuple(dict.fromkeys(filter(None, map(str.strip, targets.split(",")))))
+    try:
+        backups = config.backups_for_targets(*names)
+    except BackupTargetError:
+        return []
+    schedules = [
+        {
+            name
+            for schedule in backup.schedules
+            if not on_demand or isinstance(schedule.trigger, OnDemandSchedule)
+            for name in schedule.names
+        }
+        for backup in backups
+    ]
+    if not schedules:
+        return []
+    selected = set.intersection(*schedules) if on_demand else set.union(*schedules)
+    return sorted(selected)
 
 
 def completion_candidates(words: list[str], current: str, default_config: Path) -> list[str]:
-    """Return candidates for the partial yaesm command line."""
-    subcommands = _subcommand_names()
-    subcommand_index = _subcommand_index(words, subcommands)
+    """Return candidates for an incomplete yaesm command line."""
+    from yaesm.main import _argument_parser, _subcommands
 
-    if subcommand_index is None:
-        if words and (values := _option_value_candidates(words[-1], current)) is not None:
-            return values
-        if (values := _assignment_candidates(current)) is not None:
-            return values
-        if current.startswith("-"):
-            return _matching(_GLOBAL_OPTIONS, current)
-        return _matching(subcommands + _GLOBAL_OPTIONS, current)
+    parser = _argument_parser(_subcommands())
+    context = _subcommand_context(parser, words)
+    config = None
 
-    subcommand = words[subcommand_index]
-    subcommand_words = words[subcommand_index + 1 :]
-    options = _SUBCOMMAND_OPTIONS[subcommand]
+    def configured() -> Config | None:
+        nonlocal config
+        if config is None:
+            config = _read_config(parser, words, default_config)
+        return config
 
-    if (
-        subcommand_words
-        and (values := _option_value_candidates(subcommand_words[-1], current, subcommand))
-        is not None
-    ):
-        return values
-    if (values := _assignment_candidates(current, subcommand)) is not None:
-        return values
-    option_candidates = _matching(options, current)
-    if current.startswith("-"):
-        return option_candidates
-
-    if subcommand == "run":
-        return option_candidates
-
-    if subcommand in {"backup", "check"}:
-        has_positional = _has_positional(
-            subcommand_words, {"--keep"} if subcommand == "backup" else set()
-        )
-        if not has_positional:
-            return (
-                _comma_candidates(_backup_names(words, default_config), current) + option_candidates
+    def value_candidates(
+        action: argparse.Action,
+        partial: str,
+        scan: _Scan,
+        subcommand: str | None = None,
+    ) -> list[str]:
+        if action.choices is not None:
+            return _matching([str(choice) for choice in action.choices], partial)
+        if action.type is Path:
+            return _path_candidates(partial)
+        if action.nargs == "?" and isinstance(action.const, str):
+            return _matching([action.const], partial)
+        if action.dest == "additional_queries" and scan.value_count == 0:
+            return _matching([query.value for query in FindQuery.Type], partial)
+        if action.dest in {"schedule", "schedules"}:
+            value = configured()
+            if value is None or not scan.positionals:
+                return []
+            names = _schedule_names(
+                value,
+                scan.positionals[0],
+                on_demand=action.dest == "schedule" and subcommand == "backup",
             )
-        return option_candidates
+            return (
+                _comma_candidates(names, partial)
+                if action.dest == "schedules"
+                else _matching(names, partial)
+            )
+        return []
 
-    backup_name, positional_query, additional_query = _find_state(subcommand_words)
-    if backup_name is None:
-        return _comma_candidates(_backup_names(words, default_config), current) + option_candidates
-    query = additional_query if additional_query is not None else positional_query
-    query_candidates = _matching(_FIND_QUERIES, current) if not query else []
-    return query_candidates + option_candidates
+    if context is None:
+        scan = _scan(words, parser)
+        actions = _option_actions(parser)
+        if attached := _attached_value(current, actions):
+            action, prefix, partial = attached
+            return [prefix + value for value in value_candidates(action, partial, scan)]
+        visible = [subcommand.name() for subcommand in _subcommands() if not subcommand.hidden]
+        normal = (
+            _option_candidates(parser, current)
+            if current.startswith("-")
+            else _matching(visible, current) + _option_candidates(parser, current)
+        )
+        if scan.value_action is None:
+            return normal
+        values = value_candidates(scan.value_action, current, scan)
+        return values + (normal if scan.value_count >= _minimum_values(scan.value_action) else [])
+
+    subcommand, subparser, subcommand_index = context
+    subcommand_words = words[subcommand_index + 1 :]
+    scan = _scan(subcommand_words, subparser)
+    actions = _option_actions(subparser)
+    if attached := _attached_value(current, actions):
+        action, prefix, partial = attached
+        return [prefix + value for value in value_candidates(action, partial, scan, subcommand)]
+    options = _option_candidates(subparser, current)
+    if scan.value_action is not None:
+        values = value_candidates(scan.value_action, current, scan, subcommand)
+        return values + (options if scan.value_count >= _minimum_values(scan.value_action) else [])
+    if current.startswith("-"):
+        return options
+
+    target_action = next(
+        (action for action in subparser._actions if action.dest == "targets"),
+        None,
+    )
+    if target_action is not None and not scan.positionals:
+        value = configured()
+        targets = [] if value is None else sorted(value.targets_by_name)
+        return _comma_candidates(targets, current, exclusive=ALL_TARGET_NAME) + options
+    if subcommand == "find" and len(scan.positionals) == 1:
+        return _matching([query.value for query in FindQuery.Type], current) + options
+    return options
 
 
 class __CompleteSubcommand(SubcommandBase):
     """Provide shell completion candidates."""
 
+    target_selection = TargetSelectionMode.NONE
     hidden = True
     config_required = False
 
-    def main(self, backups: list[Backup], parsed_args: argparse.Namespace) -> int:
-        del backups
-        words = parsed_args.words
+    def main(self, config: Config, arguments: argparse.Namespace) -> int:
+        del config
+        words = arguments.words
         if words[:1] == ["--"]:
             words = words[1:]
-        for candidate in completion_candidates(words, parsed_args.current, parsed_args.config):
+        for candidate in completion_candidates(words, arguments.current, arguments.config):
             print(candidate)
         return 0
 

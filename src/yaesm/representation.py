@@ -1,0 +1,64 @@
+"""Data representations exchanged between driver capabilities."""
+
+import dataclasses
+import enum
+
+import yaesm.ty as ty
+from yaesm.command import CommandStage
+from yaesm.ssh import SSHTarget
+
+
+class DataProperty(enum.Enum):
+    """Properties preserved while data moves through a pipeline."""
+
+    SNAPSHOT = "snapshot"
+    ARCHIVED = "archived"
+    COMPRESSED = "compressed"
+    ENCRYPTED = "encrypted"
+
+
+class Representation:
+    """Base type for data produced and consumed by driver capabilities."""
+
+    suffix: ty.ClassVar[str] = ""
+
+
+class ReadableTree(Representation):
+    """A directory tree that can be read file by file."""
+
+
+@dataclasses.dataclass(frozen=True)
+class PathTree(ReadableTree):
+    """A directory tree and its relative paths that recursive readers must exclude."""
+
+    path: ty.Path
+    ssh: SSHTarget | None = None
+    excluded_paths: tuple[ty.Path, ...] = dataclasses.field(default=(), kw_only=True)
+
+
+class BlockDevice(Representation):
+    """A readable block device."""
+
+
+class ByteStream(Representation):
+    """A stream of bytes."""
+
+
+@dataclasses.dataclass(frozen=True)
+class CommandStream(ByteStream):
+    """A byte stream produced by a pipeline of external commands."""
+
+    stages: tuple[CommandStage, ...] = ()
+    suffixes: tuple[str, ...] = dataclasses.field(default=(), kw_only=True)
+
+
+class UncompressedStream(CommandStream):
+    """A byte stream that has not been compressed."""
+
+
+class CompressedStream(CommandStream):
+    """A compressed byte stream."""
+
+
+class EncryptedStream(CommandStream):
+    """An encrypted byte stream."""
