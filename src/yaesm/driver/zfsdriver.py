@@ -323,7 +323,7 @@ class ZFSDriver(DriverBase):
                 (
                     *source.stages,
                     CommandStage(
-                        ("zfs", "receive", "-u", "-o", "mountpoint=none", self.dataset),
+                        ("zfs", "receive", "-u", "-o", "mountpoint=none", destination.name),
                         self.ssh,
                     ),
                 )

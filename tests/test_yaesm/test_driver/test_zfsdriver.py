@@ -12,7 +12,7 @@ import voluptuous as vlp
 
 import yaesm.command as command_module
 import yaesm.ty as ty
-from yaesm.backup import Backup, BackupArtifact, BackupError, BackupOperation
+from yaesm.backup import Backup, BackupArtifact, BackupError, BackupOperation, BackupSource
 from yaesm.check import CheckRole
 from yaesm.command import (
     Command,
@@ -488,7 +488,7 @@ def test_cap_store_sends_full_snapshot():
                 "-u",
                 "-o",
                 "mountpoint=none",
-                "backup/home",
+                f"backup/home@{operation().artifact_name}",
             ),
         )
     ]
@@ -758,7 +758,7 @@ def test_cap_import_remote(tmp_path):
                     "-u",
                     "-o",
                     "mountpoint=none",
-                    "backup/home",
+                    f"backup/home@{operation().artifact_name}",
                 )
             ),
         )
@@ -1163,6 +1163,46 @@ def test_zfs_full_incremental_and_lifecycle(
 
     destination_driver.cap_delete((first, second))
     assert destination_driver.cap_list("example") == ()
+
+
+def test_zfs_replication_uses_destination_backup_and_schedule_names(
+    tmp_path: ty.Path,
+    zfs_pools: tuple[str, str],
+) -> None:
+    source_pool, destination_pool = zfs_pools
+    source_dataset = f"{source_pool}/source"
+    destination_dataset = f"{destination_pool}/backup"
+    source_path = tmp_path / "source"
+    _run("zfs", "create", "-o", f"mountpoint={source_path}", source_dataset)
+
+    local = Backup("local", ZFSDriver(source_dataset), ZFSDriver(source_dataset))
+    destination_driver = ZFSDriver(destination_dataset)
+    replica = Backup("offsite", BackupSource("local"), destination_driver)
+    backups = {"local": local, "offsite": replica}
+    created_at = datetime(2026, 8, 27, 12, 30)
+
+    (source_path / "content").write_text("first")
+    first_source = local.execute("hourly", created_at)
+    first = replica.execute("nightly", created_at, backups)
+    assert _snapshots(destination_dataset) == {f"{destination_dataset}@{first.name}"}
+    assert destination_driver.cap_list("offsite") == (first,)
+    assert first.operation.source_artifact_id == local.destination.artifact_id(first_source)
+
+    (source_path / "content").write_text("second")
+    later = created_at + timedelta(minutes=1)
+    second_source = local.execute("hourly", later)
+    second = replica.execute("nightly", later, backups)
+    assert _snapshots(destination_dataset) == {
+        f"{destination_dataset}@{first.name}",
+        f"{destination_dataset}@{second.name}",
+    }
+    assert destination_driver.cap_list("offsite") == (second, first)
+    assert second.operation.source_artifact_id == local.destination.artifact_id(second_source)
+
+    destination_path = tmp_path / "destination"
+    _mount(destination_dataset, destination_path)
+    assert (destination_path / "content").read_text() == "second"
+    assert (destination_path / ".zfs/snapshot" / first.name / "content").read_text() == "first"
 
 
 def test_zfs_skip_unchanged_integration(
