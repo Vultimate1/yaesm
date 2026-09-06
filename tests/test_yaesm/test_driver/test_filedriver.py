@@ -1,5 +1,7 @@
 """Tests for yaesm.driver.filedriver."""
 
+import dataclasses
+import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
@@ -10,7 +12,7 @@ import voluptuous as vlp
 import yaesm.command as command_module
 import yaesm.driver.filedriver as file_module
 import yaesm.ty as ty
-from yaesm.backup import BackupArtifact, BackupOperation
+from yaesm.backup import Backup, BackupArtifact, BackupError, BackupOperation, BackupSource
 from yaesm.check import CheckRole
 from yaesm.command import (
     Command,
@@ -27,6 +29,7 @@ from yaesm.driver.tardriver import TarDriver
 from yaesm.pipeline import Pipeline, PipelineError, PipelineStep
 from yaesm.representation import CommandStream
 from yaesm.ssh import SSHTarget
+from yaesm.subcommand.checksubcommand import CheckSubcommand
 
 
 class RecordingRunner(CommandRunner):
@@ -76,6 +79,21 @@ class RecordingRunner(CommandRunner):
         if self.pipeline_failure is not None:
             raise self.pipeline_failure
         return CommandResult(None, "", (0,) * len(normalized))
+
+
+class ShellSSHRunner(CommandRunner):
+    def pipeline(self, commands, **options):
+        commands = tuple(
+            command.execution_command() if isinstance(command, CommandStage) else command
+            for command in commands
+        )
+        return super().pipeline(
+            tuple(
+                ("sh", "-c", command[-1]) if command[0] == "ssh" else command
+                for command in commands
+            ),
+            **options,
+        )
 
 
 def operation(offset: int = 0) -> BackupOperation:
@@ -417,3 +435,115 @@ def test_retention_keeps_backups_with_shared_name_prefix_separate(tmp_path, home
     assert second_docs.representation.path.read_text() == "backup content"
     assert docs.artifacts() == (second_docs,)
     assert home.artifacts() == (second_home,)
+
+
+@pytest.mark.parametrize("remote", [False, True])
+@pytest.mark.parametrize("initial_skip_unchanged", [False, True])
+def test_file_replication_skips_unchanged_source_across_schedules(
+    tmp_path, remote, initial_skip_unchanged
+):
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"\x00first backup\xff")
+    local_path = tmp_path / "local"
+    offsite_path = tmp_path / "offsite '$(false)"
+    local_path.mkdir()
+    offsite_path.mkdir()
+    target = SSHTarget("ssh://host", tmp_path / "key") if remote else None
+
+    def driver(path):
+        result = FileDriver(path, target)
+        result.runner = ShellSSHRunner()
+        return result
+
+    local = Backup("local", driver(source), driver(local_path))
+    first_source = local.execute("hourly", operation().created_at)
+    replica = Backup(
+        "offsite",
+        BackupSource("local"),
+        driver(offsite_path),
+        skip_unchanged=initial_skip_unchanged,
+    )
+    first = replica.execute("daily", operation().created_at, {"local": local})
+
+    # Recover identity from disk, including when change detection was enabled later.
+    replica = Backup("offsite", BackupSource("local"), driver(offsite_path), skip_unchanged=True)
+    assert replica.artifacts() == (first,)
+    assert replica.execute("weekly", operation(1).created_at, {"local": local}) == first
+    assert tuple(offsite_path.iterdir()) == (first.representation.path,)
+
+    # Different source schedules can produce distinct artifacts at the same timestamp.
+    local.destination.cap_delete((first_source,))
+    source.write_bytes(b"\x00second backup\xff")
+    second_source = local.execute("manual", operation().created_at)
+    with pytest.raises(BackupError, match="already has artifact"):
+        replica.execute("daily", operation(2).created_at, {"local": local})
+    assert tuple(offsite_path.iterdir()) == (first.representation.path,)
+    second = replica.execute("weekly", operation(2).created_at, {"local": local})
+    assert second.operation.source_artifact_id == local.destination.artifact_id(second_source)
+    assert first.representation.path.read_bytes() == b"\x00first backup\xff"
+    assert second.representation.path.read_bytes() == source.read_bytes()
+    assert len(tuple(offsite_path.iterdir())) == 2
+
+    moved = tmp_path / "moved"
+    moved.mkdir()
+    shutil.copy2(second.representation.path, moved)
+    assert FileDriver(moved).cap_list("offsite") == (
+        dataclasses.replace(
+            second,
+            representation=FileStream(moved / second.representation.path.name, suffixes=(".bin",)),
+        ),
+    )
+
+    # Losing metadata must cause a copy, never a false unchanged result.
+    copy = tmp_path / "copy-without-metadata"
+    shutil.copyfile(second.representation.path, copy)
+    copy.replace(second.representation.path)
+    third = replica.execute("monthly", operation(3).created_at, {"local": local})
+    assert third.representation.path != second.representation.path
+    assert third.representation.path.read_bytes() == source.read_bytes()
+
+
+@pytest.mark.parametrize("skip_unchanged", [False, True])
+def test_file_requires_working_metadata_only_for_skip_unchanged(
+    tmp_path, monkeypatch, skip_unchanged
+):
+    destination = tmp_path / "backups"
+    destination.mkdir()
+    started = tmp_path / "transfer-started"
+    source = CommandStream(
+        (CommandStage(("sh", "-c", 'touch "$1"; printf payload', "sh", started)),)
+    )
+    operation_ = dataclasses.replace(
+        operation(), source_artifact_id="source-id", skip_unchanged=skip_unchanged
+    )
+    driver = FileDriver(destination)
+    monkeypatch.setattr(driver._source_id, "write", lambda path, source_id: False)
+
+    if skip_unchanged:
+        with pytest.raises(FileDriverError, match="skip_unchanged requires.*extended attributes"):
+            driver.cap_import(source, operation_)
+        assert not started.exists()
+        assert not tuple(destination.iterdir())
+    else:
+        result = driver.cap_import(source, operation_)
+        assert started.exists()
+        assert result.representation.path.read_bytes() == b"payload"
+        assert tuple(destination.iterdir()) == (result.representation.path,)
+
+
+@pytest.mark.parametrize("skip_unchanged", [False, True])
+def test_file_xattr_check_is_conditional_and_uses_destination_endpoint(tmp_path, skip_unchanged):
+    local = Backup("local", FileDriver(tmp_path / "source"), FileDriver(tmp_path / "local"))
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    replica = Backup(
+        "offsite",
+        BackupSource("local"),
+        FileDriver(tmp_path / "offsite", target),
+        skip_unchanged=skip_unchanged,
+    )
+
+    checks = CheckSubcommand._backup_checks(replica, {"local": local})
+
+    metadata_checks = [check for check in checks if check.description.startswith("xattr tools")]
+    assert len(metadata_checks) == int(skip_unchanged)
+    assert all(check.ssh == target for check in metadata_checks)

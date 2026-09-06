@@ -91,6 +91,7 @@ class CheckSubcommand(SubcommandBase):
                 for check in transform.check(CheckRole.TRANSFORM)
             ),
             *backup.destination.check(CheckRole.DESTINATION),
+            *(backup.destination.check_unchanged() if backup.skip_unchanged else ()),
         )
 
     @staticmethod

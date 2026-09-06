@@ -63,6 +63,7 @@ class BackupOperation:
     previous_backup_names: tuple[str, ...] = dataclasses.field(
         default=(), repr=False, compare=False
     )
+    skip_unchanged: bool = dataclasses.field(default=False, repr=False, compare=False, kw_only=True)
 
     def __post_init__(self) -> None:
         try:
@@ -309,6 +310,7 @@ class Backup:
             operation_created_at,
             source_artifact_id=source_artifact_id,
             previous_backup_names=self.previous_names,
+            skip_unchanged=self.skip_unchanged,
         )
         pipeline = Pipeline(
             source_driver,
@@ -326,7 +328,10 @@ class Backup:
             None,
         )
         if existing is not None:
-            if isinstance(self.source, BackupSource):
+            if (
+                source_artifact_id is not None
+                and source_artifact_id == self.destination.source_artifact_id(existing)
+            ):
                 return existing
             raise BackupError(
                 f"backup {self.name!r} already has artifact {operation.artifact_name!r}"

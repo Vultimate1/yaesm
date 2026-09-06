@@ -1,14 +1,18 @@
 """Tests for yaesm.driver.rsyncdriver."""
 
+import dataclasses
+import os
 import shlex
 import shutil
+import struct
 from datetime import datetime, timedelta
-from unittest import mock
+from uuid import UUID
 
 import pytest
 import voluptuous as vlp
 
 import yaesm.command as command_module
+import yaesm.driver.rsyncdriver as rsync_module
 import yaesm.ty as ty
 from yaesm.backup import Backup, BackupArtifact, BackupOperation, BackupSource
 from yaesm.check import CheckRole
@@ -20,6 +24,8 @@ from yaesm.errors import YaesmValueError
 from yaesm.pipeline import Pipeline, PipelineStep
 from yaesm.representation import PathTree, ReadableTree
 from yaesm.ssh import SSHTarget
+from yaesm.subcommand.checksubcommand import CheckSubcommand
+from yaesm.xattr import XAttr
 
 _RSYNC_OPTIONS = (
     "rsync",
@@ -32,19 +38,19 @@ _RSYNC_OPTIONS = (
     "--delete",
     "--delete-excluded",
     "-s",
+    "--filter=-x user.yaesm.*",
+    "--filter=-x yaesm.*",
+    "--filter=-xsr system.*",
 )
 
 
-def marker(path: ty.Path) -> ty.Path:
-    return path / ".yaesm"
+@pytest.fixture(autouse=True)
+def fixed_uuid(monkeypatch):
+    monkeypatch.setattr(rsync_module, "uuid4", lambda: UUID(int=1))
 
 
-def check_marker(path: ty.Path) -> tuple[str, ...]:
-    return ("sh", "-c", 'test ! -e "$1" && test ! -L "$1"', "sh", str(marker(path)))
-
-
-def write_marker(path: ty.Path, source_id: str = "") -> tuple[str, ...]:
-    return ("sh", "-c", 'set -C; printf %s "$2" > "$1"', "sh", str(marker(path)), source_id)
+def temporary(path: ty.Path) -> ty.Path:
+    return path.with_name(f".{path.name}.tmp-{UUID(int=1).hex}")
 
 
 class RecordingRunner(CommandRunner):
@@ -324,9 +330,9 @@ def test_cap_store_local(tmp_path):
     destination = destination_dir / operation().artifact_name
     assert artifact == BackupArtifact(operation(), RsyncTree(destination))
     assert runner.commands == [
-        check_marker(source.path),
-        (*_RSYNC_OPTIONS, "--checksum", f"{source.path}/", f"{destination}/"),
-        write_marker(destination),
+        ("mkdir", str(temporary(destination))),
+        (*_RSYNC_OPTIONS, "--checksum", f"{source.path}/", f"{temporary(destination)}/"),
+        ("mv", str(temporary(destination)), str(destination)),
     ]
 
 
@@ -347,7 +353,7 @@ def test_cap_store_uses_exclude_patterns(tmp_path):
         "--exclude=.cache/",
         "--exclude=*.tmp",
         f"{source.path}/",
-        f"{destination}/",
+        f"{temporary(destination)}/",
     )
 
 
@@ -427,21 +433,29 @@ def test_cap_store_can_stay_on_one_file_system(tmp_path):
     assert runner.commands[-2].count("--one-file-system") == 1
 
 
-def test_cap_store_marks_replicated_artifact(tmp_path):
+def test_cap_store_stores_replica_identity_before_rename(tmp_path, monkeypatch):
     runner = RecordingRunner()
     source = PathTree(tmp_path / "source")
-    destination_dir = tmp_path / "destination"
+    driver = with_runner(RsyncDriver(tmp_path / "destination"), runner)
     operation_ = replicated_operation()
 
-    artifact = with_runner(RsyncDriver(destination_dir), runner).cap_store(source, operation_)
+    def write(path, value):
+        assert path == temporary(driver.location / operation_.artifact_name)
+        assert value == operation_.source_artifact_id
+        assert runner.commands[-1][0] == "rsync"
+        return True
 
-    destination = destination_dir / operation_.artifact_name
-    assert artifact == BackupArtifact(operation_, RsyncTree(destination))
-    assert runner.commands == [
-        check_marker(source.path),
-        (*_RSYNC_OPTIONS, f"{source.path}/", f"{destination}/"),
-        write_marker(destination, operation_.source_artifact_id or ""),
-    ]
+    monkeypatch.setattr(driver._source_id, "write", write)
+    artifact = driver.cap_store(source, operation_)
+
+    assert artifact == BackupArtifact(
+        operation_, RsyncTree(driver.location / operation_.artifact_name)
+    )
+    assert runner.commands[-1] == (
+        "mv",
+        str(temporary(artifact.representation.path)),
+        str(artifact.representation.path),
+    )
 
 
 def test_cap_store_root_source_has_one_trailing_slash(tmp_path):
@@ -498,14 +512,14 @@ def test_cap_store_local_to_remote(tmp_path):
 
     destination = destination_dir / operation().artifact_name
     assert runner.commands == [
-        check_marker(source.path),
+        target.openssh_command(("mkdir", temporary(destination))),
         (
             *_RSYNC_OPTIONS,
             f"--rsh={shlex.join(('ssh', *target.openssh_options()))}",
             f"{source.path}/",
-            f"user@host:{destination}/",
+            f"user@host:{temporary(destination)}/",
         ),
-        target.openssh_command(write_marker(destination)),
+        target.openssh_command(("mv", temporary(destination), destination)),
     ]
 
 
@@ -519,14 +533,14 @@ def test_cap_store_remote_to_local(tmp_path):
 
     destination = destination_dir / operation().artifact_name
     assert runner.commands == [
-        target.openssh_command(check_marker(source.path)),
+        ("mkdir", str(temporary(destination))),
         (
             *_RSYNC_OPTIONS,
             f"--rsh={shlex.join(('ssh', *target.openssh_options()))}",
             f"user@host:{source.path}/",
-            f"{destination}/",
+            f"{temporary(destination)}/",
         ),
-        write_marker(destination),
+        ("mv", str(temporary(destination)), str(destination)),
     ]
 
 
@@ -554,9 +568,11 @@ def test_cap_store_on_same_remote_endpoint(tmp_path):
 
     destination = destination_dir / operation().artifact_name
     assert runner.commands == [
-        source_target.openssh_command(check_marker(source.path)),
-        destination_target.openssh_command((*_RSYNC_OPTIONS, f"{source.path}/", f"{destination}/")),
-        destination_target.openssh_command(write_marker(destination)),
+        destination_target.openssh_command(("mkdir", temporary(destination))),
+        destination_target.openssh_command(
+            (*_RSYNC_OPTIONS, f"{source.path}/", f"{temporary(destination)}/")
+        ),
+        destination_target.openssh_command(("mv", temporary(destination), destination)),
     ]
 
 
@@ -586,33 +602,33 @@ def test_cap_store_cleans_up_failure(tmp_path):
     assert runner.commands[-1] == (
         "rm",
         "-rf",
-        str(destination),
+        str(temporary(destination)),
     )
 
 
-def test_cap_store_cleans_up_marker_failure(tmp_path):
-    runner = RecordingRunner((None, None, RuntimeError("marker failed"), None))
+def test_cap_store_cleans_up_rename_failure(tmp_path):
+    runner = RecordingRunner((None, None, RuntimeError("rename failed"), None))
     source = PathTree(tmp_path / "source")
     destination_dir = tmp_path / "destination"
 
-    with pytest.raises(RuntimeError, match="marker failed"):
+    with pytest.raises(RuntimeError, match="rename failed"):
         with_runner(RsyncDriver(destination_dir), runner).cap_store(source, operation())
 
     destination = destination_dir / operation().artifact_name
     assert runner.commands[-1] == (
         "rm",
         "-rf",
-        str(destination),
+        str(temporary(destination)),
     )
 
 
 @pytest.mark.parametrize("kind", ["file", "directory", "symlink"])
-def test_cap_store_rejects_source_metadata_collision(tmp_path, kind):
+def test_cap_store_preserves_yaesm_named_source_entries(tmp_path, kind):
     source = tmp_path / "source"
     destination = tmp_path / "destination"
     source.mkdir()
     destination.mkdir()
-    entry = marker(source)
+    entry = source / ".yaesm"
     if kind == "file":
         entry.write_text("user data")
     elif kind == "directory":
@@ -620,11 +636,16 @@ def test_cap_store_rejects_source_metadata_collision(tmp_path, kind):
     else:
         entry.symlink_to(tmp_path / "missing")
 
-    with pytest.raises(RsyncDriverError, match="cannot reserve .yaesm"):
-        RsyncDriver(destination).cap_store(PathTree(source), operation())
+    artifact = RsyncDriver(destination).cap_store(PathTree(source), operation())
 
+    copied = artifact.representation.path / ".yaesm"
+    if kind == "file":
+        assert copied.read_text() == "user data"
+    elif kind == "directory":
+        assert copied.is_dir()
+    else:
+        assert copied.readlink() == entry.readlink()
     assert entry.exists() or entry.is_symlink()
-    assert not any(destination.iterdir())
 
 
 def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
@@ -635,17 +656,15 @@ def test_cap_list_returns_matching_artifacts_newest_first(tmp_path):
         "manual",
         datetime(2026, 8, 27, 12, 31),
     )
-    unmarked = operation(2)
+    unfinished = operation(2)
     for name in (
         older.artifact_name,
         newer.artifact_name,
-        unmarked.artifact_name,
+        temporary(destination / unfinished.artifact_name).name,
         "unrelated",
         "yaesm.other.manual.2026_08_27_12:32.p0000",
     ):
         (destination / name).mkdir(parents=True)
-    for operation_ in (older, newer):
-        marker(destination / operation_.artifact_name).touch()
 
     artifacts = RsyncDriver(destination).cap_list("example")
 
@@ -676,18 +695,6 @@ def test_cap_list_remote(tmp_path):
             )
         ),
     ]
-
-
-def test_cap_list_reports_unreadable_metadata(tmp_path):
-    path = tmp_path / operation().artifact_name
-    driver = RsyncDriver(tmp_path)
-    driver.runner = mock.Mock()
-    driver.runner.run.side_effect = (
-        CommandResult(str(path), "", (0,)),
-        CommandResult(None, "read failed", (1,)),
-    )
-    with pytest.raises(RsyncDriverError, match="could not read rsync metadata"):
-        driver.cap_list("example")
 
 
 def test_formats_local_and_remote_artifact_locators(tmp_path):
@@ -832,8 +839,42 @@ def test_rsync_integration(tmp_path):
     assert not any(destination.iterdir())
 
 
+def test_rsync_preserves_access_and_default_acls(tmp_path):
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    destination.mkdir()
+    (source / "content").write_text("payload")
+    # Linux ACL encoding: owner, named user, group, mask, other.
+    acl = struct.pack("<I", 2) + b"".join(
+        struct.pack("<HHI", tag, permissions, uid)
+        for tag, permissions, uid in (
+            (1, 7, 0xFFFFFFFF),
+            (2, 5, 1234),
+            (4, 5, 0xFFFFFFFF),
+            (16, 5, 0xFFFFFFFF),
+            (32, 0, 0xFFFFFFFF),
+        )
+    )
+    for path in (source, source / "content"):
+        os.setxattr(path, "system.posix_acl_access", acl)
+    os.setxattr(source, "system.posix_acl_default", acl)
+
+    driver = RsyncDriver(destination)
+    base = None
+    for offset in (0, 1):
+        artifact = driver.cap_store(PathTree(source), operation(offset), base)
+        base = artifact.representation
+        for path in (base.path, base.path / "content"):
+            assert os.getxattr(path, "system.posix_acl_access") == acl
+        assert os.getxattr(base.path, "system.posix_acl_default") == acl
+
+
 @pytest.mark.parametrize("remote", [False, True])
-def test_rsync_replication_skips_unchanged_source_across_schedules(tmp_path, remote):
+@pytest.mark.parametrize("initial_skip_unchanged", [False, True])
+def test_rsync_replication_skips_unchanged_source_across_schedules(
+    tmp_path, remote, initial_skip_unchanged
+):
     if shutil.which("rsync") is None:
         pytest.skip("rsync is not installed")
 
@@ -849,12 +890,14 @@ def test_rsync_replication_skips_unchanged_source_across_schedules(tmp_path, rem
         DirectoryDriver(source, target),
         with_runner(RsyncDriver(local_path, target), ShellSSHRunner()),
     )
+    assert XAttr("yaesm.source-artifact", CommandRunner()).write(source, "inherited-id")
     first_source = local.execute("hourly", operation().created_at)
+    assert local.artifacts()[0].operation.source_artifact_id is None
     replica = Backup(
         "offsite",
         BackupSource("local"),
         with_runner(RsyncDriver(offsite_path, target), ShellSSHRunner()),
-        skip_unchanged=True,
+        skip_unchanged=initial_skip_unchanged,
     )
     first = replica.execute("daily", operation().created_at, {"local": local})
 
@@ -878,12 +921,14 @@ def test_rsync_replication_skips_unchanged_source_across_schedules(tmp_path, rem
     assert len(replica.artifacts()) == 2
     assert (first.representation.path / "content").read_text() == "first"
     assert (second.representation.path / "content").read_text() == "second version"
-    assert marker(first.representation.path).read_text() == local.destination.artifact_id(
-        first_source
-    )
-    assert marker(second.representation.path).read_text() == local.destination.artifact_id(
-        second_source
-    )
+    assert RsyncDriver(offsite_path)._source_id.read(
+        first.representation.path
+    ) == local.destination.artifact_id(first_source)
+    assert RsyncDriver(offsite_path)._source_id.read(
+        second.representation.path
+    ) == local.destination.artifact_id(second_source)
+
+    assert tuple(path.name for path in second.representation.path.iterdir()) == ("content",)
 
     moved = tmp_path / "moved"
     shutil.copytree(first.representation.path, moved / first.name)
@@ -904,7 +949,7 @@ def test_rsync_metadata_preserves_source_identity_text(tmp_path):
 
     artifact = driver.cap_store(PathTree(source), operation_)
 
-    assert marker(artifact.representation.path).read_text() == operation_.source_artifact_id
+    assert driver._source_id.read(artifact.representation.path) == operation_.source_artifact_id
     assert driver.cap_list("example") == (artifact,)
 
 
@@ -938,3 +983,81 @@ def test_rsync_does_not_copy_nested_destination(tmp_path, alias):
     assert (artifact / "content").read_text() == "backup content"
     assert (artifact / "backups1fooX" / "included").read_text() == "must be copied"
     assert not (artifact / destination.name).exists()
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_rsync_only_lists_completed_transfers(tmp_path, monkeypatch, fail):
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    destination.mkdir()
+    (source / "content").write_text("payload")
+    driver = RsyncDriver(destination)
+    run = driver.runner.run
+
+    def observe(command, **options):
+        result = run(command, **options)
+        if command[0] == "rsync":
+            assert driver.cap_list("example") == ()
+            assert not (destination / operation().artifact_name).exists()
+            if fail:
+                raise RuntimeError("transfer failed")
+        return result
+
+    monkeypatch.setattr(driver.runner, "run", observe)
+    if fail:
+        with pytest.raises(RuntimeError, match="transfer failed"):
+            driver.cap_store(PathTree(source), operation())
+        assert not tuple(destination.iterdir())
+    else:
+        artifact = driver.cap_store(PathTree(source), operation())
+        assert driver.cap_list("example") == (artifact,)
+        assert tuple(destination.iterdir()) == (artifact.representation.path,)
+
+
+@pytest.mark.parametrize("skip_unchanged", [False, True])
+def test_rsync_requires_working_metadata_only_for_skip_unchanged(
+    tmp_path, monkeypatch, skip_unchanged
+):
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    destination.mkdir()
+    (source / "content").write_text("payload")
+    driver = RsyncDriver(destination)
+    assert driver._source_id.write(source, "must-not-inherit")
+    user_attr = XAttr("example", CommandRunner())
+    assert user_attr.write(source, "directory attribute")
+    assert user_attr.write(source / "content", "file attribute")
+    monkeypatch.setattr(driver._source_id, "write", lambda path, value: False)
+    operation_ = dataclasses.replace(replicated_operation(), skip_unchanged=skip_unchanged)
+
+    if skip_unchanged:
+        with pytest.raises(RsyncDriverError, match="skip_unchanged requires.*extended attributes"):
+            driver.cap_store(RsyncTree(source), operation_)
+        assert not tuple(destination.iterdir())
+    else:
+        artifact = driver.cap_store(RsyncTree(source), operation_)
+        assert (artifact.representation.path / "content").read_text() == "payload"
+        assert driver.cap_list("example")[0].operation.source_artifact_id is None
+        assert tuple(destination.iterdir()) == (artifact.representation.path,)
+        assert user_attr.read(artifact.representation.path) == "directory attribute"
+        assert user_attr.read(artifact.representation.path / "content") == "file attribute"
+
+
+@pytest.mark.parametrize("skip_unchanged", [False, True])
+def test_rsync_xattr_check_is_conditional_and_uses_destination_endpoint(tmp_path, skip_unchanged):
+    local = Backup("local", DirectoryDriver(tmp_path / "source"), RsyncDriver(tmp_path / "local"))
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    replica = Backup(
+        "offsite",
+        BackupSource("local"),
+        RsyncDriver(tmp_path / "offsite", target),
+        skip_unchanged=skip_unchanged,
+    )
+
+    checks = CheckSubcommand._backup_checks(replica, {"local": local})
+
+    metadata_checks = [check for check in checks if check.description.startswith("xattr tools")]
+    assert len(metadata_checks) == int(skip_unchanged)
+    assert all(check.ssh == target for check in metadata_checks)

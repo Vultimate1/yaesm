@@ -126,6 +126,8 @@ Yaesm supports only non-interactive OpenSSH public-key authentication; password 
 
 The optional `skip_unchanged` field is a boolean that defaults to `false`. When enabled and an earlier artifact exists, yaesm compares the current source with the newest artifact for the backup and skips the pipeline if they are unchanged, regardless of which schedule created that artifact. Direct pipelines require a destination driver that supports change detection; pipelines that copy an existing backup compare artifact identities. If yaesm cannot determine whether the source changed, it reports a warning and creates the backup normally.
 
+For `file` and `rsync` destinations, `skip_unchanged` requires a destination filesystem that supports user extended attributes (xattrs).
+
 ### SCHEDULES
 
 The optional `schedules` field is a mapping of schedule names to schedule definitions. Schedule names follow the same rules as backup names. A schedule may also have a `previous_names` list, which preserves its association with artifacts created under earlier names after the schedule is renamed.
@@ -214,6 +216,8 @@ As a source, the `file` driver reads the configured file without modifying its c
 #### DESTINATION
 
 As a destination, the `file` driver writes the byte stream produced by the pipeline to a new artifact file beneath the configured directory. Filename suffixes contributed by the source and transformation drivers are preserved. Suffixes accumulate in pipeline order, so `tar` followed by `zstd` and `gpg` produces a filename ending in `.tar.zst.gpg`.
+
+The `file` driver supports `skip_unchanged` when copying artifacts from another backup. Live file sources do not support `skip_unchanged`.
 
 ## rsync
 

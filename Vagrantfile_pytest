@@ -28,6 +28,9 @@ Vagrant.configure("2") do |config|
       # RSYNC (already installed)
       ###apt-get install -y rsync
 
+      # FILE REPLICA METADATA
+      apt-get install -y attr
+
       # BTRFS
       apt-get install -y btrfs-progs
 

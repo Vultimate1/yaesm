@@ -2,7 +2,9 @@
 
 import dataclasses
 import shlex
+from functools import cached_property
 from pathlib import Path
+from uuid import uuid4
 
 import voluptuous as vlp
 
@@ -14,6 +16,7 @@ from yaesm.driver.driverbase import DriverBase, DriverError, GlobalSettings
 from yaesm.errors import YaesmValueError
 from yaesm.representation import PathTree, Representation
 from yaesm.ssh import SSHTarget, command_for_ssh, same_endpoint
+from yaesm.xattr import XAttr
 
 
 class RsyncDriverError(DriverError):
@@ -58,9 +61,12 @@ class RsyncDriver(DriverBase):
     def name(cls) -> str:
         return "rsync"
 
-    @staticmethod
-    def _marker(path: ty.Path) -> ty.Path:
-        return path / ".yaesm"
+    @cached_property
+    def _source_id(self) -> XAttr:
+        return XAttr("yaesm.source-artifact", self.runner, self.ssh)
+
+    def check_unchanged(self) -> tuple[Check, ...]:
+        return (self._source_id.check(),)
 
     @staticmethod
     def config_schema() -> vlp.Schema:
@@ -163,14 +169,12 @@ class RsyncDriver(DriverBase):
     ) -> bckp.BackupArtifact[RsyncTree]:
         if base is not None and not same_endpoint(base.ssh, self.ssh):
             raise RsyncDriverError("rsync base and destination use different SSH endpoints")
-        replica = isinstance(source, RsyncTree)
-        if (source.excluded_paths or replica) and _can_override_protected_filters(
-            self.extra_options
-        ):
+        if _can_override_protected_filters(self.extra_options):
             raise RsyncDriverError(
                 "rsync extra_options could override required protected-path filters"
             )
         destination = RsyncTree(self.location / operation.artifact_name, self.ssh)
+        temporary = self.location / f".{operation.artifact_name}.tmp-{uuid4().hex}"
         command: list[str | ty.Path] = [
             "rsync",
             "--archive",
@@ -183,52 +187,33 @@ class RsyncDriver(DriverBase):
             "--delete",
             "--delete-excluded",
             "-s",
-            *(("--exclude=/.yaesm",) if replica else ()),
+            "--filter=-x user.yaesm.*",
+            "--filter=-x yaesm.*",
+            # Custom xattr filters replace rsync's default namespace filtering.
+            # Protect receiver ACLs even with --delete-excluded.
+            "--filter=-xsr system.*",
             *(f"--exclude={pattern}" for pattern in self.exclude),
             *(f"--exclude={self._exclude_pattern(path)}" for path in source.excluded_paths),
             *self.extra_options,
         ]
         if base is not None:
             command.append(f"--link-dest={base.path}")
-        command.extend((_directory(source.path), _directory(destination.path)))
+        command.extend((_directory(source.path), _directory(temporary)))
         rsync_command = self._command(source.ssh, destination.ssh, command)
 
-        if not replica:
-            result = self.runner.run(
-                command_for_ssh(
-                    source.ssh,
-                    (
-                        "sh",
-                        "-c",
-                        'test ! -e "$1" && test ! -L "$1"',
-                        "sh",
-                        self._marker(source.path),
-                    ),
-                ),
-                check=False,
-            )
-            if result.returncode:
-                raise RsyncDriverError(
-                    f"cannot reserve .yaesm metadata file in source {source.path}"
-                )
-
+        self.runner.run(command_for_ssh(self.ssh, ("mkdir", temporary)))
         try:
             self.runner.run(rsync_command)
-            self.runner.run(
-                command_for_ssh(
-                    self.ssh,
-                    (
-                        "sh",
-                        "-c",
-                        'set -C; printf %s "$2" > "$1"',
-                        "sh",
-                        self._marker(destination.path),
-                        operation.source_artifact_id or "",
-                    ),
-                )
-            )
+            if operation.source_artifact_id is not None:
+                stored = self._source_id.write(temporary, operation.source_artifact_id)
+                if operation.skip_unchanged and not stored:
+                    raise RsyncDriverError(
+                        f"skip_unchanged requires writable and readable extended attributes "
+                        f"at {self.location}"
+                    )
+            self.runner.run(command_for_ssh(self.ssh, ("mv", temporary, destination.path)))
         except BaseException:
-            self._delete((destination,), check=False)
+            self._delete((temporary,), check=False)
             raise
         return bckp.BackupArtifact(operation, destination)
 
@@ -264,25 +249,9 @@ class RsyncDriver(DriverBase):
                 operation = bckp.BackupOperation.from_artifact_name(backup_name, path.name)
             except YaesmValueError:
                 continue
-            result = self.runner.run(
-                command_for_ssh(
-                    self.ssh,
-                    (
-                        "sh",
-                        "-c",
-                        'test -f "$1" || exit 3; cat "$1"',
-                        "sh",
-                        self._marker(path),
-                    ),
-                ),
-                capture_output=True,
-                check=False,
+            operation = dataclasses.replace(
+                operation, source_artifact_id=self._source_id.read(path) or None
             )
-            if result.returncode == 3:
-                continue
-            if result.returncode:
-                raise RsyncDriverError(f"could not read rsync metadata: {self._marker(path)}")
-            operation = dataclasses.replace(operation, source_artifact_id=result.stdout or None)
             artifacts.append(bckp.BackupArtifact(operation, RsyncTree(path, self.ssh)))
         return tuple(
             sorted(artifacts, key=lambda artifact: artifact.operation.instant, reverse=True)
@@ -299,7 +268,7 @@ class RsyncDriver(DriverBase):
         trees = tuple(artifact.representation for artifact in artifacts)
         if any(not same_endpoint(tree.ssh, self.ssh) for tree in trees):
             raise RsyncDriverError("rsync artifact uses a different SSH endpoint")
-        self._delete(trees)
+        self._delete(tuple(tree.path for tree in trees))
 
     def _command(
         self,
@@ -323,15 +292,11 @@ class RsyncDriver(DriverBase):
             command[-1] = _remote_directory(destination, Path(command[-1]))
         return tuple(str(argument) for argument in command)
 
-    def _delete(self, trees: ty.Sequence[RsyncTree], *, check: bool = True) -> None:
-        if not trees:
+    def _delete(self, paths: ty.Sequence[ty.Path], *, check: bool = True) -> None:
+        if not paths:
             return
-        paths = tuple(tree.path for tree in trees)
         self.runner.run(
-            command_for_ssh(
-                trees[0].ssh,
-                ("rm", "-rf", *paths),
-            ),
+            command_for_ssh(self.ssh, ("rm", "-rf", *paths)),
             check=check,
         )
 

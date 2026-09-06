@@ -934,7 +934,11 @@ def test_backup_execute_replicates_newest_artifact_with_matching_bases():
     )
 
 
-def test_backup_execute_does_not_replicate_same_artifact_twice():
+@pytest.mark.parametrize("stored_source_schedule", ["hourly", "manual", None])
+@pytest.mark.parametrize("skip_unchanged", [False, True])
+def test_backup_execute_checks_identity_before_reusing_replica(
+    stored_source_schedule, skip_unchanged
+):
     source_artifact = artifact("hourly", 12, "local")
     source_driver = ArtifactDriver((source_artifact,))
     source_backup = bckp.Backup(
@@ -942,19 +946,30 @@ def test_backup_execute_does_not_replicate_same_artifact_twice():
         SourceDriver(),
         source_driver,
     )
-    existing = artifact("daily", 12, "offsite", ByteStream())
+    source_id = (
+        artifact(stored_source_schedule, 12, "local").name
+        if stored_source_schedule is not None
+        else None
+    )
+    existing = bckp.BackupArtifact(
+        bckp.BackupOperation("offsite", "daily", source_artifact.operation.created_at, source_id),
+        ByteStream(),
+    )
     destination = StreamDestinationDriver((existing,))
-    backup = bckp.Backup("offsite", bckp.BackupSource("local"), destination)
-
-    result = backup.execute(
-        "daily",
-        datetime(2026, 8, 27, 13),
-        {"local": source_backup},
+    backup = bckp.Backup(
+        "offsite", bckp.BackupSource("local"), destination, skip_unchanged=skip_unchanged
     )
 
-    assert result == existing
+    if stored_source_schedule == "hourly":
+        result = backup.execute("daily", datetime(2026, 8, 27, 13), {"local": source_backup})
+        assert result == existing
+    else:
+        with pytest.raises(bckp.BackupError, match="already has artifact"):
+            backup.execute("daily", datetime(2026, 8, 27, 13), {"local": source_backup})
+
     assert source_driver.export_call is None
     assert destination.call is None
+    assert destination.artifacts == (existing,)
 
 
 def test_backup_execute_skips_unchanged_replication_across_schedules():

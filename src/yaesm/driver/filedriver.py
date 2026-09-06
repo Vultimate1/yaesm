@@ -1,6 +1,7 @@
 """Plain file source and destination driver."""
 
 import dataclasses
+from functools import cached_property
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,6 +15,7 @@ from yaesm.driver.driverbase import DriverBase, DriverError, GlobalSettings
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, PathTree
 from yaesm.ssh import SSHTarget, command_for_ssh, same_endpoint
+from yaesm.xattr import XAttr
 
 
 class FileDriverError(DriverError):
@@ -116,6 +118,13 @@ class FileDriver(DriverBase):
     def artifact_roots(self) -> tuple[PathTree, ...]:
         return (PathTree(self.location, self.ssh),)
 
+    @cached_property
+    def _source_id(self) -> XAttr:
+        return XAttr("yaesm.source-artifact", self.runner, self.ssh)
+
+    def check_unchanged(self) -> tuple[Check, ...]:
+        return (self._source_id.check(),)
+
     def cap_source(self) -> FileStream:
         return FileStream(self.location, self.ssh, suffixes=self.location.suffixes)
 
@@ -129,6 +138,14 @@ class FileDriver(DriverBase):
         destination = self.location / artifact_name
         temporary = self.location / f".{artifact_name}.tmp-{uuid4().hex}"
         try:
+            if operation.source_artifact_id is not None:
+                self.runner.run(command_for_ssh(self.ssh, ("touch", temporary)))
+                stored = self._source_id.write(temporary, operation.source_artifact_id)
+                if operation.skip_unchanged and not stored:
+                    raise FileDriverError(
+                        f"skip_unchanged requires writable and readable extended attributes "
+                        f"at {self.location}"
+                    )
             self.runner.pipeline(
                 (
                     *source.stages,
@@ -169,6 +186,9 @@ class FileDriver(DriverBase):
                 operation, suffixes = _operation_and_suffixes(backup_name, path.name)
             except YaesmValueError:
                 continue
+            operation = dataclasses.replace(
+                operation, source_artifact_id=self._source_id.read(path) or None
+            )
             artifacts.append(
                 bckp.BackupArtifact(
                     operation,

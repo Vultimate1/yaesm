@@ -221,6 +221,10 @@ class DriverBase(abc.ABC):
         """Return this driver's additional feasibility checks."""
         return ()
 
+    def check_unchanged(self) -> tuple[Check, ...]:
+        """Return read-only checks required for skipping unchanged backups."""
+        return ()
+
     def _check_ssh(self) -> SSHTarget | None:
         """Return the SSH connection on which this driver's checks run."""
         return self.ssh
