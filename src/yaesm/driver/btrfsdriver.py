@@ -2,6 +2,7 @@
 
 import dataclasses
 from pathlib import Path
+from threading import Lock
 from uuid import UUID, uuid4
 
 import voluptuous as vlp
@@ -14,6 +15,8 @@ from yaesm.driver.driverbase import DriverBase, DriverError, GlobalSettings, cap
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, DataProperty, PathTree, Representation
 from yaesm.ssh import SSHTarget, command_for_ssh, same_endpoint
+
+_receive_lock = Lock()
 
 
 class BtrfsDriverError(DriverError):
@@ -257,24 +260,32 @@ class BtrfsDriver(DriverBase):
         received = BtrfsSubvolume(self.location / source.subvolume_name, self.ssh)
         destination = BtrfsSubvolume(self.location / operation.artifact_name, self.ssh)
         stored = received
-        try:
-            self.runner.pipeline(
-                (
-                    *source.stages,
-                    CommandStage(("btrfs", "receive", self.location), self.ssh),
-                )
-            )
+        # Receive uses the source name until rename; cleanup must own that name.
+        with _receive_lock:
             self.runner.run(
                 command_for_ssh(
                     self.ssh,
-                    ("mv", "-T", "--", received.path, destination.path),
+                    ("sh", "-c", 'test ! -e "$1" && test ! -L "$1"', "sh", received.path),
                 )
             )
-            stored = destination
-            snapshot = self._read_snapshot(destination)
-        except BaseException:
-            self._delete((stored,), check=False)
-            raise
+            try:
+                self.runner.pipeline(
+                    (
+                        *source.stages,
+                        CommandStage(("btrfs", "receive", self.location), self.ssh),
+                    )
+                )
+                self.runner.run(
+                    command_for_ssh(
+                        self.ssh,
+                        ("mv", "-T", "--", received.path, destination.path),
+                    )
+                )
+                stored = destination
+                snapshot = self._read_snapshot(destination)
+            except BaseException:
+                self._delete((stored,), check=False)
+                raise
 
         return self._artifact(operation, snapshot)
 

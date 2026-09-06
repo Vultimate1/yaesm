@@ -260,7 +260,7 @@ A [`file`](#file) destination may store the full send stream, appending `.btrfs`
 
 As a destination, the `btrfs` driver stores read-only snapshot artifacts beneath the configured location. When the source is on the same system, yaesm first runs `btrfs subvolume snapshot -r`. If the source is on another system or the snapshot command exits with a failure status, yaesm falls back to piping `btrfs send` into `btrfs receive`.
 
-When matching previous snapshots exist at both ends, the fallback uses `-p` for an incremental transfer. The resulting artifact is still a complete snapshot. A `btrfs` destination accepts only an unmodified Btrfs send stream and supports `skip_unchanged`.
+When matching previous snapshots exist at both ends, yaesm transfers only the changes. Each backup remains a complete snapshot. Btrfs destinations support `skip_unchanged`.
 
 ## zfs
 

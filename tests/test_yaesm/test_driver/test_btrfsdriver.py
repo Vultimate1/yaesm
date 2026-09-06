@@ -2,7 +2,9 @@
 
 import dataclasses
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from threading import Event
 from uuid import UUID
 
 import pytest
@@ -12,7 +14,14 @@ import yaesm.command as command_module
 import yaesm.ty as ty
 from yaesm.backup import Backup, BackupArtifact, BackupOperation
 from yaesm.check import CheckRole
-from yaesm.command import Command, CommandResult, CommandRunner, CommandStage, PipelineCommand
+from yaesm.command import (
+    Command,
+    CommandError,
+    CommandResult,
+    CommandRunner,
+    CommandStage,
+    PipelineCommand,
+)
 from yaesm.driver.btrfsdriver import (
     BtrfsDriver,
     BtrfsDriverError,
@@ -626,7 +635,7 @@ def test_cap_store_sends_between_different_endpoints(
     )
     source = BtrfsSubvolume(tmp_path / "source", source_target)
     destination_dir = tmp_path / "destination"
-    runner = RecordingRunner((1, 1, 0, 0, 0, 0, 1))
+    runner = RecordingRunner((1, 1, 0, 0, 0, 0, 0, 1))
 
     with_runner(BtrfsDriver(destination_dir, destination_target), runner).cap_store(
         source,
@@ -926,13 +935,16 @@ def test_cap_import_cleans_up_failed_receive(tmp_path):
     with pytest.raises(RuntimeError, match="receive failed"):
         with_runner(BtrfsDriver(tmp_path), runner).cap_import(stream, operation())
 
-    assert runner.commands == [("btrfs", "subvolume", "delete", str(tmp_path / "snapshot"))]
+    assert runner.commands == [
+        ("sh", "-c", 'test ! -e "$1" && test ! -L "$1"', "sh", str(tmp_path / "snapshot")),
+        ("btrfs", "subvolume", "delete", str(tmp_path / "snapshot")),
+    ]
 
 
 def test_cap_import_reads_received_snapshot_uuid(tmp_path):
     received_uuid = UUID("22222222-2222-2222-2222-222222222222")
     runner = RecordingRunner(
-        stdouts=(None, _snapshot_output(received_uuid=received_uuid)),
+        stdouts=(None, None, _snapshot_output(received_uuid=received_uuid)),
     )
     stream = BtrfsStream(
         (CommandStage(("btrfs", "send", tmp_path / "snapshot")),),
@@ -1342,6 +1354,73 @@ def test_btrfs_send_receive_integration(btrfs_filesystem):
                     capture_output=True,
                     check=False,
                 )
+
+
+def test_btrfs_receive_preserves_existing_snapshot(btrfs_filesystem):
+    source = btrfs_filesystem / "source"
+    destination = btrfs_filesystem / "destination"
+    subprocess.run(("btrfs", "subvolume", "create", str(source)), check=True)
+    (source / "content").write_text("existing backup")
+    destination.mkdir()
+    source_driver = BtrfsDriver(btrfs_filesystem)
+    driver = BtrfsDriver(destination)
+    incoming = source_driver.cap_store(BtrfsSubvolume(source), operation())
+    existing = driver.cap_store(BtrfsSubvolume(source), operation())
+    try:
+        with pytest.raises(CommandError):
+            driver.cap_import(
+                source_driver.cap_export(incoming.representation),
+                dataclasses.replace(operation(), backup_name="other"),
+            )
+        assert (existing.representation.path / "content").read_text() == "existing backup"
+    finally:
+        driver.cap_delete((existing,))
+        source_driver.cap_delete((incoming,))
+        subprocess.run(("btrfs", "subvolume", "delete", str(source)), check=True)
+
+
+def test_btrfs_overlapping_receives_succeed(btrfs_filesystem, monkeypatch):
+    source = btrfs_filesystem / "source"
+    destination = btrfs_filesystem / "destination"
+    subprocess.run(("btrfs", "subvolume", "create", str(source)), check=True)
+    (source / "content").write_text("backup content")
+    destination.mkdir()
+    source_driver = BtrfsDriver(source)
+    snapshot = source_driver.cap_snapshot(source_driver.cap_source())
+    stream = source_driver.cap_export(snapshot)
+    first, second = BtrfsDriver(destination), BtrfsDriver(destination)
+    ready, release, second_started = Event(), Event(), Event()
+    run = first.runner.run
+
+    def pause_before_rename(command, **options):
+        if command[0] == "mv":
+            ready.set()
+            assert release.wait(10)
+        return run(command, **options)
+
+    def receive_second():
+        second_started.set()
+        return second.cap_import(stream, dataclasses.replace(operation(), backup_name="other"))
+
+    monkeypatch.setattr(first.runner, "run", pause_before_rename)
+    try:
+        with ThreadPoolExecutor(2) as executor:
+            first_result = executor.submit(first.cap_import, stream, operation())
+            try:
+                assert ready.wait(5)
+                second_result = executor.submit(receive_second)
+                assert second_started.wait(5)
+                with pytest.raises(TimeoutError):
+                    second_result.result(timeout=0.5)
+            finally:
+                release.set()
+            for future in (first_result, second_result):
+                artifact = future.result(timeout=5)
+                assert (artifact.representation.path / "content").read_text() == "backup content"
+    finally:
+        first.cap_delete((*first.cap_list("example"), *first.cap_list("other")))
+        source_driver.cap_cleanup(snapshot)
+        subprocess.run(("btrfs", "subvolume", "delete", str(source)), check=True)
 
 
 def test_btrfs_skip_unchanged_integration(btrfs_filesystem):
