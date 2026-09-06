@@ -1,6 +1,8 @@
 """Tests for yaesm.pipeline."""
 
 import logging
+import shlex
+import shutil
 from datetime import datetime
 from pathlib import Path
 from unittest import mock
@@ -11,7 +13,7 @@ import voluptuous as vlp
 import yaesm.command as command_module
 import yaesm.ty as ty
 from yaesm.backup import BackupArtifact, BackupOperation
-from yaesm.command import CommandError, CommandResult, CommandStage
+from yaesm.command import CommandError, CommandResult, CommandRunner, CommandStage
 from yaesm.config import parse_config
 from yaesm.driver.btrfsdriver import BtrfsDriver
 from yaesm.driver.driverbase import DriverBase, DriverError, capability
@@ -340,13 +342,38 @@ def test_pipeline_normalizes_paths_before_excluding_artifact_roots():
     )
 
 
-def test_pipeline_excludes_artifact_root_on_same_remote_endpoint(tmp_path):
+@pytest.fixture(params=("sh", "bash"))
+def remote_shell_runner(request, tmp_path, monkeypatch):
+    shell = shutil.which(request.param)
+    if shell is None:
+        pytest.skip(f"{request.param} is not installed")
+    commands = tmp_path / "commands"
+    commands.mkdir()
+    (commands / "sh").symlink_to(shell)
+    monkeypatch.setenv("PATH", str(commands))
+    runner = mock.Mock()
+    # Replace only the SSH transport; execute the actual quoted remote command.
+    runner.run.side_effect = lambda command, **options: CommandRunner().run(
+        (shell, "-c", command[-1]), **options
+    )
+    return runner
+
+
+def test_pipeline_excludes_artifact_root_on_same_remote_endpoint(tmp_path, remote_shell_runner):
+    source_path = tmp_path / "source '\n"
+    destination_path = source_path / "backups \n"
+    destination_path.mkdir(parents=True)
+    source_alias = tmp_path / "source alias '$(false)\n"
+    destination_alias = tmp_path / "destination alias '$(false)\n"
+    source_alias.symlink_to(source_path, target_is_directory=True)
+    destination_alias.symlink_to(destination_path, target_is_directory=True)
     source_target = SSHTarget("ssh://host", tmp_path / "source-key")
     destination_target = SSHTarget("ssh://host", tmp_path / "destination-key")
     source = SourceDriver()
-    source.output = PathTree(Path("/source"), source_target)
+    source.output = PathTree(source_alias, source_target)
     exporter = ExportDriver()
-    destination = PathDestinationDriver(Path("/source/backups"), destination_target)
+    destination = PathDestinationDriver(destination_alias, destination_target)
+    destination.runner = remote_shell_runner
 
     Pipeline(source, destination, (exporter,)).execute(
         BackupOperation("home", "hourly", datetime(2026, 8, 27, 12, 30))
@@ -354,10 +381,38 @@ def test_pipeline_excludes_artifact_root_on_same_remote_endpoint(tmp_path):
 
     assert exporter.call is not None
     assert exporter.call[0] == PathTree(
-        Path("/source"),
+        source_alias,
         source_target,
-        excluded_paths=(Path("backups"),),
+        excluded_paths=(Path(destination_path.name),),
     )
+    assert remote_shell_runner.run.call_count == 1
+    command = remote_shell_runner.run.call_args.args[0]
+    assert command[:-1] == source_target.openssh_command(("sh",))[:-1]
+
+
+@pytest.mark.parametrize("missing", ["source", "destination"])
+def test_pipeline_stops_if_remote_directory_resolution_fails(
+    tmp_path, remote_shell_runner, missing
+):
+    source_path = tmp_path / "source"
+    destination_path = tmp_path / "destination"
+    for path in (source_path, destination_path):
+        if path.name != missing:
+            path.mkdir()
+    target = SSHTarget("ssh://host", tmp_path / "key")
+    source = SourceDriver()
+    source.output = PathTree(source_path, target)
+    exporter = ExportDriver()
+    destination = PathDestinationDriver(destination_path, target)
+    destination.runner = remote_shell_runner
+
+    with pytest.raises(CommandError):
+        Pipeline(source, destination, (exporter,)).execute(
+            BackupOperation("home", "hourly", datetime(2026, 8, 27, 12, 30))
+        )
+
+    assert exporter.call is None
+    assert destination.call is None
 
 
 @pytest.mark.parametrize(
@@ -379,6 +434,10 @@ def test_pipeline_does_not_exclude_unrelated_artifact_root(
     destination = PathDestinationDriver(
         destination_path,
         SSHTarget(destination_endpoint, tmp_path / "destination-key"),
+    )
+    destination.runner = mock.Mock()
+    destination.runner.run.return_value = CommandResult(
+        f"/source\n\0{destination_path}\n\0", "", (0,)
     )
 
     Pipeline(source, destination, (exporter,)).execute(
@@ -406,12 +465,19 @@ def test_pipeline_rejects_destination_artifact_root_equal_to_source():
     )
 
 
-def test_pipeline_rejects_normalized_destination_artifact_root_equal_to_source():
+@pytest.mark.parametrize("symlink", [False, True])
+def test_pipeline_rejects_normalized_destination_artifact_root_equal_to_source(tmp_path, symlink):
+    source_path = tmp_path / "source"
+    destination_path = source_path / "child" / ".."
+    if symlink:
+        source_path.mkdir()
+        destination_path = tmp_path / "destination-alias"
+        destination_path.symlink_to(source_path, target_is_directory=True)
     source = SourceDriver()
-    source.output = PathTree(Path("/source"))
+    source.output = PathTree(source_path)
     pipeline = Pipeline(
         source,
-        PathDestinationDriver(Path("/source/child/..")),
+        PathDestinationDriver(destination_path),
         (ExportDriver(),),
     )
 
@@ -419,7 +485,7 @@ def test_pipeline_rejects_normalized_destination_artifact_root_equal_to_source()
         pipeline.execute(BackupOperation("home", "hourly", datetime(2026, 8, 27, 12, 30)))
 
     assert str(error.value) == (
-        "backup 'home': destination artifact root is also the source: /source"
+        f"backup 'home': destination artifact root is also the source: {source_path}"
     )
 
 
@@ -605,7 +671,15 @@ def test_configured_remote_pipeline_uses_one_ssh_command():
 
     backup.destination.runner = mock.Mock()
     backup.destination.runner.pipeline.side_effect = pipeline
-    backup.destination.runner.run.return_value = CommandResult(None, "", (0,))
+    backup.destination.runner.run.side_effect = lambda command, **options: CommandResult(
+        (
+            "\n\0".join(shlex.split(command[-1])[-2:]) + "\n\0"
+            if options.get("capture_output")
+            else None
+        ),
+        "",
+        (0,),
+    )
 
     Pipeline(backup.source, backup.destination, backup.transforms).execute(
         BackupOperation("home", "manual", datetime(2026, 8, 29, 12))

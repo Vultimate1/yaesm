@@ -4,7 +4,6 @@ import collections
 import dataclasses
 import inspect
 import logging
-import posixpath
 import typing
 
 import yaesm.ty as ty
@@ -179,12 +178,32 @@ def _exclude_artifact_roots(
     backup_name: str,
 ) -> PathTree:
     excluded_paths = list(source.excluded_paths)
-    source_path = ty.Path(posixpath.normpath(source.path))
     for root in destination.artifact_roots():
         if not same_endpoint(source.ssh, root.ssh):
             continue
+        if source.ssh is None:
+            source_path = source.path.resolve()
+            root_path = root.path.resolve()
+        else:
+            result = source.ssh.run(
+                (
+                    "sh",
+                    "-c",
+                    'for path do (cd -P "$path" && pwd -P && printf "\\0") || exit; done',
+                    "sh",
+                    source.path,
+                    root.path,
+                ),
+                runner=destination.runner,
+                capture_output=True,
+            )
+            assert result.stdout is not None
+            source_path, root_path = (
+                ty.Path(path.removesuffix("\n"))
+                for path in result.stdout.removesuffix("\0").split("\0")
+            )
         try:
-            relative = ty.Path(posixpath.normpath(root.path)).relative_to(source_path)
+            relative = root_path.relative_to(source_path)
         except ValueError:
             continue
         if relative == ty.Path("."):

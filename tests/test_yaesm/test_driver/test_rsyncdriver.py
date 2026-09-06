@@ -820,7 +820,8 @@ def test_rsync_integration(tmp_path):
     assert not any(destination.iterdir())
 
 
-def test_rsync_does_not_copy_nested_destination(tmp_path):
+@pytest.mark.parametrize("alias", [None, "source", "destination", "both"])
+def test_rsync_does_not_copy_nested_destination(tmp_path, alias):
     if shutil.which("rsync") is None:
         pytest.skip("rsync is not installed")
 
@@ -833,7 +834,17 @@ def test_rsync_does_not_copy_nested_destination(tmp_path):
     (destination / "old-backup").write_text("must not be copied")
     (decoy / "included").write_text("must be copied")
 
-    result = Pipeline(DirectoryDriver(source), RsyncDriver(destination)).execute(operation())
+    source_path, destination_path = source, destination
+    if alias in ("source", "both"):
+        source_path = tmp_path / "source-alias"
+        source_path.symlink_to(source, target_is_directory=True)
+    if alias in ("destination", "both"):
+        destination_path = tmp_path / "destination-alias"
+        destination_path.symlink_to(destination, target_is_directory=True)
+
+    result = Pipeline(DirectoryDriver(source_path), RsyncDriver(destination_path)).execute(
+        operation()
+    )
 
     artifact = result.representation.path
     assert (artifact / "content").read_text() == "backup content"
