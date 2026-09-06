@@ -20,6 +20,7 @@ from yaesm.command import (
     CommandStage,
     PipelineCommand,
 )
+from yaesm.config import parse_config
 from yaesm.driver.directorydriver import DirectoryDriver
 from yaesm.driver.filedriver import FileDriver, FileDriverError, FileStream
 from yaesm.driver.tardriver import TarDriver
@@ -379,3 +380,40 @@ def test_file_pipeline_copies_exact_bytes(tmp_path):
     assert result.representation.path.read_bytes() == source.read_bytes()
     assert result.representation.path.name == f"{operation().artifact_name}.sql"
     assert driver.cap_list("example") == (result,)
+
+
+@pytest.mark.parametrize("home_schedule", ["manual", "docs-manual"])
+def test_retention_keeps_backups_with_shared_name_prefix_separate(tmp_path, home_schedule):
+    source = tmp_path / "source.txt"
+    source.write_text("backup content")
+    destination = tmp_path / "backups"
+    destination.mkdir()
+    config = parse_config(
+        {
+            name: {
+                "source": {"file": str(source)},
+                "destination": {"file": str(destination)},
+                "schedules": {schedule: {"trigger": "on-demand", "retention": {"keep-last": 1}}},
+            }
+            for name, schedule in (("home", home_schedule), ("home-docs", "manual"))
+        }
+    )
+    home = config.backups["home"]
+    docs = config.backups["home-docs"]
+    created_at = datetime(2026, 8, 27, 12, 30)
+
+    first_docs = docs.execute("manual", created_at)
+    first_home = home.execute(home_schedule, created_at)
+    assert docs.artifacts() == (first_docs,)
+    assert home.artifacts() == (first_home,)
+
+    later = created_at + timedelta(minutes=1)
+    second_docs = docs.execute("manual", later)
+    assert not first_docs.representation.path.exists()
+    assert first_home.representation.path.read_text() == "backup content"
+
+    second_home = home.execute(home_schedule, later)
+    assert not first_home.representation.path.exists()
+    assert second_docs.representation.path.read_text() == "backup content"
+    assert docs.artifacts() == (second_docs,)
+    assert home.artifacts() == (second_home,)

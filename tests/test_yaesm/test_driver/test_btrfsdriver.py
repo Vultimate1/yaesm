@@ -132,7 +132,7 @@ class BtrfsStateRunner(CommandRunner):
         self.commands.append(normalized)
         if normalized[:4] == ("btrfs", "subvolume", "snapshot", "-r"):
             source, destination = map(ty.Path, normalized[4:])
-            if destination.parent == self.destination and destination.name.startswith("yaesm-"):
+            if destination.parent == self.destination and destination.name.startswith("yaesm."):
                 return CommandResult(None, "", (1,))
             parent = self.snapshots.get(source)
             self.snapshots[destination] = BtrfsSnapshot(

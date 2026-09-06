@@ -112,7 +112,7 @@ class BackupOperation:
     @classmethod
     def from_artifact_name(cls, backup_name: str, artifact_name: str) -> BackupOperation:
         """Reconstruct an operation from one of its artifact names."""
-        prefix = f"yaesm-{backup_name}-"
+        prefix = f"yaesm.{backup_name}."
         if not artifact_name.startswith(prefix):
             raise YaesmValueError(f"invalid artifact name: {artifact_name!r}")
 
@@ -143,7 +143,7 @@ class BackupOperation:
         offset = self.created_at.strftime("%z")
         encoded_offset = ("p" if offset[0] == "+" else "m") + offset[1:]
         timestamp = self.created_at.strftime("%Y_%m_%d_%H:%M")
-        return f"yaesm-{self.backup_name}-{self.schedule_name}.{timestamp}.{encoded_offset}"
+        return f"yaesm.{self.backup_name}.{self.schedule_name}.{timestamp}.{encoded_offset}"
 
     @property
     def instant(self) -> ty.datetime:

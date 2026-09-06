@@ -302,7 +302,7 @@ def test_backup_operation():
     assert operation.created_at == created_at.replace(tzinfo=timezone.utc)
     assert operation.source_artifact_id is None
     assert operation.previous_backup_names == ()
-    assert operation.artifact_name == "yaesm-home-hourly.2026_08_27_12:30.p0000"
+    assert operation.artifact_name == "yaesm.home.hourly.2026_08_27_12:30.p0000"
 
 
 @pytest.mark.parametrize(
@@ -320,7 +320,7 @@ def test_backup_operation_encodes_utc_offset(offset, suffix):
         datetime(2026, 8, 27, 12, 30, tzinfo=timezone(offset)),
     )
 
-    assert operation.artifact_name == f"yaesm-home-hourly.2026_08_27_12:30.{suffix}"
+    assert operation.artifact_name == f"yaesm.home.hourly.2026_08_27_12:30.{suffix}"
 
 
 def test_backup_operation_normalizes_seconds_and_microseconds():
@@ -351,8 +351,8 @@ def test_backup_operation_distinguishes_repeated_dst_time():
         "home", "hourly", datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=1)
     )
 
-    assert first.artifact_name == "yaesm-home-hourly.2026_11_01_01:30.m0400"
-    assert second.artifact_name == "yaesm-home-hourly.2026_11_01_01:30.m0500"
+    assert first.artifact_name == "yaesm.home.hourly.2026_11_01_01:30.m0400"
+    assert second.artifact_name == "yaesm.home.hourly.2026_11_01_01:30.m0500"
     assert first != second
     assert first.instant < second.instant
 
@@ -367,10 +367,10 @@ def test_backup_operation_records_source_artifact():
         "offsite",
         "daily",
         datetime(2026, 8, 27, 12, 30),
-        "yaesm-home-hourly.2026_08_27_12:30",
+        "yaesm.home.hourly.2026_08_27_12:30",
     )
 
-    assert operation.source_artifact_id == "yaesm-home-hourly.2026_08_27_12:30"
+    assert operation.source_artifact_id == "yaesm.home.hourly.2026_08_27_12:30"
 
 
 @pytest.mark.parametrize("backup_name", ["", "-home", "settings", "home.backup"])
@@ -410,10 +410,29 @@ def test_backup_operation_rejects_unsafe_schedule_name(schedule_name):
         bckp.BackupOperation("home", schedule_name, datetime(2026, 8, 27, 12, 30))
 
 
+def test_backup_operation_distinguishes_backup_and_schedule_names():
+    created_at = datetime(2026, 8, 27, 12, 30)
+    operations = (
+        bckp.BackupOperation("home", "manual", created_at),
+        bckp.BackupOperation("home", "docs-manual", created_at),
+        bckp.BackupOperation("home-docs", "manual", created_at),
+    )
+
+    assert len({operation.artifact_name for operation in operations}) == len(operations)
+    for operation in operations:
+        assert (
+            bckp.BackupOperation.from_artifact_name(operation.backup_name, operation.artifact_name)
+            == operation
+        )
+        other_name = "home-docs" if operation.backup_name == "home" else "home"
+        with pytest.raises(YaesmValueError, match="invalid artifact name"):
+            bckp.BackupOperation.from_artifact_name(other_name, operation.artifact_name)
+
+
 def test_backup_operation_from_artifact_name():
     operation = bckp.BackupOperation.from_artifact_name(
         "home-backup",
-        "yaesm-home-backup-every-six-hours.2026_08_27_12:30.p0530",
+        "yaesm.home-backup.every-six-hours.2026_08_27_12:30.p0530",
     )
 
     assert operation == bckp.BackupOperation(
@@ -421,25 +440,25 @@ def test_backup_operation_from_artifact_name():
         "every-six-hours",
         datetime(2026, 8, 27, 12, 30, tzinfo=timezone(timedelta(hours=5, minutes=30))),
     )
-    assert operation.artifact_name == "yaesm-home-backup-every-six-hours.2026_08_27_12:30.p0530"
+    assert operation.artifact_name == "yaesm.home-backup.every-six-hours.2026_08_27_12:30.p0530"
 
 
 @pytest.mark.parametrize(
     "artifact_name",
     [
-        "other-home-hourly.2026_08_27_12:30",
-        "yaesm-other-hourly.2026_08_27_12:30",
-        "yaesm-home-.2026_08_27_12:30",
-        "yaesm-home-hourly",
-        "yaesm-home-hourly.invalid",
-        "yaesm-home-hourly.2026_08_27_12:30",
-        "yaesm-home-hourly.2026_08_27_12:30.+0000",
-        "yaesm-home-hourly.2026_08_27_12:30.p000",
-        "yaesm-home-hourly.2026_08_27_12:30.p00000",
-        "yaesm-home-hourly.2026_08_27_12:30.p0a00",
-        "yaesm-home-hourly.2026_08_27_12:30.m0000",
-        "yaesm-home-hourly.2026_08_27_12:30.p2400",
-        "yaesm-home-hourly.2026_08_27_12:30.extra",
+        "other.home.hourly.2026_08_27_12:30",
+        "yaesm.other.hourly.2026_08_27_12:30",
+        "yaesm.home..2026_08_27_12:30",
+        "yaesm.home.hourly",
+        "yaesm.home.hourly.invalid",
+        "yaesm.home.hourly.2026_08_27_12:30",
+        "yaesm.home.hourly.2026_08_27_12:30.+0000",
+        "yaesm.home.hourly.2026_08_27_12:30.p000",
+        "yaesm.home.hourly.2026_08_27_12:30.p00000",
+        "yaesm.home.hourly.2026_08_27_12:30.p0a00",
+        "yaesm.home.hourly.2026_08_27_12:30.m0000",
+        "yaesm.home.hourly.2026_08_27_12:30.p2400",
+        "yaesm.home.hourly.2026_08_27_12:30.extra",
     ],
 )
 def test_backup_operation_rejects_invalid_artifact_name(artifact_name):
@@ -457,7 +476,7 @@ def test_backup_artifact():
     representation = Representation()
     artifact = bckp.BackupArtifact(operation, representation)
 
-    assert artifact.name == "yaesm-home-hourly.2026_08_22_12:30.p0000"
+    assert artifact.name == "yaesm.home.hourly.2026_08_22_12:30.p0000"
     assert artifact.stored_name == artifact.name
     assert artifact.operation is operation
     assert artifact.representation is representation
@@ -685,7 +704,7 @@ def test_backup_artifacts_rejects_duplicate_logical_operation():
         bckp.BackupError,
         match=(
             "backup 'laptop-home' has multiple stored artifacts that resolve to "
-            "'yaesm-laptop-home-nightly.2026_08_27_12:00.p0000'"
+            "'yaesm.laptop-home.nightly.2026_08_27_12:00.p0000'"
         ),
     ):
         backup.artifacts()
@@ -864,7 +883,7 @@ def test_backup_execute_rejects_existing_artifact():
 
     with pytest.raises(
         bckp.BackupError,
-        match="backup 'home' already has artifact 'yaesm-home-hourly.2026_08_27_12:00.p0000'",
+        match="backup 'home' already has artifact 'yaesm.home.hourly.2026_08_27_12:00.p0000'",
     ):
         configured_backup(destination).execute("hourly", datetime(2026, 8, 27, 12))
 
@@ -1018,7 +1037,7 @@ def test_backup_execute_matches_replication_base_recorded_before_rename():
             "offsite",
             "nightly",
             previous.operation.created_at,
-            "id:yaesm-old-local-daily.2026_08_27_11:00.p0000",
+            "id:yaesm.old-local.daily.2026_08_27_11:00.p0000",
         ),
         ByteStream(),
     )
@@ -1029,7 +1048,7 @@ def test_backup_execute_matches_replication_base_recorded_before_rename():
 
     assert source_driver.listed_names == ["local", "old-local"]
     assert result.operation.source_artifact_id == (
-        "id:yaesm-old-local-daily.2026_08_27_12:00.p0000"
+        "id:yaesm.old-local.daily.2026_08_27_12:00.p0000"
     )
     assert source_driver.export_call == (current.representation, previous.representation)
 
@@ -1046,7 +1065,7 @@ def test_backup_execute_uses_full_replication_when_base_is_missing():
         "offsite",
         "daily",
         datetime(2026, 8, 27, 11),
-        "yaesm-local-hourly.2026_08_27_11:00.p0000",
+        "yaesm.local.hourly.2026_08_27_11:00.p0000",
     )
     previous = bckp.BackupArtifact(previous_operation, ByteStream())
     destination = StreamDestinationDriver((previous,))

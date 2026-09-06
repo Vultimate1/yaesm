@@ -149,7 +149,7 @@ Every explicitly configured schedule requires a `retention` field. Its value may
 
 ### ARTIFACT NAMES
 
-Completed artifacts follow the base name pattern `yaesm-{backup_name}-{schedule_name}.{YYYY_MM_DD_HH:MM}.{utc_offset}`. For example, `yaesm-home-hourly.2026_09_01_17:00.m0400` was created at 17:00 at UTC-04:00. The last part of the base name is the UTC offset, with `p` for plus and `m` for minus. Including the offset keeps timestamps unambiguous across daylight saving time transitions and scheduler time-zone changes. Current and previous backup and schedule names are recognized.
+Completed artifacts follow the base name pattern `yaesm.{backup_name}.{schedule_name}.{YYYY_MM_DD_HH:MM}.{utc_offset}`. For example, `yaesm.home.hourly.2026_09_01_17:00.m0400` was created at 17:00 at UTC-04:00. A period separates the backup and schedule names so hyphens within either name cannot make artifact ownership ambiguous. The last part of the base name is the UTC offset, with `p` for plus and `m` for minus. Including the offset keeps timestamps unambiguous across daylight saving time transitions and scheduler time-zone changes. Current and previous backup and schedule names are recognized.
 
 File artifacts add format suffixes in pipeline order, such as `.tar.zst.gpg`. Any file or directory whose name starts with `.yaesm` is internal to yaesm and should not normally be modified or removed manually.
 
