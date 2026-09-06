@@ -234,7 +234,7 @@ The `rsync` value is normally an absolute path. To configure additional behavior
 
 As a destination, the `rsync` driver copies the directory tree produced by the pipeline into a new artifact directory beneath the configured directory. Copies preserve filesystem metadata, symlinks, hard links, ACLs, extended attributes, numeric ownership, and sparse files.
 
-When an earlier compatible `rsync` artifact exists on the same system, yaesm supplies it through `--link-dest`. Rsync then hard-links unchanged files from that artifact instead of storing their data again. Every artifact remains directly browsable as a complete directory tree. The `rsync` driver does not support `skip_unchanged`.
+When an earlier compatible `rsync` artifact exists on the same system, yaesm supplies it through `--link-dest`. Rsync then hard-links unchanged files from that artifact instead of storing their data again. Every artifact remains directly browsable as a complete directory tree. The `rsync` driver supports `skip_unchanged` when copying artifacts from another backup: an existing copy of the same source artifact is reused across schedules. It does not support `skip_unchanged` for a live directory source.
 
 ## btrfs
 
