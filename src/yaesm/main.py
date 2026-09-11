@@ -1,106 +1,119 @@
-#!/usr/bin/env python3
+"""Yaesm command-line entry point."""
 
 import argparse
 import importlib.metadata
+import inspect
 import logging
 import os
 import sys
 from pathlib import Path
 
-import yaesm.config
-import yaesm.ty as ty
-from yaesm.cleanup import Cleanup
+from yaesm.config import Config, ConfigError, parse_config
+from yaesm.errors import YaesmError
 from yaesm.logging import configure as configure_logging
+from yaesm.subcommand import load_subcommands
 from yaesm.subcommand.subcommandbase import SubcommandBase
 
 logger = logging.getLogger(__name__)
 
 
-def main(argv: list[str] | None = None) -> int:
-    """This is the main function of yaesm."""
-    if argv is None:
-        argv = sys.argv[1:]
+def _subcommands() -> tuple[type[SubcommandBase], ...]:
+    load_subcommands()
+    return tuple(
+        sorted(
+            (
+                subcommand
+                for subcommand in SubcommandBase.__subclasses__()
+                if subcommand.__module__.startswith("yaesm.subcommand.")
+                and not inspect.isabstract(subcommand)
+            ),
+            key=lambda subcommand: subcommand.name(),
+        )
+    )
 
-    # yaesm.subcommand modules are loaded eagerly from the yaesm.subcommand __init__.py
-    subcommand_name_class_map: dict[str, ty.Any] = {
-        cls.name(): cls for cls in SubcommandBase.__subclasses__()
-    }
 
-    visible_subcommands = [
-        name for name, cls in subcommand_name_class_map.items() if not cls.hidden
-    ]
-
+def _argument_parser(
+    subcommands: tuple[type[SubcommandBase], ...],
+) -> argparse.ArgumentParser:
+    visible = tuple(subcommand.name() for subcommand in subcommands if not subcommand.hidden)
     parser = argparse.ArgumentParser(
         prog="yaesm",
-        description="yaesm is a backup tool with support for multiple file systems",
+        description="A backup tool with support for multiple filesystems.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    subparsers = parser.add_subparsers(
-        title="subcommands",
-        dest="subcommand",
-        required=True,
-        metavar="{" + ",".join(visible_subcommands) + "}",
-    )
-    for name, cls in subcommand_name_class_map.items():
-        kwargs = {"description": cls.description()}
-        if not cls.hidden:
-            kwargs["help"] = cls.description()
-        subparser = subparsers.add_parser(name, **kwargs)
-        cls.add_argparser_arguments(subparser)
     parser.add_argument(
-        "--version", action="version", version=f"%(prog)s {importlib.metadata.version('yaesm')}"
+        "--version",
+        action="version",
+        version=f"%(prog)s {importlib.metadata.version('yaesm')}",
     )
     parser.add_argument(
         "-c",
         "--config",
         type=Path,
         default=Path("/etc/yaesm/config.yaml"),
-        help="path to configuration file",
+        help="path to the configuration file",
     )
     parser.add_argument(
         "--log-level",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
         default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="set the logging level",
+        help="logging level",
     )
-    parser.add_argument("--log-stderr", action="store_true", help="log to STDERR")
-    parser.add_argument("--log-file", type=Path, metavar="FILE", help="log to file FILE")
     parser.add_argument(
         "--log-syslog",
         nargs="?",
-        const=True,
-        default=False,
+        const="/dev/log",
         metavar="ADDRESS",
-        help=("enable syslog logging and optionally specify syslog address (default: /dev/log)"),
+        help="log to syslog at ADDRESS (default: /dev/log)",
     )
-    parsed_args = parser.parse_args(argv)
+    parser.add_argument("--log-stderr", action="store_true", help="log to standard error")
+    parser.add_argument("--log-file", type=Path, metavar="FILE", help="append logs to FILE")
+    parsers = parser.add_subparsers(
+        title="subcommands",
+        dest="subcommand",
+        required=True,
+        metavar="{" + ",".join(visible) + "}",
+    )
+    for subcommand in subcommands:
+        if subcommand.hidden:
+            subparser = parsers.add_parser(subcommand.name(), description=subcommand.description())
+        else:
+            subparser = parsers.add_parser(
+                subcommand.name(),
+                description=subcommand.description(),
+                help=subcommand.description(),
+            )
+        subcommand.configure_argparser(subparser)
+        subparser.set_defaults(subcommand_type=subcommand)
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    """Run yaesm and return its exit status."""
+    arguments = _argument_parser(_subcommands()).parse_args(argv)
     configure_logging(
-        level=parsed_args.log_level,
-        stderr=parsed_args.log_stderr,
-        logfile=parsed_args.log_file,
-        syslog=bool(parsed_args.log_syslog),
-        syslog_address=parsed_args.log_syslog
-        if isinstance(parsed_args.log_syslog, str)
-        else "/dev/log",
+        arguments.log_level,
+        stderr=arguments.log_stderr,
+        message_only_stderr=arguments.subcommand != "run",
+        stderr_timestamps=getattr(arguments, "stderr_timestamps", True),
+        logfile=arguments.log_file,
+        syslog_address=arguments.log_syslog,
     )
-
-    subcommand_class = subcommand_name_class_map[parsed_args.subcommand]
-    backups = []
-    if subcommand_class.config_required:
-        try:
-            backups = yaesm.config.parse_config(parsed_args.config)
-        except yaesm.config.ConfigErrors as exc:
-            for err in exc.errors:
-                backup, err_msg = err
-                logger.error("config error: %s: %s", backup, err_msg)
-            return os.EX_CONFIG
-
-    Cleanup.initialize()
+    subcommand: type[SubcommandBase] = arguments.subcommand_type
 
     try:
-        exit_status = subcommand_class().main(backups, parsed_args)
-        return exit_status
-    except Exception as exc:
-        logger.exception("unexpected error: %s", exc)
+        config = parse_config(arguments.config) if subcommand.config_required else Config({}, {})
+        return subcommand().main(config, arguments)
+    except ConfigError as error:
+        logger.error("configuration error: %s", error.format())
+        return os.EX_CONFIG
+    except YaesmError as error:
+        logger.error("%s", error.format())
         return 1
+    except Exception as error:
+        logger.exception("unexpected error: %s", error)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

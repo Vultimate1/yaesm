@@ -1,894 +1,2233 @@
-"""tests/test_yaesm/test_config.py."""
+"""Tests for yaesm.config."""
 
-import copy
-import random
-import re
-import shutil
+import inspect
+from datetime import timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 import voluptuous as vlp
-import yaml
+from hypothesis import given
+from hypothesis import strategies as st
 
 import yaesm.backup as bckp
-import yaesm.config as config
-from yaesm.backend.backendbase import BackendBase, CheckResult
-from yaesm.sshtarget import SSHTarget
-from yaesm.timeframe import (
-    DailyTimeframe,
-    FiveMinuteTimeframe,
-    HourlyTimeframe,
-    MonthlyTimeframe,
-    Timeframe,
-    WeeklyTimeframe,
-    tframe_types_configurable,
+import yaesm.config as config_module
+import yaesm.ty as ty
+from yaesm.config import (
+    BackupGroup,
+    BackupTargetError,
+    Config,
+    ConfigError,
+    parse_config,
+    parse_schedules,
+)
+from yaesm.driver.btrfsdriver import BtrfsDriver
+from yaesm.driver.directorydriver import DirectoryDriver
+from yaesm.driver.driverbase import DriverBase
+from yaesm.driver.filedriver import FileDriver
+from yaesm.driver.gpgdriver import GPGDriver
+from yaesm.driver.rsyncdriver import RsyncDriver
+from yaesm.driver.tardriver import TarDriver
+from yaesm.driver.zfsdriver import ZFSDriver
+from yaesm.driver.zstddriver import ZstdDriver
+from yaesm.names import ALL_TARGET_NAME
+from yaesm.pipeline import Pipeline
+from yaesm.representation import Representation
+from yaesm.retention import KeepAll, KeepFor, KeepLast, RetentionPolicyBase
+from yaesm.schedule import CronSchedule, OnDemandSchedule, Schedule, ScheduleBase
+from yaesm.ssh import SSHTarget
+
+
+class AutomaticallyDiscoveredDriver(BtrfsDriver):
+    @classmethod
+    def name(cls) -> str:
+        return "automatically-discovered"
+
+
+class AutomaticallyDiscoveredSchedule(ScheduleBase):
+    @classmethod
+    def name(cls) -> str:
+        return "automatically-discovered"
+
+    @staticmethod
+    def config_schema() -> vlp.Schema:
+        return vlp.Schema({})
+
+
+class AutomaticallyDiscoveredRetention(KeepLast):
+    @classmethod
+    def name(cls) -> str:
+        return "automatically-discovered"
+
+
+class UnstorableDriver(DriverBase):
+    @classmethod
+    def name(cls) -> str:
+        return "unstorable"
+
+    @staticmethod
+    def config_schema() -> vlp.Schema:
+        return vlp.Schema({})
+
+    def cap_list(self, backup_name: str) -> ty.Sequence[bckp.BackupArtifact[Representation]]:
+        return ()
+
+    def cap_delete(
+        self,
+        artifacts: ty.Sequence[bckp.BackupArtifact[Representation]],
+    ) -> None:
+        pass
+
+
+def backup_config(**settings):
+    config = {
+        "source": {"btrfs": "/source"},
+        "destination": {"btrfs": "/destination"},
+        "schedules": {
+            "daily": {
+                "trigger": {"cron": "30 4 * * *"},
+                "retention": {"keep-last": 7},
+            }
+        },
+    }
+    config.update(settings)
+    return config
+
+
+_BACKUP_NAMES = st.from_regex(r"[a-z0-9_][a-z0-9_-]{0,12}", fullmatch=True).filter(
+    lambda name: name != "settings" and not name.startswith("old-")
+)
+_SCHEDULE_NAMES = st.from_regex(r"[a-z0-9_][a-z0-9_-]{0,8}", fullmatch=True).filter(
+    lambda name: name != "manual" and not name.startswith("old-")
+)
+_PATHS = st.sampled_from(("/source", "/home", "/srv/data", "/srv/backup data"))
+_DATASETS = st.sampled_from(("tank/source", "tank/home", "backup/archive"))
+_BTRFS_CONFIGS = _PATHS
+_DIRECTORY_CONFIGS = _PATHS
+_FILE_CONFIGS = _PATHS
+_RSYNC_CONFIGS = st.one_of(
+    _PATHS,
+    st.builds(
+        lambda location, options, exclude, one_file_system: {
+            "location": location,
+            "extra_options": options,
+            "exclude": exclude,
+            "one_file_system": one_file_system,
+        },
+        _PATHS,
+        st.one_of(
+            st.sampled_from(("--checksum", "--bwlimit=1000", "--delete-delay")),
+            st.lists(
+                st.sampled_from(("--checksum", "--bwlimit=1000", "--delete-delay")),
+                max_size=3,
+            ),
+        ),
+        st.one_of(
+            st.sampled_from((".cache/", "*.tmp")),
+            st.lists(st.sampled_from((".cache/", "*.tmp", "build/")), max_size=3),
+        ),
+        st.booleans(),
+    ),
+)
+_ZFS_CONFIGS = st.one_of(
+    _DATASETS,
+    st.builds(
+        lambda dataset, encryption: {"dataset": dataset, "encryption": encryption},
+        _DATASETS,
+        st.booleans(),
+    ),
+)
+_TAR_CONFIGS = st.one_of(
+    st.just({}),
+    st.booleans().map(lambda one_file_system: {"one_file_system": one_file_system}),
+)
+_GPG_CONFIGS = st.sampled_from(("/key.asc", "/root/backup key.asc"))
+_ZSTD_CONFIGS = st.one_of(
+    st.just({}),
+    st.integers(min_value=1, max_value=19),
+)
+_DRIVER_CONFIGS = {
+    "btrfs": _BTRFS_CONFIGS,
+    "directory": _DIRECTORY_CONFIGS,
+    "file": _FILE_CONFIGS,
+    "rsync": _RSYNC_CONFIGS,
+    "zfs": _ZFS_CONFIGS,
+    "tar": _TAR_CONFIGS,
+    "gpg": _GPG_CONFIGS,
+    "zstd": _ZSTD_CONFIGS,
+}
+_CRON_EXPRESSIONS = st.sampled_from(("* * * * *", "0 * * * *", "30 4 * * *", "*/15 9-17 * * 1-5"))
+_RETENTION = st.one_of(
+    st.just("keep-all"),
+    st.integers(min_value=1, max_value=100).map(lambda count: {"keep-last": count}),
+    st.tuples(
+        st.integers(min_value=1, max_value=100),
+        st.sampled_from(("m", "h", "d", "w", "y")),
+    ).map(lambda duration: {"keep-for": f"{duration[0]}{duration[1]}"}),
+    st.timedeltas(min_value=timedelta(seconds=1), max_value=timedelta(days=3650)).map(
+        lambda duration: {"keep-for": duration}
+    ),
+)
+_RETENTIONS = st.one_of(_RETENTION, st.lists(_RETENTION, min_size=1, max_size=3))
+_SSH_CONFIGS = st.builds(
+    lambda endpoint, identity_file, config_file: {
+        "endpoint": endpoint,
+        "identity_file": identity_file,
+        **({} if config_file is None else {"config_file": config_file}),
+    },
+    st.sampled_from(("ssh://server", "ssh://backup@server:2222", "ssh://[2001:db8::1]")),
+    st.sampled_from(("/root/.ssh/id_ed25519", "/root/.ssh/backup key")),
+    st.none() | st.just("/root/.ssh/config"),
+)
+_SSH_DEFAULTS = st.builds(
+    lambda identity_file, config_file: {
+        **({} if identity_file is None else {"identity_file": identity_file}),
+        **({} if config_file is None else {"config_file": config_file}),
+    },
+    st.none() | st.just("/root/.ssh/id_ed25519"),
+    st.none() | st.just("/root/.ssh/config"),
+)
+_GLOBAL_SETTINGS = st.builds(
+    lambda max_concurrent_backups, timezone, defaults: {
+        **(
+            {}
+            if max_concurrent_backups is None and timezone is None
+            else {
+                "scheduler": {
+                    **(
+                        {}
+                        if max_concurrent_backups is None
+                        else {"max_concurrent_backups": max_concurrent_backups}
+                    ),
+                    **({} if timezone is None else {"timezone": timezone}),
+                }
+            }
+        ),
+        **({} if defaults is None else {"ssh": defaults}),
+    },
+    st.none() | st.integers(min_value=1, max_value=100),
+    st.none() | st.sampled_from(("UTC", "America/New_York")),
+    st.none() | _SSH_DEFAULTS,
 )
 
 
-def test_Schema_schema_empty():
-    schema = config.Schema.schema_empty()
-    assert schema("") == ""
-    assert schema("foo") == "foo"
-    assert schema(12) == 12
-    assert schema({"foo": "bar", "baz": 12}) == {"foo": "bar", "baz": 12}
-
-
-def test_Schema_is_file(path_generator):
-    tmpfile_str = str(path_generator("tmpfile", touch=True))
-    assert config.Schema.is_file(tmpfile_str) == Path(tmpfile_str)
-    assert config.Schema.is_file(Path(tmpfile_str)) == Path(tmpfile_str)
-
-    Path(tmpfile_str).unlink()
-    with pytest.raises(vlp.Invalid) as exc:
-        config.SrcDirDstDirSchema.is_file(tmpfile_str)
-    assert str(exc.value) == config.Schema.ErrMsg.LOCAL_FILE_INVALID
-
-    with pytest.raises(vlp.Invalid) as exc:
-        tmpfile_relative = path_generator("tmpfile", base_dir=".", touch=True)
-        tmpfile_relative_str = "./" + tmpfile_relative.name
-        assert Path(tmpfile_relative_str).is_file()
-        config.SrcDirDstDirSchema.is_file(tmpfile_relative_str)
-    assert str(exc.value) == config.Schema.ErrMsg.LOCAL_FILE_INVALID
-
-
-def test_Schema_is_dir(path_generator):
-    tmpdir_str = str(path_generator("tmpdir", mkdir=True))
-    assert config.SrcDirDstDirSchema.is_dir(tmpdir_str) == Path(tmpdir_str)
-    assert config.SrcDirDstDirSchema.is_dir(Path(tmpdir_str)) == Path(tmpdir_str)
-
-    shutil.rmtree(tmpdir_str)
-    with pytest.raises(vlp.Invalid) as exc:
-        config.SrcDirDstDirSchema.is_dir(tmpdir_str)
-    assert str(exc.value) == config.Schema.ErrMsg.LOCAL_DIR_INVALID
-
-    with pytest.raises(vlp.Invalid) as exc:
-        tmpdir_relative = path_generator("tmpdir", base_dir=".", mkdir=True)
-        tmpdir_relative_str = "./" + tmpdir_relative.name
-        assert Path(tmpdir_relative_str).is_dir()
-        config.SrcDirDstDirSchema.is_dir(tmpdir_relative_str)
-    assert str(exc.value) == config.Schema.ErrMsg.LOCAL_DIR_INVALID
-
-
-def test_BackendSchema_schema():
-    schema = config.BackendSchema.schema()
-
-    data = {"backend": "btrfs"}
-    data = schema(data)
-    assert isinstance(data["backend"], BackendBase)  # Changed from issubclass
-    assert len(data) == 1
-
-    with pytest.raises(vlp.Invalid) as exc:
-        data = {"backend": "THISISNOTAVALIDBACKENDNAME"}
-        schema(data)
-    assert re.match("^" + config.BackendSchema.ErrMsg.INVALID_BACKEND_NAME, str(exc.value))
-
-    data = {"backend": "btrfs", "INVALID_KEY": "FOO"}
-    schema(data)
-
-    with pytest.raises(vlp.Invalid) as exc:
-        data = {}
-        schema(data)
-    assert re.match("required key not provided @", str(exc.value))
-
-
-def test_BackendSchema_dict_promote_backend_name_to_backend_instance():
-    data = {"backend": "btrfs"}
-    data = config.BackendSchema._dict_promote_backend_name_to_backend_instance(data)
-    assert isinstance(data["backend"], BackendBase)
-    assert len(data) == 1
-    with pytest.raises(KeyError):
-        data = {"FOO": "BAR", "BAZ": "QUUX"}
-        config.BackendSchema._dict_promote_backend_name_to_backend_instance(data)
-
-
-def test_TimeframeSchema_has_required_settings():
-    data: dict[str, object] = {
-        "timeframes": ["5minute", "hourly", "daily", "weekly", "monthly", "yearly"]
-    }
-    setting_keys = [
-        "5minute_keep",
-        "hourly_keep",
-        "hourly_minutes",
-        "daily_keep",
-        "daily_times",
-        "weekly_keep",
-        "weekly_times",
-        "weekly_days",
-        "monthly_keep",
-        "monthly_times",
-        "monthly_days",
-        "yearly_keep",
-        "yearly_times",
-        "yearly_days",
-    ]
-    # The value is irrelevant for this method
-    data.update(dict.fromkeys(setting_keys))
-    assert config.TimeframeSchema.has_required_settings(data) == data
-
-    data.pop("hourly_keep")
-    with pytest.raises(vlp.Invalid) as exc:
-        config.TimeframeSchema.has_required_settings(data)
-    assert (
-        str(exc.value)
-        == config.TimeframeSchema.ErrMsg.SETTING_MISSING + "\n\thourly: ['hourly_keep']"
-    )
-
-    # For the time being, this will only return the first error
-    data.pop("weekly_times")
-    with pytest.raises(vlp.Invalid) as exc:
-        config.TimeframeSchema.has_required_settings(data)
-    assert (
-        str(exc.value)
-        == config.TimeframeSchema.ErrMsg.SETTING_MISSING + "\n\thourly: ['hourly_keep']"
+@st.composite
+def driver_definitions(draw, name, remote_allowed):
+    config = draw(_DRIVER_CONFIGS[name])
+    definition = name if config == {} else {name: config}
+    return (
+        {"driver": definition, "remote": True}
+        if remote_allowed and draw(st.booleans())
+        else definition
     )
 
 
-def test_TimeframeSchema_keeps_are_positive_ints():
-    keep_settings = [
-        "5minute_keep",
-        "hourly_keep",
-        "daily_keep",
-        "weekly_keep",
-        "monthly_keep",
-        "yearly_keep",
-    ]
+@st.composite
+def schedule_definitions(draw):
+    if not draw(st.booleans()):
+        return None
 
-    # valid positive ints pass through unchanged
-    data = dict.fromkeys(keep_settings, 1)
-    assert config.TimeframeSchema._keeps_are_positive_ints(data) == data
+    names = draw(st.lists(_SCHEDULE_NAMES, max_size=3, unique=True))
+    schedules = {}
+    for name in names:
+        trigger = {"cron": draw(_CRON_EXPRESSIONS)} if draw(st.booleans()) else "on-demand"
+        schedules[name] = {
+            "trigger": trigger,
+            "retention": draw(_RETENTIONS),
+            **({"previous_names": [f"old-{name}"]} if draw(st.booleans()) else {}),
+        }
 
-    # missing settings are ignored
-    assert config.TimeframeSchema._keeps_are_positive_ints({}) == {}
-
-    # 0 and negative ints are rejected
-    for bad_value in [0, -1]:
-        data = {"hourly_keep": bad_value}
-        with pytest.raises(vlp.Invalid) as exc:
-            config.TimeframeSchema._keeps_are_positive_ints(data)
-        assert str(exc.value) == config.TimeframeSchema.ErrMsg.INVALID_KEEP + ":\n\t['hourly_keep']"
-
-    # non-ints are rejected, including an explicit null (as opposed to the
-    # setting being absent entirely, which is ignored above)
-    for bad_value in ["foo", 1.5, True, False, None]:
-        data = {"daily_keep": bad_value}
-        with pytest.raises(vlp.Invalid) as exc:
-            config.TimeframeSchema._keeps_are_positive_ints(data)
-        assert str(exc.value) == config.TimeframeSchema.ErrMsg.INVALID_KEEP + ":\n\t['daily_keep']"
-
-    # multiple bad settings are all reported
-    data = {"hourly_keep": 0, "daily_keep": "foo", "weekly_keep": 3}
-    with pytest.raises(vlp.Invalid) as exc:
-        config.TimeframeSchema._keeps_are_positive_ints(data)
-    assert (
-        str(exc.value)
-        == config.TimeframeSchema.ErrMsg.INVALID_KEEP + ":\n\t['hourly_keep', 'daily_keep']"
-    )
+    if draw(st.booleans()):
+        schedules["manual"] = {
+            "trigger": "on-demand",
+            "retention": draw(_RETENTIONS),
+        }
+    return schedules
 
 
-def test_TimeframeSchema_are_valid_timespecs():
-    valid_specs: list[int | str] = ["12:34", "23:59", "00:00", "99:99"]
-    valid_expected = [(12, 34), (23, 59), (0, 0), (99, 99)]
-    assert config.TimeframeSchema.are_valid_timespecs(valid_specs) == valid_expected
-
-    valid_int_specs: list[int | str] = [754, 1439, 0]
-    valid_int_expected = [(12, 34), (23, 59), (0, 0)]
-    assert config.TimeframeSchema.are_valid_timespecs(valid_int_specs) == valid_int_expected
-
-    valid_int_specs: list[int | str] = ["12:34", 1439, 0]
-    valid_int_expected = [(12, 34), (23, 59), (0, 0)]
-    assert config.TimeframeSchema.are_valid_timespecs(valid_int_specs) == valid_int_expected
-
-    invalid_specs = ["1:23", "12:3", "ab:cd", "1234", ""]
-    for spec in invalid_specs:
-        with pytest.raises(vlp.Invalid) as exc:
-            config.TimeframeSchema.are_valid_timespecs([spec])
-        assert (
-            str(exc.value)
-            == config.TimeframeSchema.ErrMsg.TIME_MALFORMED
-            + f"\n\tExpected format 'hh:mm', got {spec}"
+@st.composite
+def direct_pipeline_definitions(draw, remote_allowed):
+    pipeline_type = draw(st.sampled_from(("native", "rsync", "archive", "file")))
+    if pipeline_type == "native":
+        driver_name = draw(st.sampled_from(("btrfs", "zfs")))
+        source = draw(driver_definitions(driver_name, remote_allowed))
+        destination = draw(driver_definitions(driver_name, remote_allowed))
+        destination_name = driver_name
+        transforms = []
+    elif pipeline_type == "rsync":
+        driver_name = draw(st.sampled_from(("btrfs", "directory")))
+        source = draw(driver_definitions(driver_name, remote_allowed))
+        destination = draw(driver_definitions("rsync", remote_allowed))
+        destination_name = "rsync"
+        transforms = []
+    elif pipeline_type == "archive":
+        driver_name = draw(st.sampled_from(("btrfs", "directory")))
+        source = draw(driver_definitions(driver_name, remote_allowed))
+        destination = draw(driver_definitions("file", remote_allowed))
+        destination_name = "file"
+        transform_names = draw(
+            st.sampled_from(((), ("zstd",), ("gpg",), ("zstd", "gpg"), ("gpg", "zstd")))
         )
-
-
-def test_TimeframeSchema_are_valid_hours():
-    valid_specs = [(12, 34), (23, 59), (0, 0), (3, -1)]
-    assert config.TimeframeSchema.are_valid_hours(valid_specs) == valid_specs
-
-    invalid_specs = [(-1, 30), (24, 30)]
-    for spec in invalid_specs:
-        with pytest.raises(vlp.Invalid) as exc:
-            config.TimeframeSchema.are_valid_hours([spec])
-        assert str(exc.value) == config.TimeframeSchema.ErrMsg.HOUR_OUT_OF_RANGE + f"\n\tGot {spec}"
-
-
-def test_TimeframeSchema_are_valid_minutes():
-    valid_specs = [(12, 34), (23, 59), (0, 0), (-1, 30)]
-    assert config.TimeframeSchema.are_valid_minutes(valid_specs) == valid_specs
-
-    invalid_specs = [(3, -1), (3, 60)]
-    for spec in invalid_specs:
-        with pytest.raises(vlp.Invalid) as exc:
-            config.TimeframeSchema.are_valid_minutes([spec])
-        assert (
-            str(exc.value) == config.TimeframeSchema.ErrMsg.MINUTE_OUT_OF_RANGE + f"\n\tGot {spec}"
-        )
-
-
-def test_TimeframeSchema_promote_timeframes_spec_to_list_of_timeframes(valid_raw_config):
-    for backup_name in sorted(valid_raw_config.keys()):
-        backup_settings = valid_raw_config[backup_name]
-        orig_timeframes = backup_settings["timeframes"]
-        backup_spec = config.TimeframeSchema._promote_timeframes_spec_to_list_of_timeframes(
-            valid_raw_config[backup_name]
-        )
-        assert len(orig_timeframes) == len(backup_spec["timeframes"])
-        for timeframe in backup_spec["timeframes"]:
-            assert isinstance(timeframe, Timeframe)
-            if isinstance(timeframe, FiveMinuteTimeframe):
-                assert timeframe.name == "5minute"
-                assert timeframe.keep == backup_spec["5minute_keep"]
-            elif isinstance(timeframe, HourlyTimeframe):
-                assert timeframe.name == "hourly"
-                assert timeframe.keep == backup_spec["hourly_keep"]
-                assert timeframe.minutes == backup_spec["hourly_minutes"]
-            elif isinstance(timeframe, DailyTimeframe):
-                assert timeframe.name == "daily"
-                assert timeframe.keep == backup_spec["daily_keep"]
-                assert timeframe.times == backup_spec["daily_times"]
-            elif isinstance(timeframe, WeeklyTimeframe):
-                assert timeframe.name == "weekly"
-                assert timeframe.keep == backup_spec["weekly_keep"]
-                assert timeframe.times == backup_spec["weekly_times"]
-                assert timeframe.weekdays == backup_spec["weekly_days"]
-            elif isinstance(timeframe, MonthlyTimeframe):
-                assert timeframe.name == "monthly"
-                assert timeframe.keep == backup_spec["monthly_keep"]
-                assert timeframe.times == backup_spec["monthly_times"]
-                assert timeframe.monthdays == backup_spec["monthly_days"]
-            else:  # isinstance(timeframe, YearlyTimeframe):
-                assert timeframe.name == "yearly"
-                assert timeframe.keep == backup_spec["yearly_keep"]
-                assert timeframe.times == backup_spec["yearly_times"]
-                assert timeframe.yeardays == backup_spec["yearly_days"]
-
-
-def test_TimeframeSchema_schema(valid_raw_config):
-    for backup_name in sorted(valid_raw_config.keys()):
-        backup_settings = valid_raw_config[backup_name]
-        schema = config.TimeframeSchema.schema()
-        processed_backup = schema(copy.deepcopy(backup_settings))
-        for key in backup_settings:
-            if isinstance(backup_settings[key], list):
-                assert len(processed_backup[key]) == len(backup_settings[key])
-
-        tf_types = tframe_types_configurable()
-        tf_names = tframe_types_configurable(names=True)
-        expected_tf_types = [
-            tf_types[i]
-            for i in range(len(tf_names))
-            if tf_names[i] in backup_settings["timeframes"]
+        transforms = [
+            draw(driver_definitions(name, remote_allowed)) for name in ("tar", *transform_names)
         ]
-        actual_tf_types = list(map(type, processed_backup["timeframes"]))
-        unmodified_setting_keys = [
-            "5minute_keep",
-            "hourly_keep",
-            "hourly_minutes",
-            "daily_keep",
-            "weekly_keep",
-            "weekly_days",
-            "monthly_keep",
-            "monthly_days",
-            "yearly_keep",
-            "yearly_days",
-        ]
-        times_settings = ["daily_times", "weekly_times", "monthly_times", "yearly_times"]
-        for tf_type in expected_tf_types:
-            assert tf_type in actual_tf_types
-        for setting in unmodified_setting_keys:
-            if setting in backup_settings:
-                assert processed_backup[setting] == backup_settings[setting]
-        for setting in times_settings:
-            if setting in backup_settings:
-                assert [
-                    isinstance(item, int) for time in processed_backup[setting] for item in time
-                ]
-
-
-def test_TimeframeSchema_rejects_immediate():
-    schema = config.TimeframeSchema.schema()
-    data = {"timeframes": ["immediate"]}
-    with pytest.raises(vlp.Invalid):
-        schema(data)
-
-
-def test_SrcDirDstDirSchema_is_sshtarget_spec():
-    sshtarget_spec = "ssh://p22:root@localhost:/"
-    assert config.SrcDirDstDirSchema._is_sshtarget_spec(sshtarget_spec) == sshtarget_spec
-
-    with pytest.raises(vlp.Invalid) as exc:
-        config.SrcDirDstDirSchema._is_sshtarget_spec("/")
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_TARGET_SPEC_INVALID
-
-    with pytest.raises(vlp.Invalid) as exc:
-        config.SrcDirDstDirSchema._is_sshtarget_spec("")
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_TARGET_SPEC_INVALID
-
-
-def test_SrcDirDstDirSchema_is_dir_or_sshtarget_spec(path_generator):
-    sshtarget_spec = "ssh://p22:root@localhost:/"
-    assert config.SrcDirDstDirSchema._is_dir_or_sshtarget_spec(sshtarget_spec) == sshtarget_spec
-
-    tmpdir_str = str(path_generator("tmpdir", mkdir=True))
-    assert config.SrcDirDstDirSchema._is_dir_or_sshtarget_spec(tmpdir_str) == Path(tmpdir_str)
-    assert config.SrcDirDstDirSchema._is_dir_or_sshtarget_spec(Path(tmpdir_str)) == Path(tmpdir_str)
-
-    shutil.rmtree(tmpdir_str)
-    with pytest.raises(vlp.Invalid) as exc:
-        config.SrcDirDstDirSchema._is_dir_or_sshtarget_spec(tmpdir_str)
-    assert (
-        str(exc.value)
-        == config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR
-    )
-
-
-def test_SrcDirDstDirSchema_dict_sshtargets_same_endpoint(path_generator):
-    src_dir = path_generator("src_dir", mkdir=True)
-    dst_dir = path_generator("dst_dir", mkdir=True)
-    target = SSHTarget("ssh://p22:root@localhost:/source", Path("/key"))
-
-    for data in [
-        {"src_dir": src_dir, "dst_dir": dst_dir},
-        {"src_dir": target, "dst_dir": dst_dir},
-        {"src_dir": src_dir, "dst_dir": target},
-        {"src_dir": target, "dst_dir": target.with_path(Path("/destination"))},
-    ]:
-        assert config.SrcDirDstDirSchema._dict_sshtargets_same_endpoint(data) == data
-
-    different_target = SSHTarget("ssh://p22:root@other:/destination", Path("/key"))
-    with pytest.raises(vlp.Invalid) as exc:
-        config.SrcDirDstDirSchema._dict_sshtargets_same_endpoint(
-            {"src_dir": target, "dst_dir": different_target}
+    else:
+        source = draw(driver_definitions("file", remote_allowed))
+        destination = draw(driver_definitions("file", remote_allowed))
+        destination_name = "file"
+        transform_names = draw(
+            st.sampled_from(((), ("zstd",), ("gpg",), ("zstd", "gpg"), ("gpg", "zstd")))
         )
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_TARGETS_DIFFER
+        transforms = [draw(driver_definitions(name, remote_allowed)) for name in transform_names]
+    return source, destination, transforms, destination_name
 
 
-def test_SrcDirDstDirSchema_dict_ssh_key_required_if_ssh_target(path_generator):
-    src_dir_str = str(path_generator("src_dir", mkdir=True))
-    dst_dir_str = str(path_generator("dst_dir", mkdir=True))
-
-    data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str}
-    assert config.SrcDirDstDirSchema._dict_ssh_key_required_if_ssh_target(data) == data
-
-    sshtarget_spec = "ssh://p22:root@localhost:/"
-    ssh_key_str = str(path_generator("ssh_key", touch=True))
-    data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str, "ssh_key": ssh_key_str}
-    assert config.SrcDirDstDirSchema._dict_ssh_key_required_if_ssh_target(data) == {
-        **data,
-        "ssh_key": Path(data["ssh_key"]),
-    }
-
-    with pytest.raises(vlp.Invalid) as exc:
-        data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str}
-        config.SrcDirDstDirSchema._dict_ssh_key_required_if_ssh_target(data)
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_KEY_MISSING
-
-    Path(ssh_key_str).unlink()
-    with pytest.raises(vlp.Invalid) as exc:
-        data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str, "ssh_key": ssh_key_str}
-        config.SrcDirDstDirSchema._dict_ssh_key_required_if_ssh_target(data)
-    assert str(exc.value) == config.Schema.ErrMsg.LOCAL_FILE_INVALID
-
-
-def test_SrcDirDstDirSchema_dict_promote_ssh_target_spec_to_ssh_target(path_generator):
-    src_dir = path_generator("src_dir", mkdir=True)
-    dst_dir = path_generator("dst_dir", mkdir=True)
-    data = {"src_dir": src_dir, "dst_dir": dst_dir}
-    assert config.SrcDirDstDirSchema._dict_promote_ssh_target_spec_to_ssh_target(data) == data
-
-    sshtarget_spec = "ssh://p22:root@localhost:/"
-    fake_key = path_generator("fake_key", touch=True)
-    data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir, "ssh_key": fake_key}
-    data = config.SrcDirDstDirSchema._dict_promote_ssh_target_spec_to_ssh_target(data)
-    assert isinstance(data["src_dir"], SSHTarget)
-
-    data = {"src_dir": src_dir, "dst_dir": sshtarget_spec, "ssh_key": fake_key}
-    data = config.SrcDirDstDirSchema._dict_promote_ssh_target_spec_to_ssh_target(data)
-    assert isinstance(data["dst_dir"], SSHTarget)
-
-    data = {
-        "src_dir": "ssh://p22:root@localhost:/source",
-        "dst_dir": "ssh://p22:root@localhost:/destination",
-        "ssh_key": fake_key,
-    }
-    data = config.SrcDirDstDirSchema._dict_promote_ssh_target_spec_to_ssh_target(data)
-    assert isinstance(data["src_dir"], SSHTarget)
-    assert isinstance(data["dst_dir"], SSHTarget)
-
-
-def test_SrcDirDstDirSchema_dict_ssh_target_connectable(sshtarget_generator, path_generator):
-    sshtarget = sshtarget_generator()
-    data = {"src_dir": Path("/foo"), "dst_dir": sshtarget, "ssh_key": sshtarget.key}
-    data = config.SrcDirDstDirSchema._dict_ssh_target_connectable(data)
-    assert isinstance(data["dst_dir"], SSHTarget)
-
-    with pytest.raises(vlp.Invalid) as exc:
-        bad_key = path_generator("bad_key", touch=True)
-        new_sshtarget = sshtarget.with_path(sshtarget.path)
-        new_sshtarget.key = bad_key
-        new_sshtarget.user = "nonexistent-user"
-        data = {"ssh_key": bad_key, "src_dir": Path("/foo"), "dst_dir": new_sshtarget}
-        config.SrcDirDstDirSchema._dict_ssh_target_connectable(data)
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_CONNECTION_FAILED_TO_ESTABLISH
-
-    with pytest.raises(vlp.Invalid) as exc:
-        bad_dir = path_generator("bad_dir", mkdir=False)
-        new_sshtarget = sshtarget.with_path(bad_dir)
-        data = {"src_dir": new_sshtarget, "dst_dir": "/foo"}
-        config.SrcDirDstDirSchema._dict_ssh_target_connectable(data)
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.REMOTE_DIR_INVALID
-
-
-def test_SrcDirDstDirSchema_schema(path_generator):
-    schema = config.SrcDirDstDirSchema.schema()
-
-    sshtarget_spec = "ssh://p22:root@localhost:/"
-    key = str(path_generator("key", touch=True))
-    ssh_config = str(path_generator("ssh_config", touch=True))
-    src_dir_str = str(path_generator("src_dir", mkdir=True))
-    dst_dir_str = str(path_generator("dst_dir", mkdir=True))
-
-    data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str}
-    assert schema(data) == {"src_dir": Path(src_dir_str), "dst_dir": Path(dst_dir_str)}
-
-    data = {
-        "src_dir": src_dir_str,
-        "dst_dir": sshtarget_spec,
-        "ssh_key": key,
-        "ssh_config": ssh_config,
-    }
-    data = schema(data)
-    assert sorted(data) == ["dst_dir", "src_dir", "ssh_config", "ssh_key"]
-    assert data["src_dir"] == Path(src_dir_str)
-    assert isinstance(data["dst_dir"], SSHTarget)
-    assert data["dst_dir"].path == Path("/")
-    assert data["dst_dir"].port == 22
-    assert data["dst_dir"].user == "root"
-    assert data["dst_dir"].host == "localhost"
-    assert data["dst_dir"].key == Path(key)
-    assert data["dst_dir"].sshconfig == Path(ssh_config)
-    assert data["ssh_key"] == Path(key)
-    assert data["ssh_config"] == Path(ssh_config)
-
-    data = {"src_dir": sshtarget_spec, "dst_dir": dst_dir_str, "ssh_key": key}
-    data = schema(data)
-    assert sorted(data) == ["dst_dir", "src_dir", "ssh_key"]
-    assert data["dst_dir"] == Path(dst_dir_str)
-    assert isinstance(data["src_dir"], SSHTarget)
-    assert data["ssh_key"] == Path(key)
-
-    data = {"foo": "bar", "src_dir": src_dir_str, "dst_dir": dst_dir_str}
-    schema(data)  # doesn't raise error for extra keys
-
-    with pytest.raises(vlp.Invalid) as exc:
-        data = {"src_dir": src_dir_str}
-        schema(data)
-    assert re.match("required key not provided", str(exc.value))
-
-    with pytest.raises(vlp.Invalid) as exc:
-        data = ["src_dir", src_dir_str, "dst_dir", dst_dir_str]
-        schema(data)
-    assert re.match("expected a dictionary", str(exc.value))
-
-    Path(src_dir_str).rmdir()
-    with pytest.raises(vlp.Invalid) as exc:
-        data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str}
-        schema(data)
-    assert re.match(
-        config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR,
-        str(exc.value),
+@st.composite
+def valid_backup_definitions(draw, name, ssh, previous_backups):
+    use_ssh = draw(st.booleans())
+    remote_allowed = use_ssh
+    replication_sources = tuple(
+        (alias, driver_name) for aliases, driver_name in previous_backups for alias in aliases
     )
-    Path(src_dir_str).mkdir()
-
-    Path(dst_dir_str).rmdir()
-    with pytest.raises(vlp.Invalid) as exc:
-        data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str}
-        schema(data)
-    assert re.match(
-        config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR,
-        str(exc.value),
-    )
-    Path(dst_dir_str).mkdir()
-
-    Path(key).unlink()
-    with pytest.raises(vlp.Invalid) as exc:
-        data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str, "ssh_key": key}
-        schema(data)
-    assert re.match(config.Schema.ErrMsg.LOCAL_FILE_INVALID, str(exc.value))
-    Path(key).touch()
-
-    Path(ssh_config).unlink()
-    with pytest.raises(vlp.Invalid) as exc:
-        data = {"src_dir": src_dir_str, "dst_dir": dst_dir_str, "ssh_config": ssh_config}
-        schema(data)
-    assert re.match(config.Schema.ErrMsg.LOCAL_FILE_INVALID, str(exc.value))
-    Path(ssh_config).touch()
-
-    data = {
-        "src_dir": "ssh://p22:root@localhost:/source",
-        "dst_dir": "ssh://p22:root@localhost:/destination",
-        "ssh_key": key,
-    }
-    data = schema(data)
-    assert isinstance(data["src_dir"], SSHTarget)
-    assert isinstance(data["dst_dir"], SSHTarget)
-
-    with pytest.raises(vlp.Invalid) as exc:
-        schema(
-            {
-                "src_dir": "ssh://p22:root@source:/source",
-                "dst_dir": "ssh://p22:root@destination:/destination",
-                "ssh_key": key,
-            }
+    if replication_sources and draw(st.booleans()):
+        source_name, destination_name = draw(st.sampled_from(replication_sources))
+        source = {"backup": source_name}
+        destination = draw(driver_definitions(destination_name, remote_allowed))
+        transforms = []
+    else:
+        source, destination, transforms, destination_name = draw(
+            direct_pipeline_definitions(remote_allowed)
         )
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_TARGETS_DIFFER
 
-    with pytest.raises(vlp.Invalid) as exc:
-        data = {"src_dir": src_dir_str, "dst_dir": sshtarget_spec}
-        schema(data)
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_KEY_MISSING
-
-
-def test_SrcDirDstDirSchema_schema_extra(sshtarget_generator, path_generator):
-    schema_extra = config.SrcDirDstDirSchema.schema_extra()
-    src_dir = path_generator("src_dir", mkdir=True)
-    dst_dir = path_generator("dst_dir", mkdir=True)
-    sshtarget = sshtarget_generator()
-
-    data = {"src_dir": src_dir, "dst_dir": dst_dir}
-    assert schema_extra(data) == data
-
-    data = {"src_dir": sshtarget, "dst_dir": dst_dir}
-    assert schema_extra(data) == data
-
-    data = {"src_dir": src_dir, "dst_dir": sshtarget}
-    assert schema_extra(data) == data
-
-    data = {
-        "src_dir": sshtarget.with_path(src_dir),
-        "dst_dir": sshtarget.with_path(dst_dir),
+    previous_names = [f"old-{name}"] if draw(st.booleans()) else []
+    definition = {
+        "source": source,
+        "destination": destination,
+        **({"transforms": transforms} if transforms or draw(st.booleans()) else {}),
+        **({"previous_names": previous_names} if previous_names else {}),
+        **({"ssh": ssh} if use_ssh else {}),
     }
-    assert schema_extra(data) == data
-
-    with pytest.raises(vlp.Invalid) as exc:
-        bad_key = path_generator("bad_key", touch=True)
-        new_sshtarget = sshtarget.with_path(sshtarget.path)
-        new_sshtarget.key = bad_key
-        new_sshtarget.user = "nonexistent-user"
-        data = {"src_dir": new_sshtarget, "dst_dir": dst_dir}
-        schema_extra(data)
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.SSH_CONNECTION_FAILED_TO_ESTABLISH
-
-    with pytest.raises(vlp.Invalid) as exc:
-        bad_path = path_generator("bad_path")
-        new_sshtarget = sshtarget.with_path(sshtarget.path)
-        new_sshtarget.path = bad_path
-        data = {"src_dir": new_sshtarget, "dst_dir": dst_dir}
-        schema_extra(data)
-    assert str(exc.value) == config.SrcDirDstDirSchema.ErrMsg.REMOTE_DIR_INVALID
+    if draw(st.booleans()):
+        supported = "backup" in source or destination_name in {"btrfs", "zfs"}
+        definition["skip_unchanged"] = draw(st.booleans()) if supported else False
+    schedules = draw(schedule_definitions())
+    if schedules is not None:
+        definition["schedules"] = schedules
+    return definition, ((name, *previous_names), destination_name)
 
 
-def test_BackupSchema_ensure_single_backup():
-    d = {"foo": 1}
-    assert d == config.BackupSchema._ensure_single_backup(d)
-    d = {"foo": {"bar": 1, "baz": 2}}
-    assert d == config.BackupSchema._ensure_single_backup(d)
-    d = {"foo": 1, "bar": 2}
-    with pytest.raises(vlp.Invalid) as exc:
-        config.BackupSchema._ensure_single_backup(d)
-    assert str(exc.value) == config.BackupSchema.ErrMsg.NOT_1_BACKUP
-    d = {}
-    with pytest.raises(vlp.Invalid) as exc:
-        config.BackupSchema._ensure_single_backup(d)
-    assert str(exc.value) == config.BackupSchema.ErrMsg.NOT_1_BACKUP
-
-
-def test_BackupSchema_ensure_backup_name_valid():
-    d = {"foo": {"bar": 1, "baz": 2}}
-    assert d == config.BackupSchema._ensure_backup_name_valid(d)
-    d = {"": {"bar": 1, "baz": 2}}
-    with pytest.raises(vlp.Invalid) as exc:
-        config.BackupSchema._ensure_backup_name_valid(d)
-    assert str(exc.value) == config.BackupSchema.ErrMsg.INVALID_BACKUP_NAME
-    d = {"foo/bar": {"bar": 1, "baz": 2}}
-    with pytest.raises(vlp.Invalid) as exc:
-        config.BackupSchema._ensure_backup_name_valid(d)
-    assert str(exc.value) == config.BackupSchema.ErrMsg.INVALID_BACKUP_NAME
-    d = {"foo,bar": {"bar": 1, "baz": 2}}
-    with pytest.raises(vlp.Invalid) as exc:
-        config.BackupSchema._ensure_backup_name_valid(d)
-    assert str(exc.value) == config.BackupSchema.ErrMsg.INVALID_BACKUP_NAME
-
-
-def test_BackupSchema_reject_unknown_settings(valid_raw_config):
-    for backup_name in sorted(valid_raw_config.keys()):
-        backup_settings = copy.deepcopy(valid_raw_config[backup_name])
-        # valid settings should pass
-        config.BackupSchema._reject_unknown_settings({backup_name: backup_settings})
-        # single unknown setting
-        backup_settings["INVALID_SETTING"] = 12
-        with pytest.raises(vlp.Invalid) as exc:
-            config.BackupSchema._reject_unknown_settings({backup_name: backup_settings})
-        assert config.BackupSchema.ErrMsg.UNKNOWN_SETTING in str(exc.value)
-        assert "INVALID_SETTING" in str(exc.value)
-        # multiple unknown settings
-        backup_settings["ANOTHER_BAD"] = "foo"
-        with pytest.raises(vlp.Invalid) as exc:
-            config.BackupSchema._reject_unknown_settings({backup_name: backup_settings})
-        assert "INVALID_SETTING" in str(exc.value)
-        assert "ANOTHER_BAD" in str(exc.value)
-
-
-def test_BackupSchema_rejects_non_dict_settings():
-    schema = config.BackupSchema.schema()
-    for bad_settings in [None, "foo", ["foo"], 12]:
-        with pytest.raises(vlp.Invalid) as exc:
-            schema({"mybackup": bad_settings})
-        assert config.BackupSchema.ErrMsg.INVALID_SETTINGS in str(exc.value)
-
-
-def test_BackupSchema_supports_backend_without_paths(monkeypatch):
-    class DatasetBackend(BackendBase):
-        @staticmethod
-        def config_settings() -> set[str]:
-            return {"dataset"}
-
-        @staticmethod
-        def config_schema() -> vlp.Schema:
-            def apply(d):
-                d["backend"].dataset = d.pop("dataset")
-                return d
-
-            return vlp.Schema(vlp.All({vlp.Required("dataset"): str}, apply), extra=vlp.ALLOW_EXTRA)
-
-        def check(self, backup: bckp.Backup) -> list[CheckResult]:
-            return []
-
-        def create(self, backup, timeframe, name) -> bckp.BackupArtifact:
-            raise NotImplementedError
-
-        def collect(self, backup, timeframes=None) -> list[bckp.BackupArtifact]:
-            return []
-
-        def delete(self, backup, artifacts) -> None:
-            raise NotImplementedError
-
-    monkeypatch.setattr(BackendBase, "backend_classes", staticmethod(lambda: [DatasetBackend]))
-
-    backup = config.BackupSchema.schema()(
-        {"archive": {"backend": "dataset", "dataset": "pool/home", "timeframes": []}}
-    )
-
-    assert vars(backup) == {
-        "name": "archive",
-        "backend": backup.backend,
-        "timeframes": [],
-    }
-    assert backup.backend.dataset == "pool/home"
-
-
-def test_BackupSchema_apply_sub_schemas(valid_raw_config, path_generator):
-    # success tests
-    for backup_name in sorted(valid_raw_config.keys()):
-        backup_spec = copy.deepcopy({backup_name: valid_raw_config[backup_name]})
-        backup_spec = config.BackupSchema._apply_sub_schemas(backup_spec)
-        backup_settings = backup_spec[backup_name]
-        assert isinstance(backup_settings["src_dir"], (Path, SSHTarget))
-        assert isinstance(backup_settings["dst_dir"], (Path, SSHTarget))
-        assert isinstance(backup_settings["backend"], BackendBase)  # Changed from issubclass
-        for tf in backup_settings["timeframes"]:
-            assert isinstance(tf, Timeframe)
-    # failure tests
-    for backup_name in sorted(valid_raw_config.keys()):
-        backup_spec = copy.deepcopy({backup_name: valid_raw_config[backup_name]})
-        backup_spec[backup_name]["backend"] = "INVALIDBACKEND"
-        backup_spec[backup_name]["src_dir"] = path_generator(
-            "non-existent-path", touch=False, mkdir=False
+@st.composite
+def valid_configs(draw):
+    backup_count = draw(st.integers(min_value=1, max_value=5))
+    group_count = draw(st.integers(min_value=0, max_value=4))
+    names = draw(
+        st.lists(
+            _BACKUP_NAMES,
+            min_size=backup_count + group_count,
+            max_size=backup_count + group_count,
+            unique=True,
         )
-        backup_spec[backup_name]["timeframes"].append("INVALIDTIMEFRAMENAME")
-        with pytest.raises(vlp.MultipleInvalid) as exc:
-            backup_spec = config.BackupSchema._apply_sub_schemas(backup_spec)
-        assert len(exc.value.errors) == 2
-
-
-def test_BackupSchema_promote_to_backup_object(valid_raw_config):
-    backup_name = random.choice(list(valid_raw_config.keys()))
-    backup = config.BackupSchema._promote_to_backup_object(
-        {backup_name: valid_raw_config[backup_name]}
     )
-    assert isinstance(backup, bckp.Backup)
+    backup_names = names[:backup_count]
+    group_names = names[backup_count:]
+    ssh = draw(_SSH_CONFIGS)
+    config = {}
+    previous_backups = []
+    for name in backup_names:
+        definition, backup = draw(valid_backup_definitions(name, ssh, previous_backups))
+        config[name] = definition
+        previous_backups.append(backup)
+
+    available_targets = [alias for aliases, _driver in previous_backups for alias in aliases]
+    for name in group_names:
+        members = draw(
+            st.lists(
+                st.sampled_from(available_targets),
+                min_size=1,
+                max_size=min(6, len(available_targets) + 2),
+            )
+        )
+        config[name] = {"group": members}
+        available_targets.append(name)
+    if draw(st.booleans()):
+        config["settings"] = draw(_GLOBAL_SETTINGS)
+    entry_order = draw(st.permutations(tuple(config)))
+    return {name: config[name] for name in entry_order}
 
 
-def test_BackupSchema_remote_to_remote(path_generator, sshtarget_generator):
-    target = sshtarget_generator()
-    src_dir = target.with_path(path_generator("src", mkdir=True))
-    dst_dir = target.with_path(path_generator("dst", mkdir=True))
-    backup = config.BackupSchema.schema()(
+_INVALID_MUTATION_NAMES = (
+    "nonmapping-backup",
+    "missing-source",
+    "missing-destination",
+    "missing-source-and-destination",
+    "unknown-setting",
+    "invalid-skip-unchanged",
+    "unsupported-skip-unchanged",
+    "invalid-previous-names",
+    "invalid-ssh",
+    "empty-source-selection",
+    "multiple-source-selection",
+    "unknown-source",
+    "invalid-source-configuration",
+    "empty-destination-selection",
+    "unknown-destination",
+    "invalid-destination-configuration",
+    "nonlist-transforms",
+    "invalid-transform-selection",
+    "unknown-transform",
+    "invalid-transform-configuration",
+    "nonmapping-schedules",
+    "invalid-schedule-name",
+    "nonmapping-schedule",
+    "missing-retention",
+    "missing-trigger",
+    "invalid-trigger-selection",
+    "unknown-schedule-type",
+    "invalid-schedule-configuration",
+    "invalid-previous-schedule-names",
+    "empty-retention",
+    "invalid-retention-selection",
+    "unknown-retention",
+    "invalid-keep-last",
+    "invalid-keep-for",
+    "invalid-keep-all",
+)
+_INVALID_MUTATIONS = st.sampled_from(_INVALID_MUTATION_NAMES)
+
+
+def invalidate_backup(config, mutation):
+    schedule = config["schedules"]["daily"]
+    match mutation:
+        case "nonmapping-backup":
+            return [], "settings must be a mapping"
+        case "missing-source":
+            del config["source"]
+            return config, "missing required settings: source"
+        case "missing-destination":
+            del config["destination"]
+            return config, "missing required settings: destination"
+        case "missing-source-and-destination":
+            del config["source"], config["destination"]
+            return config, "missing required settings: destination, source"
+        case "unknown-setting":
+            config["unexpected"] = True
+            return config, "unknown settings: unexpected"
+        case "invalid-skip-unchanged":
+            config["skip_unchanged"] = "yes"
+            return config, "skip_unchanged must be a boolean"
+        case "unsupported-skip-unchanged":
+            config["skip_unchanged"] = True
+            config["destination"] = {"file": "/destination"}
+            return config, "destination driver file does not support skip_unchanged"
+        case "invalid-previous-names":
+            config["previous_names"] = "old-home"
+            return config, "previous_names must be a list"
+        case "invalid-ssh":
+            config["ssh"] = {"endpoint": "server", "identity_file": "/key"}
+            return config, "invalid SSH configuration"
+        case "empty-source-selection":
+            config["source"] = {}
+            return config, "source must select one driver"
+        case "multiple-source-selection":
+            config["source"] = {"btrfs": "/source", "rsync": "/source"}
+            return config, "source must select one driver"
+        case "unknown-source":
+            config["source"] = {"unknown": {}}
+            return config, "source uses unknown driver 'unknown'"
+        case "invalid-source-configuration":
+            config["source"] = {"btrfs": "relative"}
+            return config, "source has invalid btrfs configuration"
+        case "empty-destination-selection":
+            config["destination"] = {}
+            return config, "destination must select one driver"
+        case "unknown-destination":
+            config["destination"] = {"unknown": {}}
+            return config, "destination uses unknown driver 'unknown'"
+        case "invalid-destination-configuration":
+            config["destination"] = {"btrfs": "relative"}
+            return config, "destination has invalid btrfs configuration"
+        case "nonlist-transforms":
+            config["transforms"] = {}
+            return config, "transforms must be a list"
+        case "invalid-transform-selection":
+            config["transforms"] = [None]
+            return config, "transform 1 must select one driver"
+        case "unknown-transform":
+            config["transforms"] = [{"unknown": {}}]
+            return config, "transform 1 uses unknown driver 'unknown'"
+        case "invalid-transform-configuration":
+            config["transforms"] = [{"zstd": 20}]
+            return config, "transform 1 has invalid zstd configuration"
+        case "nonmapping-schedules":
+            config["schedules"] = []
+            return config, "schedules must be a mapping"
+        case "invalid-schedule-name":
+            config["schedules"] = {"bad name": schedule}
+            return config, "invalid schedule name: 'bad name'"
+        case "nonmapping-schedule":
+            config["schedules"] = {"daily": []}
+            return config, "schedule 'daily' must be a mapping"
+        case "missing-retention":
+            del schedule["retention"]
+            return config, "schedule 'daily' has no retention policy"
+        case "missing-trigger":
+            del schedule["trigger"]
+            return config, "schedule 'daily' has no trigger"
+        case "invalid-trigger-selection":
+            schedule["trigger"] = {"cron": "30 4 * * *", "on-demand": {}}
+            return config, "schedule 'daily' trigger must select one schedule type"
+        case "unknown-schedule-type":
+            schedule["trigger"] = {"unknown": 1}
+            return config, "schedule 'daily' trigger uses unknown schedule type 'unknown'"
+        case "invalid-schedule-configuration":
+            schedule["trigger"] = {"cron": "invalid"}
+            return config, "schedule 'daily' trigger has invalid cron configuration"
+        case "invalid-previous-schedule-names":
+            schedule["previous_names"] = "old-daily"
+            return config, "previous_names must be a list"
+        case "empty-retention":
+            schedule["retention"] = []
+            return config, "schedule 'daily' has no retention policy"
+        case "invalid-retention-selection":
+            schedule["retention"] = {}
+            return config, "schedule 'daily' retention must select one retention policy"
+        case "unknown-retention":
+            schedule["retention"] = {"unknown": 1}
+            return config, "uses unknown retention policy 'unknown'"
+        case "invalid-keep-last":
+            schedule["retention"] = {"keep-last": 0}
+            return config, "has invalid keep-last configuration"
+        case "invalid-keep-for":
+            schedule["retention"] = {"keep-for": "0d"}
+            return config, "has invalid keep-for configuration"
+        case "invalid-keep-all":
+            schedule["retention"] = {"keep-all": True}
+            return config, "has invalid keep-all configuration"
+    raise AssertionError(f"unknown mutation: {mutation}")
+
+
+@st.composite
+def invalid_configs(draw):
+    names = draw(st.lists(_BACKUP_NAMES, min_size=2, max_size=5, unique=True))
+    config = {}
+    messages = []
+    global_error = draw(st.sampled_from((None, "nonmapping", "nonstring-name")))
+    if global_error == "nonmapping":
+        config["settings"] = []
+        messages.append("settings must be a mapping")
+    elif global_error == "nonstring-name":
+        config["settings"] = {1: "value"}
+        messages.append("setting names must be strings")
+    for name in names:
+        definition, message = invalidate_backup(backup_config(), draw(_INVALID_MUTATIONS))
+        config[name] = definition
+        messages.append(message)
+    return config, tuple(messages)
+
+
+_INVALID_GROUP_MUTATION_NAMES = (
+    "nonlist-group",
+    "empty-group",
+    "unknown-setting",
+    "nonstring-member",
+    "invalid-member",
+    "unknown-member",
+    "invalid-name",
+    "cycle",
+    "backup-alias-collision",
+    "group-source",
+    "no-backups",
+)
+_INVALID_GROUP_MUTATIONS = st.sampled_from(_INVALID_GROUP_MUTATION_NAMES)
+
+
+def invalid_group_config(names, mutation):
+    backup_name, group_name, other_group_name, unknown_name = names
+    config = {backup_name: backup_config()}
+
+    match mutation:
+        case "nonlist-group":
+            config[group_name] = {"group": backup_name}
+            message = "group must be a list"
+        case "empty-group":
+            config[group_name] = {"group": []}
+            message = "group must contain at least one target"
+        case "unknown-setting":
+            config[group_name] = {"group": [backup_name], "unexpected": True}
+            message = "unknown settings: unexpected"
+        case "nonstring-member":
+            config[group_name] = {"group": [1]}
+            message = "invalid group member name: 1 (name must be a string)"
+        case "invalid-member":
+            config[group_name] = {"group": ["bad/name"]}
+            message = "invalid group member name: 'bad/name'"
+        case "unknown-member":
+            config[group_name] = {"group": [unknown_name]}
+            message = f"group {group_name!r} references unknown target {unknown_name!r}"
+        case "invalid-name":
+            invalid_name = f"-{group_name}"
+            config[invalid_name] = {"group": [backup_name]}
+            message = f"invalid group name: {invalid_name!r}"
+        case "cycle":
+            config[group_name] = {"group": [other_group_name]}
+            config[other_group_name] = {"group": [group_name]}
+            message = f"backup group cycle: {group_name} -> {other_group_name} -> {group_name}"
+        case "backup-alias-collision":
+            alias = f"old-{backup_name}"
+            config[backup_name] = backup_config(previous_names=[alias])
+            config[alias] = {"group": [backup_name]}
+            message = (
+                f"target name {alias!r} is used by both backup {backup_name!r} and group {alias!r}"
+            )
+        case "group-source":
+            config[group_name] = {"group": [backup_name]}
+            config[other_group_name] = backup_config(source={"backup": group_name})
+            message = (
+                f"backup {other_group_name!r} references group {group_name!r} as its source; "
+                "backup sources must reference a backup"
+            )
+        case "no-backups":
+            config = {group_name: {"group": [group_name]}}
+            message = "at least one backup is required"
+        case _:
+            raise AssertionError(f"unknown group mutation: {mutation}")
+    return config, message
+
+
+@st.composite
+def invalid_group_configs(draw):
+    names = draw(
+        st.lists(
+            _BACKUP_NAMES,
+            min_size=4,
+            max_size=4,
+            unique=True,
+        )
+    )
+    return invalid_group_config(names, draw(_INVALID_GROUP_MUTATIONS))
+
+
+def test_config_types_are_discovered_from_subclasses():
+    backup = parse_config(
         {
-            "remote-backup": {
-                "backend": "rsync",
-                "src_dir": str(src_dir),
-                "dst_dir": str(dst_dir),
-                "ssh_key": str(target.key),
-                "timeframes": [],
+            "home": backup_config(
+                source={"automatically-discovered": "/source"},
+                destination={"automatically-discovered": "/destination"},
+                schedules={
+                    "automatic": {
+                        "trigger": "automatically-discovered",
+                        "retention": {"automatically-discovered": 2},
+                    }
+                },
+            )
+        }
+    ).backups["home"]
+
+    assert isinstance(backup.source, AutomaticallyDiscoveredDriver)
+    assert isinstance(backup.destination, AutomaticallyDiscoveredDriver)
+    assert isinstance(backup.schedules[0].trigger, AutomaticallyDiscoveredSchedule)
+    assert backup.schedules[1] == Schedule("manual", OnDemandSchedule())
+    assert backup.retention_policies == (
+        AutomaticallyDiscoveredRetention(2, "automatic"),
+        KeepAll("manual"),
+    )
+
+
+def test_config_has_no_hardcoded_type_registries():
+    assert not hasattr(config_module, "_DRIVER_TYPES")
+    assert not hasattr(config_module, "_SCHEDULE_TYPES")
+    assert not hasattr(config_module, "_RETENTION_TYPES")
+
+
+def test_config_generator_covers_every_builtin_type():
+    def names(base):
+        types = set()
+        for subclass in base.__subclasses__():
+            if subclass.__module__.startswith("yaesm.") and not inspect.isabstract(subclass):
+                types.add(subclass.name())
+            types.update(names(subclass))
+        return types
+
+    assert set(_DRIVER_CONFIGS) == names(DriverBase)
+    assert {"cron", "on-demand"} == names(ScheduleBase)
+    assert {"keep-all", "keep-last", "keep-for"} == names(RetentionPolicyBase)
+
+
+def test_parse_config_builds_complete_backup():
+    value = {
+        "home": backup_config(
+            ssh={
+                "endpoint": "ssh://server",
+                "identity_file": "/root/.ssh/server-key",
+                "config_file": "/root/.ssh/config",
+            },
+            source={"driver": {"btrfs": "/home"}, "remote": True},
+            destination={"driver": {"file": "/backups"}, "remote": True},
+            transforms=[
+                {"driver": "tar", "remote": True},
+                {"driver": {"zstd": 7}, "remote": True},
+                {"driver": {"gpg": "/root/backup-key.asc"}, "remote": True},
+            ],
+        )
+    }
+
+    config = parse_config(value)
+    backups = config.backups
+
+    assert config.global_settings == {}
+    assert tuple(backups) == ("home",)
+    backup = backups["home"]
+    ssh = SSHTarget(
+        "ssh://server",
+        Path("/root/.ssh/server-key"),
+        Path("/root/.ssh/config"),
+    )
+    assert backup.name == "home"
+    assert isinstance(backup.source, BtrfsDriver)
+    assert backup.source.location == Path("/home")
+    assert backup.source.ssh == ssh
+    assert isinstance(backup.destination, FileDriver)
+    assert backup.destination.location == Path("/backups")
+    assert backup.destination.ssh is backup.source.ssh
+    assert isinstance(backup.transforms[0], TarDriver)
+    assert backup.transforms[0].ssh is backup.source.ssh
+    assert isinstance(backup.transforms[1], ZstdDriver)
+    assert backup.transforms[1].level == 7
+    assert backup.transforms[1].ssh is backup.source.ssh
+    assert isinstance(backup.transforms[2], GPGDriver)
+    assert backup.transforms[2].public_key == Path("/root/backup-key.asc")
+    assert backup.transforms[2].ssh is backup.source.ssh
+    assert backup.schedules == (
+        Schedule("daily", CronSchedule("30 4 * * *")),
+        Schedule("manual", OnDemandSchedule()),
+    )
+    assert backup.retention_policies == (KeepLast(7, "daily"), KeepAll("manual"))
+
+
+def test_parse_config_builds_previous_name_lookup():
+    config = parse_config(
+        {
+            "laptop-home": backup_config(
+                previous_names=["home", "old-home"],
+                schedules={
+                    "nightly": {
+                        "previous_names": ["daily", "old-daily"],
+                        "trigger": {"cron": "30 4 * * *"},
+                        "retention": {"keep-last": 7},
+                    }
+                },
+            )
+        }
+    )
+    backup = config.backups["laptop-home"]
+
+    assert backup.previous_names == ("home", "old-home")
+    assert backup.schedules == (
+        Schedule(
+            "nightly",
+            CronSchedule("30 4 * * *"),
+            previous_names=("daily", "old-daily"),
+        ),
+        Schedule("manual", OnDemandSchedule()),
+    )
+    assert config.backups_by_name == {
+        "laptop-home": backup,
+        "home": backup,
+        "old-home": backup,
+    }
+
+
+def test_parse_config_builds_backup_group():
+    config = parse_config(
+        {
+            "local": {"group": ["root", "home"]},
+            "root": backup_config(),
+            "home": backup_config(),
+        }
+    )
+    group = BackupGroup("local", ("root", "home"))
+    all_group = config.groups[ALL_TARGET_NAME]
+
+    assert all_group.name == ALL_TARGET_NAME
+    assert all_group.members == ("root", "home")
+    assert config.groups == {"local": group, ALL_TARGET_NAME: all_group}
+    assert config.targets_by_name == {
+        "root": config.backups["root"],
+        "home": config.backups["home"],
+        "local": group,
+        ALL_TARGET_NAME: all_group,
+    }
+    assert config.backups_for_targets("local") == (
+        config.backups["root"],
+        config.backups["home"],
+    )
+
+
+def test_backup_groups_expand_recursively_in_order_without_duplicates():
+    config = parse_config(
+        {
+            "local": {"group": ["root", "home"]},
+            "everything": {"group": ["local", "remote", "root"]},
+            "root": backup_config(),
+            "home": backup_config(),
+            "remote": backup_config(),
+        }
+    )
+
+    assert config.backups_for_targets("home", "everything", "local") == (
+        config.backups["home"],
+        config.backups["root"],
+        config.backups["remote"],
+    )
+
+
+def test_all_target_expands_every_backup_in_definition_order():
+    config = parse_config(
+        {
+            "root": backup_config(),
+            "home": backup_config(),
+            "remote": backup_config(),
+        }
+    )
+
+    assert config.groups[ALL_TARGET_NAME].members == ("root", "home", "remote")
+    assert config.targets_by_name[ALL_TARGET_NAME] is config.groups[ALL_TARGET_NAME]
+    assert config.backups_for_targets(ALL_TARGET_NAME) == tuple(config.backups.values())
+
+
+def test_all_target_exists_when_config_has_no_backups():
+    config = Config({}, {})
+
+    assert config.groups[ALL_TARGET_NAME].members == ()
+    assert config.backups_for_targets(ALL_TARGET_NAME) == ()
+
+
+def test_backup_group_definition_order_does_not_matter():
+    config = parse_config(
+        {
+            "everything": {"group": ["local", "remote"]},
+            "local": {"group": ["home"]},
+            "remote": backup_config(),
+            "home": backup_config(),
+        }
+    )
+
+    assert config.backups_for_targets("everything") == (
+        config.backups["home"],
+        config.backups["remote"],
+    )
+
+
+def test_backup_group_members_may_use_previous_backup_names():
+    config = parse_config(
+        {
+            "local": {"group": ["old-home"]},
+            "home": backup_config(previous_names=["old-home"]),
+        }
+    )
+
+    assert config.backups_for_targets("local") == (config.backups["home"],)
+
+
+def test_backups_for_targets_rejects_unknown_name():
+    config = parse_config({"home": backup_config()})
+
+    with pytest.raises(BackupTargetError, match="unknown backup target: 'missing'"):
+        config.backups_for_targets("missing")
+
+
+@pytest.mark.parametrize("members", [None, "home", {}, 1])
+def test_parse_config_rejects_nonlist_backup_group(members):
+    with pytest.raises(ConfigError, match="group 'local': group must be a list"):
+        parse_config({"local": {"group": members}, "home": backup_config()})
+
+
+def test_parse_config_rejects_empty_backup_group():
+    with pytest.raises(ConfigError, match="group must contain at least one target"):
+        parse_config({"local": {"group": []}, "home": backup_config()})
+
+
+@pytest.mark.parametrize(
+    ("members", "message"),
+    [
+        ([1], r"invalid group member name: 1 \(name must be a string\)"),
+        (
+            ["bad/name"],
+            r"invalid group member name: 'bad/name' \(name must contain only ASCII",
+        ),
+    ],
+)
+def test_parse_config_rejects_invalid_backup_group_member(members, message):
+    with pytest.raises(ConfigError, match=message):
+        parse_config({"local": {"group": members}, "home": backup_config()})
+
+
+def test_parse_config_rejects_unknown_backup_group_member():
+    with pytest.raises(ConfigError, match="group 'local' references unknown target 'missing'"):
+        parse_config({"local": {"group": ["missing"]}, "home": backup_config()})
+
+
+def test_parse_config_rejects_backup_group_cycle():
+    with pytest.raises(
+        ConfigError,
+        match="backup group cycle: everything -> local -> everything",
+    ):
+        parse_config(
+            {
+                "everything": {"group": ["local"]},
+                "local": {"group": ["everything"]},
+                "home": backup_config(),
+            }
+        )
+
+
+def test_parse_config_rejects_invalid_backup_group_name():
+    with pytest.raises(ConfigError, match="group '-local': invalid group name: '-local'"):
+        parse_config({"-local": {"group": ["home"]}, "home": backup_config()})
+
+
+def test_parse_config_rejects_unknown_backup_group_setting():
+    with pytest.raises(ConfigError, match="group 'local': unknown settings: description"):
+        parse_config(
+            {
+                "local": {"group": ["home"], "description": "Local backups"},
+                "home": backup_config(),
+            }
+        )
+
+
+def test_parse_config_rejects_group_name_that_is_a_previous_backup_name():
+    with pytest.raises(
+        ConfigError,
+        match="target name 'old-home' is used by both backup 'home' and group 'old-home'",
+    ):
+        parse_config(
+            {
+                "old-home": {"group": ["home"]},
+                "home": backup_config(previous_names=["old-home"]),
+            }
+        )
+
+
+def test_parse_config_rejects_group_as_backup_source():
+    with pytest.raises(
+        ConfigError,
+        match=(
+            "backup 'replica' references group 'local' as its source; "
+            "backup sources must reference a backup"
+        ),
+    ):
+        parse_config(
+            {
+                "local": {"group": ["home"]},
+                "home": backup_config(),
+                "replica": backup_config(source={"backup": "local"}),
+            }
+        )
+
+
+def test_parse_config_accepts_skip_unchanged():
+    backup = parse_config({"home": backup_config(skip_unchanged=True)}).backups["home"]
+
+    assert backup.skip_unchanged is True
+
+
+@pytest.mark.parametrize("value", [None, 1, "yes", []])
+def test_parse_config_rejects_nonboolean_skip_unchanged(value):
+    with pytest.raises(ConfigError, match="skip_unchanged must be a boolean"):
+        parse_config({"home": backup_config(skip_unchanged=value)})
+
+
+@pytest.mark.parametrize("driver", ["rsync", "file"])
+def test_parse_config_rejects_skip_unchanged_for_unsupported_driver(driver):
+    with pytest.raises(
+        ConfigError,
+        match=rf"destination driver {driver} does not support skip_unchanged",
+    ):
+        parse_config(
+            {
+                "home": backup_config(
+                    destination={driver: "/destination"},
+                    skip_unchanged=True,
+                )
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "previous_names",
+    ["home", None, {}, ["settings"], ["SETTINGS"], ["old/home"], [1]],
+)
+def test_parse_config_rejects_invalid_previous_backup_names(previous_names):
+    with pytest.raises(ConfigError, match="previous_names|invalid previous backup name"):
+        parse_config({"home": backup_config(previous_names=previous_names)})
+
+
+@pytest.mark.parametrize("previous_names", [["home"], ["old", "old"]])
+def test_parse_config_rejects_duplicate_backup_name_history(previous_names):
+    with pytest.raises(ConfigError, match="duplicate backup name"):
+        parse_config({"home": backup_config(previous_names=previous_names)})
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {
+            "first": backup_config(previous_names=["second"]),
+            "second": backup_config(),
+        },
+        {
+            "first": backup_config(previous_names=["old"]),
+            "second": backup_config(previous_names=["old"]),
+        },
+    ],
+)
+def test_parse_config_rejects_backup_name_history_collisions(config):
+    with pytest.raises(ConfigError, match="backup name .* is used by both 'first' and 'second'"):
+        parse_config(config)
+
+
+@pytest.mark.parametrize(
+    "previous_names",
+    ["daily", None, {}, ["old/schedule"], [1]],
+)
+def test_parse_config_rejects_invalid_previous_schedule_names(previous_names):
+    schedules = {
+        "daily": {
+            "previous_names": previous_names,
+            "trigger": {"cron": "30 4 * * *"},
+            "retention": {"keep-last": 7},
+        }
+    }
+
+    with pytest.raises(ConfigError, match="previous_names|invalid previous schedule name"):
+        parse_config({"home": backup_config(schedules=schedules)})
+
+
+@pytest.mark.parametrize("previous_names", [["daily"], ["old", "old"]])
+def test_parse_config_rejects_duplicate_schedule_name_history(previous_names):
+    schedules = {
+        "daily": {
+            "previous_names": previous_names,
+            "trigger": {"cron": "30 4 * * *"},
+            "retention": {"keep-last": 7},
+        }
+    }
+
+    with pytest.raises(ConfigError, match="duplicate schedule name"):
+        parse_config({"home": backup_config(schedules=schedules)})
+
+
+@pytest.mark.parametrize(
+    "schedules",
+    [
+        {
+            "nightly": {
+                "previous_names": ["daily"],
+                "trigger": {"cron": "0 1 * * *"},
+                "retention": {"keep-last": 7},
+            },
+            "daily": {
+                "trigger": {"cron": "0 2 * * *"},
+                "retention": {"keep-last": 7},
+            },
+        },
+        {
+            "nightly": {
+                "previous_names": ["old-daily"],
+                "trigger": {"cron": "0 1 * * *"},
+                "retention": {"keep-last": 7},
+            },
+            "daily": {
+                "previous_names": ["old-daily"],
+                "trigger": {"cron": "0 2 * * *"},
+                "retention": {"keep-last": 7},
+            },
+        },
+    ],
+)
+def test_parse_config_rejects_schedule_name_history_collisions(schedules):
+    with pytest.raises(ConfigError, match="schedule name .* is used by both"):
+        parse_config({"home": backup_config(schedules=schedules)})
+
+
+@pytest.mark.parametrize(
+    ("driver", "driver_type"),
+    [
+        ({"btrfs": "/source"}, BtrfsDriver),
+        ({"zfs": "tank/source"}, ZFSDriver),
+    ],
+)
+def test_parse_config_constructs_source_and_destination_drivers(driver, driver_type):
+    backup = parse_config({"home": backup_config(source=driver, destination=driver)}).backups[
+        "home"
+    ]
+
+    assert isinstance(backup.source, driver_type)
+    assert isinstance(backup.destination, driver_type)
+
+
+def test_parse_config_constructs_directory_source_and_rsync_destination():
+    backup = parse_config(
+        {
+            "home": backup_config(
+                source={"directory": "/source"},
+                destination={"rsync": "/destination"},
+            )
+        }
+    ).backups["home"]
+
+    assert isinstance(backup.source, DirectoryDriver)
+    assert isinstance(backup.destination, RsyncDriver)
+
+
+def test_parse_config_constructs_file_source_and_destination():
+    backup = parse_config(
+        {
+            "database": backup_config(
+                source={"file": "/source/database.sql"},
+                destination={"file": "/destination"},
+                transforms=["zstd"],
+            )
+        }
+    ).backups["database"]
+
+    assert isinstance(backup.source, FileDriver)
+    assert backup.source.location == Path("/source/database.sql")
+    assert isinstance(backup.destination, FileDriver)
+    assert backup.destination.location == Path("/destination")
+    assert tuple(
+        (step.driver.name(), step.capability)
+        for step in Pipeline(backup.source, backup.destination, backup.transforms).steps
+    ) == (
+        ("file", "source"),
+        ("zstd", "compress"),
+        ("file", "import"),
+    )
+
+
+def test_parse_config_rejects_file_transform():
+    with pytest.raises(ConfigError, match="next configured transform cannot be used: file"):
+        parse_config(
+            {
+                "database": backup_config(
+                    source={"file": "/source/database.sql"},
+                    destination={"file": "/destination"},
+                    transforms=[{"file": "/unused"}],
+                )
+            }
+        )
+
+
+def test_parse_config_rejects_rsync_source():
+    with pytest.raises(ConfigError, match="rsync driver cannot provide a backup source"):
+        parse_config(
+            {
+                "home": backup_config(
+                    source={"rsync": "/source"},
+                    destination={"rsync": "/destination"},
+                )
+            }
+        )
+
+
+def test_parse_config_rejects_tar_destination():
+    with pytest.raises(ConfigError, match="destination driver tar does not provide: delete, list"):
+        parse_config(
+            {
+                "home": backup_config(
+                    source={"directory": "/source"},
+                    destination="tar",
+                )
+            }
+        )
+
+
+def test_parse_config_builds_encrypted_tar_archive_pipeline():
+    backup = parse_config(
+        {
+            "home": backup_config(
+                source={"directory": "/source"},
+                destination={"file": "/archives"},
+                transforms=[
+                    {"tar": {"one_file_system": False}},
+                    {"gpg": "/public-key.asc"},
+                ],
+            )
+        }
+    ).backups["home"]
+
+    assert isinstance(backup.source, DirectoryDriver)
+    assert isinstance(backup.destination, FileDriver)
+    assert backup.destination.location == Path("/archives")
+    assert isinstance(backup.transforms[0], TarDriver)
+    assert not backup.transforms[0].one_file_system
+    assert tuple(
+        (step.driver.name(), step.capability)
+        for step in Pipeline(backup.source, backup.destination, backup.transforms).steps
+    ) == (
+        ("directory", "source"),
+        ("tar", "export"),
+        ("gpg", "encrypt"),
+        ("file", "import"),
+    )
+
+
+def test_parse_config_accepts_forward_backup_source_reference():
+    backups = parse_config(
+        {
+            "offsite": backup_config(
+                source={"backup": "local"},
+                destination={"btrfs": "/offsite"},
+            ),
+            "local": backup_config(),
+        }
+    ).backups
+
+    assert backups["offsite"].source == bckp.BackupSource("local")
+
+
+def test_parse_config_rejects_incompatible_replication_without_artifacts():
+    with pytest.raises(ConfigError) as error:
+        parse_config(
+            {
+                "archive": backup_config(
+                    source={"directory": "/source"},
+                    destination={"file": "/archives"},
+                    transforms=["tar"],
+                ),
+                "replica": backup_config(
+                    source={"backup": "archive"},
+                    destination={"btrfs": "/destination"},
+                ),
+            }
+        )
+
+    assert "backup 'replica': cannot build backup pipeline" in str(error.value)
+    assert "produced: FileStream" in str(error.value)
+
+
+@pytest.mark.parametrize("value", [None, [], 1])
+def test_parse_config_rejects_nonmapping(value):
+    with pytest.raises(ConfigError, match="configuration must be a mapping"):
+        parse_config(value)
+
+
+def test_parse_config_rejects_empty_mapping():
+    with pytest.raises(ConfigError, match="at least one backup is required"):
+        parse_config({})
+
+
+def test_parse_config_accepts_settings():
+    value = {
+        "settings": {
+            "scheduler": {
+                "max_concurrent_backups": 15,
+                "timezone": "America/New_York",
+            },
+            "ssh": {
+                "identity_file": "/root/.ssh/id_ed25519",
+                "config_file": "/root/.ssh/config",
+            },
+        },
+        "home": backup_config(
+            destination={"file": "/destination"},
+            transforms=["tar", "zstd"],
+        ),
+    }
+
+    config = parse_config(value)
+    backup = config.backups["home"]
+    assert isinstance(backup.source, BtrfsDriver)
+
+    assert config.global_settings == {
+        "scheduler": {
+            "max_concurrent_backups": 15,
+            "timezone": ZoneInfo("America/New_York"),
+        },
+        "ssh": {
+            "identity_file": Path("/root/.ssh/id_ed25519"),
+            "config_file": Path("/root/.ssh/config"),
+        },
+    }
+    assert tuple(config.backups) == ("home",)
+    assert backup.source.global_settings is config.global_settings
+    assert backup.destination.global_settings is config.global_settings
+    assert backup.transforms[0].global_settings is config.global_settings
+
+
+def test_parse_config_applies_global_ssh_defaults():
+    config = parse_config(
+        {
+            "settings": {
+                "ssh": {
+                    "identity_file": "/root/.ssh/id_ed25519",
+                    "config_file": "/root/.ssh/config",
+                }
+            },
+            "home": backup_config(
+                ssh={"endpoint": "ssh://server"},
+                source={"driver": {"btrfs": "/source"}, "remote": True},
+            ),
+        }
+    )
+
+    source = config.backups["home"].source
+    assert isinstance(source, BtrfsDriver)
+    assert source.ssh == SSHTarget(
+        "ssh://server",
+        Path("/root/.ssh/id_ed25519"),
+        Path("/root/.ssh/config"),
+    )
+
+
+def test_backup_ssh_settings_override_global_defaults():
+    config = parse_config(
+        {
+            "settings": {
+                "ssh": {
+                    "identity_file": "/default-key",
+                    "config_file": "/default-config",
+                }
+            },
+            "home": backup_config(
+                ssh={
+                    "endpoint": "ssh://server",
+                    "identity_file": "/backup-key",
+                    "config_file": "/backup-config",
+                },
+                source={"driver": {"btrfs": "/source"}, "remote": True},
+            ),
+        }
+    )
+
+    source = config.backups["home"].source
+    assert isinstance(source, BtrfsDriver)
+    assert source.ssh == SSHTarget(
+        "ssh://server",
+        Path("/backup-key"),
+        Path("/backup-config"),
+    )
+
+
+@pytest.mark.parametrize(
+    "defaults",
+    [
+        None,
+        {"identity_file": "relative"},
+        {"config_file": "relative"},
+        {"unknown": "/value"},
+    ],
+)
+def test_parse_config_rejects_invalid_global_ssh_defaults(defaults):
+    with pytest.raises(ConfigError, match="invalid settings"):
+        parse_config(
+            {
+                "settings": {"ssh": defaults},
+                "home": backup_config(),
+            }
+        )
+
+
+@pytest.mark.parametrize("value", [0, -1, True, "10"])
+def test_parse_config_rejects_invalid_max_concurrent_backups(value):
+    with pytest.raises(ConfigError, match="must be a positive integer"):
+        parse_config(
+            {
+                "settings": {"scheduler": {"max_concurrent_backups": value}},
+                "home": backup_config(),
+            }
+        )
+
+
+@pytest.mark.parametrize("value", [None, 1, "Not/A_Timezone"])
+def test_parse_config_rejects_invalid_timezone(value):
+    with pytest.raises(ConfigError, match="timezone"):
+        parse_config(
+            {
+                "settings": {"scheduler": {"timezone": value}},
+                "home": backup_config(),
+            }
+        )
+
+
+def test_parse_config_rejects_unknown_global_setting():
+    with pytest.raises(ConfigError, match="extra keys not allowed"):
+        parse_config({"settings": {"unknown": {}}, "home": backup_config()})
+
+
+def test_parse_config_rejects_nonmapping_settings():
+    with pytest.raises(ConfigError, match="settings must be a mapping"):
+        parse_config({"settings": [], "home": backup_config()})
+
+
+def test_parse_config_rejects_nonstring_setting_name():
+    with pytest.raises(ConfigError, match="setting names must be strings"):
+        parse_config({"settings": {1: "value"}, "home": backup_config()})
+
+
+def test_parse_config_requires_backup_with_settings():
+    with pytest.raises(ConfigError, match="at least one backup is required"):
+        parse_config({"settings": {}})
+
+
+def test_parse_config_collects_independent_errors():
+    value = {
+        "settings": [],
+        "first": backup_config(
+            source={"unknown": {}},
+            unexpected=True,
+        ),
+        "second": backup_config(
+            destination={"unknown": {}},
+            transforms={},
+        ),
+    }
+
+    with pytest.raises(ConfigError) as error:
+        parse_config(value)
+
+    assert error.value.messages == (
+        "settings must be a mapping",
+        "backup 'first': unknown settings: unexpected",
+        "backup 'first': source uses unknown driver 'unknown'",
+        "backup 'second': destination uses unknown driver 'unknown'",
+        "backup 'second': transforms must be a list",
+    )
+    assert error.value.format() == (
+        "configuration errors:\n"
+        "  - settings must be a mapping\n"
+        "  - backup 'first': unknown settings: unexpected\n"
+        "  - backup 'first': source uses unknown driver 'unknown'\n"
+        "  - backup 'second': destination uses unknown driver 'unknown'\n"
+        "  - backup 'second': transforms must be a list"
+    )
+
+
+def _expand_config_targets(value, *target_names):
+    backup_aliases = {
+        alias: name
+        for name, definition in value.items()
+        if name != "settings" and "group" not in definition
+        for alias in (name, *definition.get("previous_names", ()))
+    }
+    group_members = {
+        name: definition["group"]
+        for name, definition in value.items()
+        if name != "settings" and "group" in definition
+    }
+    group_members[ALL_TARGET_NAME] = tuple(dict.fromkeys(backup_aliases.values()))
+    expanded = {}
+
+    def expand(name):
+        if name in group_members:
+            for member in group_members[name]:
+                expand(member)
+        else:
+            canonical_name = backup_aliases[name]
+            expanded.setdefault(canonical_name, None)
+
+    for name in target_names:
+        expand(name)
+    return tuple(expanded)
+
+
+@given(value=valid_configs())
+def test_generated_valid_configs_parse(value):
+    parsed = parse_config(value)
+    backup_definitions = {
+        name: definition
+        for name, definition in value.items()
+        if name != "settings" and "group" not in definition
+    }
+    group_definitions = {
+        name: definition
+        for name, definition in value.items()
+        if name != "settings" and "group" in definition
+    }
+
+    assert set(parsed.backups) == set(backup_definitions)
+    expected_groups = {
+        name: BackupGroup(name, tuple(definition["group"]))
+        for name, definition in group_definitions.items()
+    }
+    assert parsed.groups[ALL_TARGET_NAME].members == tuple(backup_definitions)
+    assert {
+        name: group for name, group in parsed.groups.items() if name != ALL_TARGET_NAME
+    } == expected_groups
+    expected_global_settings = value.get("settings", {}).copy()
+    if scheduler := expected_global_settings.get("scheduler"):
+        expected_global_settings["scheduler"] = {
+            **scheduler,
+            **(
+                {} if "timezone" not in scheduler else {"timezone": ZoneInfo(scheduler["timezone"])}
+            ),
+        }
+    if ssh := expected_global_settings.get("ssh"):
+        expected_global_settings["ssh"] = {name: Path(path) for name, path in ssh.items()}
+    assert parsed.global_settings == expected_global_settings
+    for name, backup in parsed.backups.items():
+        definition = backup_definitions[name]
+        assert backup.previous_names == tuple(definition.get("previous_names", ()))
+        assert backup.skip_unchanged is definition.get("skip_unchanged", False)
+
+        configured_drivers = [(definition["destination"], backup.destination)]
+        if isinstance(backup.source, bckp.BackupSource):
+            assert backup.source.backup_name == definition["source"]["backup"]
+        else:
+            configured_drivers.append((definition["source"], backup.source))
+        configured_drivers.extend(
+            zip(definition.get("transforms", ()), backup.transforms, strict=True)
+        )
+        for driver_definition, driver in configured_drivers:
+            expanded = isinstance(driver_definition, dict) and "driver" in driver_definition
+            selection = driver_definition["driver"] if expanded else driver_definition
+            driver_name = selection if isinstance(selection, str) else next(iter(selection))
+            assert driver.name() == driver_name
+            assert driver.global_settings is parsed.global_settings
+            remote = expanded and driver_definition.get("remote", False)
+            assert (driver.ssh is not None) is remote
+
+        configured_schedules = definition.get("schedules", {})
+        has_on_demand = any(
+            schedule["trigger"] == "on-demand" for schedule in configured_schedules.values()
+        )
+        expected_schedule_names = (
+            *configured_schedules,
+            *(("manual",) if not has_on_demand else ()),
+        )
+        assert tuple(schedule.name for schedule in backup.schedules) == expected_schedule_names
+        for schedule in backup.schedules:
+            expected_previous_names = configured_schedules.get(schedule.name, {}).get(
+                "previous_names", ()
+            )
+            assert schedule.previous_names == tuple(expected_previous_names)
+
+        expected_policy_count = sum(
+            len(retention) if isinstance(retention, list) else 1
+            for schedule in configured_schedules.values()
+            for retention in (schedule["retention"],)
+        ) + (not has_on_demand)
+        assert len(backup.retention_policies) == expected_policy_count
+        assert all(
+            getattr(policy, "schedule_name", None) in expected_schedule_names
+            for policy in backup.retention_policies
+        )
+
+    expected_target_names = (
+        {
+            alias
+            for name, definition in backup_definitions.items()
+            for alias in (name, *definition.get("previous_names", ()))
+        }
+        | set(group_definitions)
+        | {ALL_TARGET_NAME}
+    )
+    assert set(parsed.targets_by_name) == expected_target_names
+    for target_name in parsed.targets_by_name:
+        assert tuple(backup.name for backup in parsed.backups_for_targets(target_name)) == (
+            _expand_config_targets(value, target_name)
+        )
+    assert tuple(
+        backup.name for backup in parsed.backups_for_targets(*parsed.targets_by_name)
+    ) == _expand_config_targets(value, *parsed.targets_by_name)
+
+
+@pytest.mark.parametrize("mutation", _INVALID_MUTATION_NAMES)
+def test_invalid_config_generator_covers_every_mutation(mutation):
+    definition, message = invalidate_backup(backup_config(), mutation)
+
+    with pytest.raises(ConfigError) as error:
+        parse_config({"home": definition})
+
+    assert len(error.value.messages) == 1
+    assert message in error.value.messages[0]
+
+
+@given(case=invalid_configs())
+def test_generated_invalid_configs_report_all_errors(case):
+    value, messages = case
+
+    with pytest.raises(ConfigError) as error:
+        parse_config(value)
+
+    assert len(error.value.messages) == len(messages)
+    assert all(
+        expected in actual for expected, actual in zip(messages, error.value.messages, strict=True)
+    )
+    assert str(error.value) == (
+        "configuration errors:\n" + "\n".join(f"  - {message}" for message in error.value.messages)
+    )
+
+
+@pytest.mark.parametrize("mutation", _INVALID_GROUP_MUTATION_NAMES)
+def test_invalid_group_generator_covers_every_mutation(mutation):
+    value, message = invalid_group_config(("home", "local", "remote", "missing"), mutation)
+
+    with pytest.raises(ConfigError) as error:
+        parse_config(value)
+
+    assert message in error.value.format()
+
+
+@given(case=invalid_group_configs())
+def test_generated_invalid_backup_groups_are_rejected(case):
+    value, message = case
+
+    with pytest.raises(ConfigError) as error:
+        parse_config(value)
+
+    assert message in error.value.format()
+
+
+def test_parse_config_rejects_nonstring_backup_name():
+    with pytest.raises(ConfigError, match="backup names must be strings"):
+        parse_config({1: backup_config()})
+
+
+@pytest.mark.parametrize("name", ["1home", "_home", "global_settings"])
+def test_parse_config_accepts_numeric_or_underscore_backup_name(name):
+    assert parse_config({name: backup_config()}).backups[name].name == name
+
+
+@pytest.mark.parametrize("name", ["-home", "SETTINGS"])
+def test_parse_config_rejects_invalid_backup_name(name):
+    with pytest.raises(ConfigError, match=rf"backup '{name}': invalid backup name"):
+        parse_config({name: backup_config()})
+
+
+def test_parse_config_rejects_nonmapping_backup_settings():
+    with pytest.raises(ConfigError, match="backup 'home': settings must be a mapping"):
+        parse_config({"home": []})
+
+
+@pytest.mark.parametrize("setting", ["source", "destination"])
+def test_parse_config_rejects_missing_required_setting(setting):
+    config = backup_config()
+    del config[setting]
+
+    with pytest.raises(ConfigError, match=f"missing required settings: {setting}"):
+        parse_config({"home": config})
+
+
+def test_parse_config_allows_omitted_schedules():
+    config = backup_config()
+    del config["schedules"]
+
+    backup = parse_config({"home": config}).backups["home"]
+
+    assert backup.schedules == (Schedule("manual", OnDemandSchedule()),)
+    assert backup.retention_policies == (KeepAll("manual"),)
+
+
+def test_parse_config_accepts_minimal_configuration():
+    backup = parse_config(
+        {
+            "home": {
+                "source": {"btrfs": "/home"},
+                "destination": {"btrfs": "/backups"},
+            }
+        }
+    ).backups["home"]
+
+    assert isinstance(backup.source, BtrfsDriver)
+    assert isinstance(backup.destination, BtrfsDriver)
+    assert backup.source.location == Path("/home")
+    assert backup.destination.location == Path("/backups")
+    assert backup.schedules == (Schedule("manual", OnDemandSchedule()),)
+
+
+@pytest.mark.parametrize("setting", ["unknown", 1])
+def test_parse_config_rejects_unknown_setting(setting):
+    config = backup_config()
+    config[setting] = True
+
+    with pytest.raises(ConfigError, match=f"unknown settings: {setting}"):
+        parse_config({"home": config})
+
+
+@pytest.mark.parametrize(
+    ("setting", "value", "message"),
+    [
+        ("source", None, "source must select one driver"),
+        (
+            "source",
+            {"btrfs": {}, "rsync": {}},
+            "source must select one driver",
+        ),
+        ("source", {"unknown": {}}, "source uses unknown driver 'unknown'"),
+        ("destination", [], "destination must select one driver"),
+        ("transforms", {}, "transforms must be a list"),
+        (
+            "transforms",
+            [{"zstd": {"level": 20}}],
+            "transform 1 has invalid zstd configuration",
+        ),
+    ],
+)
+def test_parse_config_rejects_invalid_driver_selection(setting, value, message):
+    with pytest.raises(ConfigError, match=message):
+        parse_config({"home": backup_config(**{setting: value})})
+
+
+def test_parse_config_rejects_invalid_driver_configuration():
+    with pytest.raises(ConfigError, match="source has invalid btrfs configuration"):
+        parse_config(
+            {
+                "home": backup_config(
+                    source={"btrfs": {"location": "relative"}},
+                )
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "ssh",
+    [
+        None,
+        {},
+        {"endpoint": "host", "identity_file": "/key"},
+        {"endpoint": "ssh://host", "identity_file": 1},
+        {"endpoint": "ssh://host", "identity_file": "relative"},
+        {
+            "endpoint": "ssh://host",
+            "identity_file": "/key",
+            "config_file": "relative",
+        },
+        {"endpoint": "ssh://host", "identity_file": "/key", "unknown": True},
+    ],
+)
+def test_parse_config_rejects_invalid_ssh_target(ssh):
+    with pytest.raises(ConfigError, match="invalid SSH configuration"):
+        parse_config({"home": backup_config(ssh=ssh)})
+
+
+def test_invalid_ssh_stops_backup_validation():
+    definition = backup_config(
+        ssh={},
+        source={"driver": {"btrfs": "/source"}, "remote": True},
+        destination={"driver": {"btrfs": "/destination"}, "remote": True},
+        transforms=[{"driver": "zstd", "remote": True}],
+    )
+
+    with pytest.raises(ConfigError) as error:
+        parse_config({"home": definition})
+
+    assert len(error.value.messages) == 1
+    assert "invalid SSH configuration" in error.value.messages[0]
+    assert "remote requires backup SSH configuration" not in error.value.format()
+
+
+def test_invalid_backup_suppresses_dependent_group_errors():
+    value = {
+        "home": backup_config(ssh={}),
+        "local": {"group": ["home"]},
+    }
+
+    with pytest.raises(ConfigError) as error:
+        parse_config(value)
+
+    assert "invalid SSH configuration" in error.value.format()
+    assert "references unknown target" not in error.value.format()
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [
+        ("source", {"driver": {"btrfs": "/source"}, "remote": True}),
+        ("destination", {"driver": {"btrfs": "/destination"}, "remote": True}),
+        ("transforms", [{"driver": "zstd", "remote": True}]),
+    ],
+)
+def test_parse_config_rejects_remote_driver_without_ssh(setting, value):
+    with pytest.raises(ConfigError, match="remote requires backup SSH configuration"):
+        parse_config({"home": backup_config(**{setting: value})})
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"driver": {"btrfs": "/source"}},
+        {"driver": {"btrfs": "/source"}, "remote": False},
+    ],
+)
+def test_parse_config_accepts_expanded_local_driver(source):
+    backup = parse_config({"home": backup_config(source=source)}).backups["home"]
+
+    assert isinstance(backup.source, BtrfsDriver)
+    assert backup.source.ssh is None
+
+
+@pytest.mark.parametrize("remote", [None, 1, "yes", [], {}])
+def test_parse_config_rejects_invalid_remote_driver(remote):
+    source = {"driver": {"btrfs": "/source"}, "remote": remote}
+
+    with pytest.raises(ConfigError, match="source remote must be a boolean"):
+        parse_config({"home": backup_config(source=source)})
+
+
+def test_parse_config_rejects_expanded_driver_without_driver():
+    source = {"remote": True}
+
+    with pytest.raises(ConfigError, match="source expanded definition requires driver"):
+        parse_config({"home": backup_config(source=source)})
+
+
+def test_parse_config_rejects_unknown_expanded_driver_setting():
+    source = {"driver": {"btrfs": "/source"}, "remote": True, "unknown": True}
+
+    with pytest.raises(ConfigError, match="source has unknown settings: unknown"):
+        parse_config({"home": backup_config(source=source)})
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"location": "/source"},
+        {"location": "/source", "ssh": {}},
+        {"location": "/source", "target": "ssh://host"},
+    ],
+)
+def test_parse_config_rejects_mapping_for_single_value_driver(config):
+    with pytest.raises(ConfigError, match="source has invalid btrfs configuration"):
+        parse_config({"home": backup_config(source={"btrfs": config})})
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"backup": ""},
+        {"backup": None},
+        {"backup": 1},
+        {"backup": "-local"},
+        {"backup": "settings"},
+        {"backup": "local.backup"},
+    ],
+)
+def test_parse_config_rejects_invalid_backup_source_name(source):
+    with pytest.raises(ConfigError, match="invalid source backup name"):
+        parse_config({"home": backup_config(source=source)})
+
+
+def test_parse_config_rejects_unknown_backup_source():
+    with pytest.raises(ConfigError, match="references unknown source backup 'missing'"):
+        parse_config({"offsite": backup_config(source={"backup": "missing"})})
+
+
+def test_parse_config_collects_unknown_backup_sources():
+    with pytest.raises(ConfigError) as error:
+        parse_config(
+            {
+                "first": backup_config(source={"backup": "missing-first"}),
+                "second": backup_config(source={"backup": "missing-second"}),
+            }
+        )
+
+    assert error.value.messages == (
+        "backup 'first' references unknown source backup 'missing-first'",
+        "backup 'second' references unknown source backup 'missing-second'",
+    )
+
+
+def test_parse_config_rejects_backup_source_cycle():
+    with pytest.raises(ConfigError, match="backup source cycle: first -> second -> first"):
+        parse_config(
+            {
+                "first": backup_config(source={"backup": "second"}),
+                "second": backup_config(source={"backup": "first"}),
+            }
+        )
+
+
+def test_parse_config_collects_independent_backup_source_cycles():
+    with pytest.raises(ConfigError) as error:
+        parse_config(
+            {
+                "first": backup_config(source={"backup": "second"}),
+                "second": backup_config(source={"backup": "first"}),
+                "third": backup_config(source={"backup": "fourth"}),
+                "fourth": backup_config(source={"backup": "third"}),
+            }
+        )
+
+    assert error.value.messages == (
+        "backup source cycle: first -> second -> first",
+        "backup source cycle: third -> fourth -> third",
+    )
+
+
+def test_parse_config_rejects_self_as_backup_source():
+    with pytest.raises(ConfigError, match="backup source cycle: home -> home"):
+        parse_config({"home": backup_config(source={"backup": "home"})})
+
+
+def test_parse_config_rejects_source_cycle_through_previous_name():
+    with pytest.raises(ConfigError, match="backup source cycle: home -> home"):
+        parse_config(
+            {
+                "home": backup_config(
+                    source={"backup": "old-home"},
+                    previous_names=["old-home"],
+                )
+            }
+        )
+
+
+def test_parse_config_accepts_previous_name_as_backup_source():
+    config = parse_config(
+        {
+            "local": backup_config(previous_names=["old-local"]),
+            "offsite": backup_config(source={"backup": "old-local"}),
+        }
+    )
+
+    assert config.backups["offsite"].source == bckp.BackupSource("old-local")
+
+
+def test_parse_config_rejects_replication_between_ssh_endpoints():
+    def remote(endpoint):
+        return {
+            "ssh": {"endpoint": endpoint, "identity_file": "/key"},
+            "destination": {
+                "driver": {"btrfs": "/destination"},
+                "remote": True,
+            },
+        }
+
+    with pytest.raises(ConfigError, match="use different SSH configurations"):
+        parse_config(
+            {
+                "original": backup_config(**remote("ssh://first")),
+                "replica": backup_config(
+                    source={"backup": "original"},
+                    **remote("ssh://second"),
+                ),
+            }
+        )
+
+
+def test_parse_config_accepts_replication_on_one_ssh_endpoint():
+    ssh = {"endpoint": "ssh://server", "identity_file": "/key"}
+    config = parse_config(
+        {
+            "original": backup_config(
+                ssh=ssh,
+                destination={"driver": {"btrfs": "/original"}, "remote": True},
+            ),
+            "replica": backup_config(
+                ssh=ssh,
+                source={"backup": "original"},
+                destination={"driver": {"btrfs": "/replica"}, "remote": True},
+            ),
+        }
+    )
+
+    assert config.backups["original"].destination.ssh == config.backups["replica"].destination.ssh
+
+
+def test_parse_config_rejects_requirements_setting():
+    with pytest.raises(ConfigError, match="unknown settings: requirements"):
+        parse_config({"home": backup_config(requirements=["encrypted"])})
+
+
+def test_parse_config_rejects_drivers_setting():
+    with pytest.raises(ConfigError, match="unknown settings: drivers"):
+        parse_config({"home": backup_config(drivers=[])})
+
+
+def test_parse_config_rejects_incompatible_pipeline():
+    with pytest.raises(ConfigError, match="cannot build backup pipeline"):
+        parse_config(
+            {
+                "home": backup_config(
+                    source={"directory": "/source"},
+                    destination={"zfs": "tank/backup"},
+                )
+            }
+        )
+
+
+def test_parse_config_rejects_driver_without_destination_capabilities():
+    with pytest.raises(ConfigError, match="destination driver gpg does not provide: delete, list"):
+        parse_config(
+            {
+                "offsite": backup_config(
+                    source={"backup": "local"},
+                    destination={"gpg": "/root/backup-key.asc"},
+                ),
+                "local": backup_config(),
+            }
+        )
+
+
+def test_parse_config_rejects_destination_without_storage_capability():
+    with pytest.raises(ConfigError, match="destination driver unstorable cannot store"):
+        parse_config({"home": backup_config(destination="unstorable")})
+
+
+def test_parse_config_rejects_driver_incompatible_with_destination():
+    with pytest.raises(ConfigError, match="last usable route:.*gpg.encrypt"):
+        parse_config({"home": backup_config(transforms=[{"gpg": "/key.asc"}])})
+
+
+def test_parse_config_reads_yaml_file(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+home:
+  source:
+    btrfs: /source
+  destination:
+    btrfs: /destination
+  schedules:
+    daily:
+      trigger:
+        cron: "30 4 * * *"
+      retention:
+        keep-last: 7
+""".lstrip()
+    )
+
+    config = parse_config(str(path))
+    backups = config.backups
+
+    assert config.global_settings == {}
+    assert tuple(backups) == ("home",)
+    assert isinstance(backups["home"].source, BtrfsDriver)
+
+
+def test_parse_config_rejects_missing_file(tmp_path):
+    path = tmp_path / "missing.yaml"
+
+    with pytest.raises(ConfigError, match="could not read configuration file"):
+        parse_config(path)
+
+
+def test_parse_config_rejects_invalid_yaml(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("home: [")
+
+    with pytest.raises(ConfigError, match="invalid YAML in configuration file"):
+        parse_config(path)
+
+
+def test_parse_schedules():
+    schedules, retention = parse_schedules(
+        {
+            "hourly": {
+                "trigger": {"cron": "0 * * * *"},
+                "retention": {"keep-last": 24},
+            },
+            "daily": {
+                "trigger": {"cron": "30 4 * * *"},
+                "retention": [
+                    {"keep-for": "30d"},
+                    {"keep-last": 3},
+                ],
+            },
+            "manual": {
+                "trigger": "on-demand",
+                "retention": {"keep-last": 2},
+            },
+        }
+    )
+
+    assert schedules == (
+        Schedule("hourly", CronSchedule("0 * * * *")),
+        Schedule("daily", CronSchedule("30 4 * * *")),
+        Schedule("manual", OnDemandSchedule()),
+    )
+    assert retention == (
+        KeepLast(24, "hourly"),
+        KeepFor(timedelta(days=30), "daily"),
+        KeepLast(3, "daily"),
+        KeepLast(2, "manual"),
+    )
+
+
+def test_parse_schedules_accepts_numeric_leading_name():
+    schedules, retention = parse_schedules(
+        {
+            "5minute": {
+                "trigger": {"cron": "*/5 * * * *"},
+                "retention": {"keep-last": 288},
             }
         }
     )
 
-    assert backup.backend.backup_type == "remote_to_remote"
+    assert schedules[0] == Schedule("5minute", CronSchedule("*/5 * * * *"))
+    assert retention[0] == KeepLast(288, "5minute")
 
 
-def test_BackupSchema_schema(valid_raw_config, path_generator):
-    schema = config.BackupSchema.schema()
-    # success tests
-    for backup_name in sorted(valid_raw_config.keys()):
-        backup_spec = {backup_name: valid_raw_config[backup_name]}
-        backup = schema(backup_spec)
-        assert isinstance(backup, bckp.Backup)
-        assert backup.name == backup_name
-        for tframe in backup.timeframes:
-            assert isinstance(tframe, Timeframe)
-        assert backup.backend.name() == backup_spec[backup_name]["backend"].name()
-        if backup.backend.backup_type == "local_to_local":
-            assert isinstance(backup.backend.src_dir, Path)
-            assert isinstance(backup.backend.dst_dir, Path)
-        elif backup.backend.backup_type == "local_to_remote":
-            assert isinstance(backup.backend.src_dir, Path)
-            assert isinstance(backup.backend.dst_dir, SSHTarget)
-        elif backup.backend.backup_type == "remote_to_local":
-            assert isinstance(backup.backend.src_dir, SSHTarget)
-            assert isinstance(backup.backend.dst_dir, Path)
-        else:
-            assert isinstance(backup.backend.src_dir, SSHTarget)
-            assert isinstance(backup.backend.dst_dir, SSHTarget)
-        raw_config_copy = copy.deepcopy(valid_raw_config)
-        raw_config_copy[backup_name]["INVALIDSETTING"] = "foo"
-        with pytest.raises(vlp.MultipleInvalid) as exc:
-            schema({backup_name: raw_config_copy[backup_name]})
-        assert any(config.BackupSchema.ErrMsg.UNKNOWN_SETTING in str(e) for e in exc.value.errors)
-    # failure tests
-    with pytest.raises(vlp.Invalid) as exc:
-        schema({})
-    assert str(exc.value) == config.BackupSchema.ErrMsg.NOT_1_BACKUP
-    with pytest.raises(vlp.Invalid) as exc:
-        schema(valid_raw_config)
-    assert str(exc.value) == config.BackupSchema.ErrMsg.NOT_1_BACKUP
-    for backup_name in sorted(valid_raw_config.keys()):
-        raw_config_copy = copy.deepcopy(valid_raw_config)
-        with pytest.raises(vlp.Invalid) as exc:
-            schema({f"{backup_name} &": valid_raw_config[backup_name]})
-        assert str(exc.value) == config.BackupSchema.ErrMsg.INVALID_BACKUP_NAME
-        with pytest.raises(vlp.Invalid) as exc:
-            raw_config_copy = copy.deepcopy(valid_raw_config)
-            backup_settings = raw_config_copy[backup_name]
-            backup_settings["backend"] = "INVALIDBACKENDNAME"
-            schema({backup_name: backup_settings})
-        assert str(exc.value).startswith(config.BackendSchema.ErrMsg.INVALID_BACKEND_NAME)
-        with pytest.raises(vlp.Invalid) as exc:
-            raw_config_copy = copy.deepcopy(valid_raw_config)
-            backup_settings = raw_config_copy[backup_name]
-            backup_settings["timeframes"].append("INVALIDTIMEFRAME")
-            schema({backup_name: backup_settings})
-        assert str(exc.value).startswith("value must be one of ['5minute',")
-        with pytest.raises(vlp.Invalid) as exc:
-            raw_config_copy = copy.deepcopy(valid_raw_config)
-            backup_settings = raw_config_copy[backup_name]
-            backup_settings["src_dir"] = path_generator("non-existent-dir", mkdir=False)
-            schema({backup_name: backup_settings})
-        assert str(exc.value).startswith(
-            config.SrcDirDstDirSchema.ErrMsg.NOT_VALID_SSHTARGET_SPEC_AND_NOT_VALID_LOCAL_DIR
+def test_parse_schedules_adds_implicit_manual_schedule():
+    schedules, retention = parse_schedules(
+        {
+            "daily": {
+                "trigger": {"cron": "30 4 * * *"},
+                "retention": {"keep-last": 7},
+            }
+        }
+    )
+
+    assert schedules == (
+        Schedule("daily", CronSchedule("30 4 * * *")),
+        Schedule("manual", OnDemandSchedule()),
+    )
+    assert retention == (KeepLast(7, "daily"), KeepAll("manual"))
+
+
+def test_parse_schedules_preserves_explicit_on_demand_schedule():
+    schedules, retention = parse_schedules(
+        {
+            "adhoc": {
+                "trigger": "on-demand",
+                "retention": {"keep-last": 4},
+            }
+        }
+    )
+
+    assert schedules == (Schedule("adhoc", OnDemandSchedule()),)
+    assert retention == (KeepLast(4, "adhoc"),)
+
+
+def test_parse_schedules_accepts_keep_all():
+    schedules, retention = parse_schedules(
+        {
+            "manual": {
+                "trigger": "on-demand",
+                "retention": "keep-all",
+            }
+        }
+    )
+
+    assert schedules == (Schedule("manual", OnDemandSchedule()),)
+    assert retention == (KeepAll("manual"),)
+
+
+@pytest.mark.parametrize("name", ["manual", "MANUAL", "Manual"])
+def test_parse_schedules_reserves_manual_for_on_demand(name):
+    with pytest.raises(ConfigError, match=rf"schedule '{name}' must be on-demand"):
+        parse_schedules(
+            {
+                name: {
+                    "trigger": {"cron": "30 4 * * *"},
+                    "retention": {"keep-last": 1},
+                }
+            }
         )
 
 
-def test_btrfs_bootstrap_refresh_config(path_generator):
-    schema = config.BackupSchema.schema()
-    src_dir = path_generator("src", mkdir=True)
-    dst_dir = path_generator("dst", mkdir=True)
-    data = {
-        "mybackup": {
-            "backend": "btrfs",
-            "btrfs_bootstrap_refresh": 30,
-            "src_dir": str(src_dir),
-            "dst_dir": str(dst_dir),
-            "timeframes": ["daily"],
-            "daily_keep": 7,
-            "daily_times": ["12:00"],
-        }
-    }
-    backup = schema(data)
-    assert backup.backend.bootstrap_refresh_days == 30
-
-    # without the setting, should default to None
-    data2 = {
-        "mybackup2": {
-            "backend": "btrfs",
-            "src_dir": str(src_dir),
-            "dst_dir": str(dst_dir),
-            "timeframes": ["daily"],
-            "daily_keep": 7,
-            "daily_times": ["12:00"],
-        }
-    }
-    backup2 = schema(data2)
-    assert backup2.backend.bootstrap_refresh_days is None
+@pytest.mark.parametrize(
+    "value",
+    [None, [], "schedules", 1],
+)
+def test_parse_schedules_rejects_nonmapping(value):
+    with pytest.raises(ConfigError, match="schedules must be a mapping"):
+        parse_schedules(value)
 
 
-def test_parse_config(path_generator, valid_config_file_generator):
-    backups = config.parse_config(valid_config_file_generator())
-    assert len(backups) == 3
-    for backup in backups:
-        isinstance(backup, bckp.Backup)
+def test_parse_schedules_accepts_empty_mapping():
+    schedules, retention = parse_schedules({})
 
-    config_file_copy = path_generator("config-file-copy.yml", touch=False)
-    shutil.copy(valid_config_file_generator(), config_file_copy)
-    with open(config_file_copy, "a", encoding="utf-8") as f:
-        f.write("invalid yaml syntax")
-    with pytest.raises(config.ConfigErrors) as exc:
-        config.parse_config(config_file_copy)
-    assert len(exc.value.errors) == 1
-    assert isinstance(exc.value.errors[0][1], yaml.YAMLError)
+    assert schedules == (Schedule("manual", OnDemandSchedule()),)
+    assert retention == (KeepAll("manual"),)
 
-    empty_file = path_generator("empty-config-file", touch=True)
-    with pytest.raises(config.ConfigErrors) as exc:
-        config.parse_config(empty_file)
-    assert isinstance(exc.value, config.ConfigErrors)
 
-    config_file_invalid = path_generator("config-file-invalid.yml", touch=True)
-    with (
-        open(valid_config_file_generator(num_backups=2), encoding="utf-8") as fr,
-        open(config_file_invalid, "a", encoding="utf-8") as fw,
-    ):
-        for line in fr:
-            if line.startswith("  src_dir:"):
-                invalid_path = path_generator("non-existent-path", touch=False)
-                fw.write(f"  src_dir: {invalid_path}\n")
-            elif line.startswith("  backend:"):
-                fw.write("  backend: INVALIDBACKEND\n")
-            elif line.startswith("  dst_dir:"):
-                fw.write("")
-            else:
-                fw.write(line)
-    with open(config_file_invalid, encoding="utf-8") as f:
-        print(f.read())
+@pytest.mark.parametrize(
+    "name",
+    ["", None, 1, "../../../outside", "daily/../../outside", "daily,weekly", "daily backup"],
+)
+def test_parse_schedules_rejects_invalid_name(name):
+    with pytest.raises(ConfigError, match="invalid schedule name"):
+        parse_schedules({name: {}})
 
-    with pytest.raises(config.ConfigErrors) as exc:
-        config.parse_config(config_file_invalid)
-    assert len(exc.value.errors) == 2
-    for e in exc.value.errors:
-        backup_name, err = e
-        assert backup_name.startswith("backup_")
-        assert isinstance(err, vlp.Invalid)
-        assert str(err).startswith(config.BackendSchema.ErrMsg.INVALID_BACKEND_NAME)
 
-    with pytest.raises(config.ConfigErrors) as exc:
-        config.parse_config(config_file_copy)
-    assert len(exc.value.errors) == 1
-    assert isinstance(exc.value.errors[0][1], yaml.YAMLError)
+def test_parse_schedules_rejects_nonmapping_schedule():
+    with pytest.raises(ConfigError, match="schedule 'hourly' must be a mapping"):
+        parse_schedules({"hourly": "0 * * * *"})
+
+
+@pytest.mark.parametrize(
+    ("definition", "message"),
+    [
+        ({"trigger": {"cron": "0 * * * *"}}, "schedule 'hourly' has no retention policy"),
+        (
+            {"trigger": {"cron": "0 * * * *"}, "retention": []},
+            "schedule 'hourly' has no retention policy",
+        ),
+        (
+            {"retention": {"keep-last": 24}},
+            "schedule 'hourly' has no trigger",
+        ),
+        (
+            {
+                "trigger": {"cron": "0 * * * *"},
+                "other": {},
+                "retention": {"keep-last": 24},
+            },
+            "schedule 'hourly' has unknown settings: other",
+        ),
+        (
+            {"trigger": {}, "retention": {"keep-last": 24}},
+            "schedule 'hourly' trigger must select one schedule type",
+        ),
+        (
+            {
+                "trigger": {"cron": "0 * * * *", "on-demand": 1},
+                "retention": {"keep-last": 24},
+            },
+            "schedule 'hourly' trigger must select one schedule type",
+        ),
+        (
+            {"trigger": {"unknown": 1}, "retention": {"keep-last": 24}},
+            "schedule 'hourly' trigger uses unknown schedule type 'unknown'",
+        ),
+        (
+            {"trigger": {"cron": "invalid"}, "retention": {"keep-last": 24}},
+            "schedule 'hourly' trigger has invalid cron configuration",
+        ),
+        (
+            {"trigger": {"on-demand": {}}, "retention": {"keep-last": 24}},
+            (
+                "schedule 'hourly' trigger has empty on-demand configuration; "
+                "use 'on-demand' directly"
+            ),
+        ),
+        (
+            {"trigger": {"cron": "0 * * * *"}, "retention": {}},
+            "schedule 'hourly' retention must select one retention policy",
+        ),
+        (
+            {
+                "trigger": {"cron": "0 * * * *"},
+                "retention": {"keep-last": 24, "keep-for": "2d"},
+            },
+            "schedule 'hourly' retention must select one retention policy",
+        ),
+        (
+            {"trigger": {"cron": "0 * * * *"}, "retention": {"keep-all": {}}},
+            (
+                "schedule 'hourly' retention has empty keep-all configuration; "
+                "use 'keep-all' directly"
+            ),
+        ),
+        (
+            {
+                "trigger": {"cron": "0 * * * *"},
+                "retention": {"keep-last": {"count": 24}},
+            },
+            "has invalid keep-last configuration",
+        ),
+        (
+            {"trigger": {"cron": "0 * * * *"}, "retention": {"unknown": 1}},
+            "uses unknown retention policy 'unknown'",
+        ),
+        (
+            {"trigger": {"cron": "0 * * * *"}, "retention": {"keep-last": 0}},
+            "has invalid keep-last configuration",
+        ),
+    ],
+)
+def test_parse_schedules_rejects_invalid_definition(definition, message):
+    with pytest.raises(ConfigError, match=message):
+        parse_schedules({"hourly": definition})

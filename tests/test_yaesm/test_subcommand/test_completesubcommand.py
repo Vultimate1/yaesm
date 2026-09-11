@@ -1,9 +1,9 @@
+"""Tests for yaesm.subcommand.completesubcommand."""
+
 from pathlib import Path
 
 import pytest
-import yaml
 
-import yaesm.config
 import yaesm.main
 from yaesm.subcommand.completesubcommand import completion_candidates
 
@@ -11,119 +11,130 @@ from yaesm.subcommand.completesubcommand import completion_candidates
 @pytest.fixture
 def completion_config(tmp_path: Path) -> Path:
     config = tmp_path / "config.yaml"
-    settings = {
-        "backend": "rsync",
-        "src_dir": str(tmp_path),
-        "dst_dir": str(tmp_path),
-        "timeframes": [],
-    }
     config.write_text(
-        yaml.safe_dump({name: settings.copy() for name in ["archive", "home", "photos"]}),
+        """
+pair:
+  group: [home, photos]
+
+home:
+  previous_names: [old-home]
+  source:
+    btrfs: /source/home
+  destination:
+    btrfs: /destination/home
+  schedules:
+    daily:
+      trigger:
+        cron: "0 4 * * *"
+      retention:
+        keep-last: 7
+    manual:
+      previous_names: [adhoc]
+      trigger: on-demand
+      retention: keep-all
+
+photos:
+  source:
+    btrfs: /source/photos
+  destination:
+    btrfs: /destination/photos
+  schedules:
+    weekly:
+      trigger:
+        cron: "0 4 * * 0"
+      retention:
+        keep-last: 4
+    manual:
+      previous_names: [emergency]
+      trigger: on-demand
+      retention: keep-all
+
+root:
+  source:
+    btrfs: /source/root
+  destination:
+    btrfs: /destination/root
+""".lstrip(),
         encoding="utf-8",
     )
     return config
 
 
 def _complete(
-    words: list[str], current: str, config: Path = Path("/missing/config.yaml")
+    words: list[str],
+    current: str,
+    config: Path = Path("/missing/config.yaml"),
 ) -> list[str]:
     return completion_candidates(words, current, config)
 
 
-def test_completes_visible_subcommands_and_global_options():
+def test_completes_visible_subcommands_and_parser_options():
     candidates = _complete([], "")
 
     assert {"backup", "check", "find", "run", "--config", "--log-level"} <= set(candidates)
     assert "__complete" not in candidates
+    assert _complete(["check"], "--config-o") == ["--config-only"]
+    assert _complete(["backup", "home"], "--control") == ["--control-socket"]
+    assert _complete(["run"], "--no") == ["--no-stderr-timestamps"]
 
 
-def test_completes_global_option():
-    assert _complete([], "--log-l") == ["--log-level"]
-
-
-def test_completes_log_level_case_insensitively():
+def test_completes_option_choices_case_insensitively():
     assert _complete(["--log-level"], "d") == ["DEBUG"]
     assert _complete([], "--log-level=wa") == ["--log-level=WARNING"]
 
 
-@pytest.mark.parametrize("subcommand", ["backup", "check", "find"])
-def test_completes_configured_backup_names(completion_config: Path, subcommand: str):
-    words = ["--config", str(completion_config), subcommand]
+def test_optional_global_value_does_not_consume_following_option():
+    words = ["--log-syslog", "--log-level", "DEBUG", "check"]
 
-    assert _complete(words, "h") == ["home"]
+    assert _complete(words, "--config-o") == ["--config-only"]
 
 
-def test_completes_comma_separated_backup_names(completion_config: Path):
+def test_completes_targets_groups_aliases_and_all(completion_config: Path):
     words = ["--config", str(completion_config), "backup"]
 
-    assert _complete(words, "archive,p") == ["archive,photos"]
+    assert _complete(words, "p") == ["pair", "photos"]
+    assert _complete(words, "old") == ["old-home"]
+    assert _complete(words, "@") == ["@all"]
 
 
-def test_does_not_repeat_comma_separated_backup_names(completion_config: Path):
+def test_completes_comma_separated_targets_without_repeats(completion_config: Path):
     words = ["--config", str(completion_config), "backup"]
 
-    assert _complete(words, "archive,a") == []
+    assert _complete(words, "home,p") == ["home,pair", "home,photos"]
+    assert _complete(words, "home,h") == []
+    assert _complete(words, "@all,h") == []
 
 
-def test_normalizes_comma_separated_backup_names(completion_config: Path):
-    words = ["--config", str(completion_config), "backup"]
+def test_completes_only_common_on_demand_schedule_for_group(completion_config: Path):
+    words = [
+        "--config",
+        str(completion_config),
+        "backup",
+        "pair",
+        "--schedule",
+    ]
 
-    assert _complete(words, "archive,,p") == ["archive,photos"]
+    assert _complete(words, "m") == ["manual"]
+    assert _complete(words, "d") == []
 
 
-def test_completes_attached_config_option(completion_config: Path):
-    words = [f"--config={completion_config}", "backup"]
+def test_completes_schedule_alias_for_single_backup(completion_config: Path):
+    words = [
+        f"--config={completion_config}",
+        "backup",
+        "home",
+        "--schedule",
+    ]
 
-    assert _complete(words, "ph") == ["photos"]
+    assert _complete(words, "a") == ["adhoc"]
 
 
-def test_completes_find_query(completion_config: Path):
-    words = ["--config", str(completion_config), "find", "home"]
+def test_completes_find_schedules_and_queries(completion_config: Path):
+    words = ["--config", str(completion_config), "find", "pair"]
 
     assert _complete(words, "cl") == ["closest"]
-
-
-def test_find_query_completion_does_not_parse_config(monkeypatch: pytest.MonkeyPatch):
-    def unexpected_parse_config(*_args):
-        pytest.fail("config should not be parsed after the backup name")
-
-    monkeypatch.setattr(yaesm.config, "parse_config", unexpected_parse_config)
-
-    assert _complete(["find", "home"], "cl") == ["closest"]
-
-
-def test_completes_additional_find_query(completion_config: Path):
-    words = ["--config", str(completion_config), "find", "home", "--query"]
-
-    assert _complete(words, "old") == ["oldest"]
-
-
-def test_completes_comma_separated_timeframes(completion_config: Path):
-    words = ["--config", str(completion_config), "find", "home", "--timeframe"]
-
-    assert _complete(words, "daily,w") == ["daily,weekly"]
-
-
-def test_completes_timeframe_attached_to_option(completion_config: Path):
-    words = ["--config", str(completion_config), "find", "home"]
-
-    assert _complete(words, "--timeframe=da") == ["--timeframe=daily"]
-
-
-def test_does_not_repeat_comma_separated_timeframes(completion_config: Path):
-    words = ["--config", str(completion_config), "find", "home", "--timeframe"]
-
-    assert _complete(words, "daily,d") == []
-
-
-def test_completes_subcommand_option_after_positional(completion_config: Path):
-    words = ["--config", str(completion_config), "backup", "home"]
-
-    assert _complete(words, "--k") == ["--keep"]
-
-
-def test_does_not_offer_candidates_for_keep_value():
-    assert _complete(["backup", "--keep"], "") == []
+    assert _complete([*words, "--query"], "old") == ["oldest"]
+    assert _complete([*words, "--schedule"], "w") == ["weekly"]
 
 
 def test_completes_paths(tmp_path: Path):
@@ -134,28 +145,17 @@ def test_completes_paths(tmp_path: Path):
 
 
 def test_hidden_completion_subcommand_is_not_in_help(capsys: pytest.CaptureFixture[str]):
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(SystemExit) as error:
         yaesm.main.main(["--help"])
 
-    assert exc_info.value.code == 0
+    assert error.value.code == 0
     assert "__complete" not in capsys.readouterr().out
 
 
 def test_hidden_completion_subcommand_does_not_require_config(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ):
-    missing_config = tmp_path / "missing.yaml"
+    missing = tmp_path / "missing.yaml"
 
-    assert (
-        yaesm.main.main(
-            [
-                "--config",
-                str(missing_config),
-                "__complete",
-                "--current=b",
-                "--",
-            ]
-        )
-        == 0
-    )
+    assert yaesm.main.main(["--config", str(missing), "__complete", "--current=b", "--"]) == 0
     assert capsys.readouterr().out == "backup\n"

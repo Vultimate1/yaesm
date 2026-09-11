@@ -1,502 +1,859 @@
-"""tests/test_yaesm/test_scheduler.py."""
+"""Tests for yaesm.scheduler."""
 
 import logging
+import queue
 import time
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
+from threading import Event, Thread
+from unittest import mock
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
-import yaesm.scheduler
-import yaesm.timeframe
+import pytest
+from apscheduler.events import EVENT_JOB_MAX_INSTANCES
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
+
+import yaesm.scheduler as scheduler_module
+from yaesm.backup import Backup, BackupError
+from yaesm.config import BackupGroup, Config
+from yaesm.control import ControlMessage
+from yaesm.logging import current_backup
+from yaesm.schedule import CronSchedule, OnDemandSchedule, Schedule
+from yaesm.scheduler import Scheduler, SchedulerError
+
+_REQUEST_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
-def test_concurrency_limits():
-    scheduler = yaesm.scheduler.Scheduler()._apscheduler
-    executor = scheduler._executors["default"]
-    assert isinstance(executor._pool, ThreadPoolExecutor)
-    assert executor._pool._max_workers == 10
-    assert scheduler._job_defaults["max_instances"] == 1
-
-
-def test_job_name_does_not_query_apscheduler(monkeypatch):
-    scheduler = yaesm.scheduler.Scheduler()
-    timeframe = yaesm.timeframe.FiveMinuteTimeframe(keep=10)
-    scheduler._add_job("foo-name", lambda: None, timeframe)
-    job_id = scheduler._apscheduler.get_jobs()[0].id
-
-    def fail(_job_id):
-        raise AssertionError("get_job() called")
-
-    monkeypatch.setattr(scheduler._apscheduler, "get_job", fail)
-    assert scheduler._job_name(job_id) == "foo-name"
-
-
-def test_add_job_5minute_timeframe():
-    scheduler = yaesm.scheduler.Scheduler()
-    timeframe = yaesm.timeframe.FiveMinuteTimeframe(keep=10)
-    scheduler._add_job("foo-name", lambda: None, timeframe)
-    jobs = scheduler._apscheduler.get_jobs()
-    assert len(jobs) == 1
-    job = jobs[0]
-    assert job.name == "foo-name"
-    start_time = datetime(1999, 1, 1, 12, 3, tzinfo=ZoneInfo("UTC"))
-    expected_times = [
-        datetime(1999, 1, 1, 12, 5, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 1, 12, 10, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 1, 12, 15, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 1, 12, 20, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 1, 12, 25, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 1, 12, 30, tzinfo=ZoneInfo("UTC")),
-    ]
-    next_time = job.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job.trigger.get_next_fire_time(next_time, next_time)
-
-
-def test_add_job_hourly_timeframe():
-    scheduler = yaesm.scheduler.Scheduler()
-    timeframe = yaesm.timeframe.HourlyTimeframe(keep=24, minutes=[0, 15, 30, 45])
-    scheduler._add_job("foo-name", lambda: None, timeframe)
-    jobs = scheduler._apscheduler.get_jobs()
-    assert len(jobs) == 1
-    job = jobs[0]
-    assert job.name == "foo-name"
-    start_time = datetime(1999, 1, 1, 12, 3, tzinfo=ZoneInfo("UTC"))
-    expected_times = [
-        datetime(1999, 1, 1, 12, 15, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 1, 12, 30, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 1, 12, 45, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 1, 13, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 1, 13, 15, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 1, 13, 30, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 1, 13, 45, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 1, 14, 0, tzinfo=ZoneInfo("UTC")),
-    ]
-    next_time = job.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job.trigger.get_next_fire_time(next_time, next_time)
-
-
-def test_add_job_daily_timeframe():
-    scheduler = yaesm.scheduler.Scheduler()
-    timeframe = yaesm.timeframe.DailyTimeframe(keep=7, times=[(9, 0), (17, 30)])
-    scheduler._add_job("foo-name", lambda: None, timeframe)
-    jobs = scheduler._apscheduler.get_jobs()
-    assert len(jobs) == 2
-
-    # Test first job (9:00)
-    job1 = jobs[0]
-    assert job1.name == "foo-name"
-    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
-    expected_times = [
-        datetime(1999, 1, 1, 9, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 2, 9, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 3, 9, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 4, 9, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 5, 9, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 6, 9, 0, tzinfo=ZoneInfo("UTC")),
-    ]
-    next_time = job1.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job1.trigger.get_next_fire_time(next_time, next_time)
-
-    # Test second job (17:30)
-    job2 = jobs[1]
-    assert job2.name == "foo-name"
-    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
-    expected_times = [
-        datetime(1999, 1, 1, 17, 30, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 2, 17, 30, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 3, 17, 30, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 4, 17, 30, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 5, 17, 30, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 1, 6, 17, 30, tzinfo=ZoneInfo("UTC")),
-    ]
-    next_time = job2.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job2.trigger.get_next_fire_time(next_time, next_time)
-
-
-def test_add_job_weekly_timeframe():
-    scheduler = yaesm.scheduler.Scheduler()
-    timeframe = yaesm.timeframe.WeeklyTimeframe(
-        keep=4, times=[(10, 0), (18, 30)], weekdays=["monday", "friday"]
+def configured_backup(
+    name: str = "home",
+    schedule: Schedule | None = None,
+) -> tuple[Config, Backup]:
+    schedule = schedule or Schedule("hourly", CronSchedule("0 * * * *"))
+    destination = mock.Mock()
+    destination.format_locator.return_value = "/backups/home"
+    backup = Backup(
+        name,
+        mock.Mock(),
+        destination,
+        schedules=(schedule,),
     )
-    scheduler._add_job("foobar-name", lambda: None, timeframe)
-    jobs = scheduler._apscheduler.get_jobs()
-    assert len(jobs) == 2  # 2 times, each with monday,friday in day_of_week
-
-    # Test job 1: Monday and Friday at 10:00
-    job1 = jobs[0]
-    assert job1.name == "foobar-name"
-    start_time = datetime(1999, 1, 3, 8, 0, tzinfo=ZoneInfo("UTC"))  # Sunday Jan 3, 1999
-    expected_times = [
-        datetime(1999, 1, 4, 10, 0, tzinfo=ZoneInfo("UTC")),  # Monday
-        datetime(1999, 1, 8, 10, 0, tzinfo=ZoneInfo("UTC")),  # Friday
-        datetime(1999, 1, 11, 10, 0, tzinfo=ZoneInfo("UTC")),  # Monday
-        datetime(1999, 1, 15, 10, 0, tzinfo=ZoneInfo("UTC")),  # Friday
-        datetime(1999, 1, 18, 10, 0, tzinfo=ZoneInfo("UTC")),  # Monday
-        datetime(1999, 1, 22, 10, 0, tzinfo=ZoneInfo("UTC")),  # Friday
-    ]
-    next_time = job1.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job1.trigger.get_next_fire_time(next_time, next_time)
-
-    # Test job 2: Monday and Friday at 18:30
-    job2 = jobs[1]
-    assert job2.name == "foobar-name"
-    start_time = datetime(1999, 1, 3, 8, 0, tzinfo=ZoneInfo("UTC"))
-    expected_times = [
-        datetime(1999, 1, 4, 18, 30, tzinfo=ZoneInfo("UTC")),  # Monday
-        datetime(1999, 1, 8, 18, 30, tzinfo=ZoneInfo("UTC")),  # Friday
-        datetime(1999, 1, 11, 18, 30, tzinfo=ZoneInfo("UTC")),  # Monday
-        datetime(1999, 1, 15, 18, 30, tzinfo=ZoneInfo("UTC")),  # Friday
-        datetime(1999, 1, 18, 18, 30, tzinfo=ZoneInfo("UTC")),  # Monday
-        datetime(1999, 1, 22, 18, 30, tzinfo=ZoneInfo("UTC")),  # Friday
-    ]
-    next_time = job2.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job2.trigger.get_next_fire_time(next_time, next_time)
+    return Config({}, {name: backup}), backup
 
 
-def test_add_job_monthly_timeframe():
-    scheduler = yaesm.scheduler.Scheduler()
-    timeframe = yaesm.timeframe.MonthlyTimeframe(
-        keep=12, times=[(9, 0), (21, 0)], monthdays=[1, 15]
+@pytest.mark.parametrize("workers", [None, 25])
+def test_scheduler_configures_max_concurrent_backups(monkeypatch, workers):
+    executor = mock.Mock()
+    executor_constructor = mock.Mock(return_value=executor)
+    implementation = mock.Mock()
+    scheduler_constructor = mock.Mock(return_value=implementation)
+    monkeypatch.setattr(scheduler_module, "ThreadPoolExecutor", executor_constructor)
+    monkeypatch.setattr(scheduler_module, "BlockingScheduler", scheduler_constructor)
+    settings = {} if workers is None else {"scheduler": {"max_concurrent_backups": workers}}
+
+    Scheduler(Config(settings, {}))
+
+    executor_constructor.assert_called_once_with(max_workers=10 if workers is None else workers)
+    scheduler_constructor.assert_called_once_with(
+        executors={"default": executor},
+        job_defaults={"max_instances": 1},
+        logger=scheduler_module._backend_logger,
     )
-    scheduler._add_job("foo-name", lambda: None, timeframe)
-    jobs = scheduler._apscheduler.get_jobs()
-    assert len(jobs) == 4  # 2 monthdays * 2 times = 4 jobs
-
-    # Test job 1: 1st of month at 9:00
-    job1 = jobs[0]
-    assert job1.name == "foo-name"
-    start_time = datetime(1999, 1, 10, 8, 0, tzinfo=ZoneInfo("UTC"))
-    expected_times = [
-        datetime(1999, 2, 1, 9, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 3, 1, 9, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 4, 1, 9, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 5, 1, 9, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 6, 1, 9, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 7, 1, 9, 0, tzinfo=ZoneInfo("UTC")),
-    ]
-    next_time = job1.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job1.trigger.get_next_fire_time(next_time, next_time)
-
-    # Test job 2: 1st of month at 21:00
-    job2 = jobs[1]
-    assert job2.name == "foo-name"
-    start_time = datetime(1999, 1, 10, 8, 0, tzinfo=ZoneInfo("UTC"))
-    expected_times = [
-        datetime(1999, 2, 1, 21, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 3, 1, 21, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 4, 1, 21, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 5, 1, 21, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 6, 1, 21, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 7, 1, 21, 0, tzinfo=ZoneInfo("UTC")),
-    ]
-    next_time = job2.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job2.trigger.get_next_fire_time(next_time, next_time)
-
-    # Test job 3: 15th of month at 9:00
-    job3 = jobs[2]
-    assert job3.name == "foo-name"
-    start_time = datetime(1999, 1, 10, 8, 0, tzinfo=ZoneInfo("UTC"))
-    expected_times = [
-        datetime(1999, 1, 15, 9, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 2, 15, 9, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 3, 15, 9, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 4, 15, 9, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 5, 15, 9, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 6, 15, 9, 0, tzinfo=ZoneInfo("UTC")),
-    ]
-    next_time = job3.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job3.trigger.get_next_fire_time(next_time, next_time)
-
-    # Test job 4: 15th of month at 21:00
-    job4 = jobs[3]
-    assert job4.name == "foo-name"
-    start_time = datetime(1999, 1, 10, 8, 0, tzinfo=ZoneInfo("UTC"))
-    expected_times = [
-        datetime(1999, 1, 15, 21, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 2, 15, 21, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 3, 15, 21, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 4, 15, 21, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 5, 15, 21, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(1999, 6, 15, 21, 0, tzinfo=ZoneInfo("UTC")),
-    ]
-    next_time = job4.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job4.trigger.get_next_fire_time(next_time, next_time)
 
 
-def test_add_job_yearly_timeframe():
-    scheduler = yaesm.scheduler.Scheduler()
-    # Yearday 1 = Jan 1, Yearday 32 = Feb 1, Yearday 365 = Dec 31
-    timeframe = yaesm.timeframe.YearlyTimeframe(
-        keep=5, times=[(0, 0), (12, 0)], yeardays=[1, 32, 365]
-    )
-    scheduler._add_job("foo-name", lambda: None, timeframe)
-    jobs = scheduler._apscheduler.get_jobs()
-    assert len(jobs) == 6  # 3 yeardays * 2 times = 6 jobs
+def test_scheduler_logs_overlapping_job_skip(monkeypatch, caplog):
+    monkeypatch.setattr(scheduler_module, "BlockingScheduler", BackgroundScheduler)
+    config, _backup = configured_backup()
+    started = Event()
+    release = Event()
+    skipped = Event()
 
-    # Test job 1: Jan 1 at 0:00
-    job1 = jobs[0]
-    assert job1.name == "foo-name"
-    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
-    expected_times = [
-        datetime(2000, 1, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2001, 1, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2002, 1, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2003, 1, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
-    ]
-    next_time = job1.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job1.trigger.get_next_fire_time(next_time, next_time)
+    def execute_backup(*_args):
+        started.set()
+        assert release.wait(5)
+        return mock.Mock()
 
-    # Test job 2: Jan 1 at 12:00
-    job2 = jobs[1]
-    assert job2.name == "foo-name"
-    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
-    expected_times = [
-        datetime(1999, 1, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2000, 1, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2001, 1, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2002, 1, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
-    ]
-    next_time = job2.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job2.trigger.get_next_fire_time(next_time, next_time)
+    execute = mock.Mock(side_effect=execute_backup)
+    monkeypatch.setattr(Backup, "execute", execute)
+    scheduler = Scheduler(config)
+    implementation = scheduler._scheduler
+    implementation.reschedule_job("home:hourly:0", trigger="interval", seconds=0.05)
 
-    # Test job 3: Feb 1 at 0:00
-    job3 = jobs[2]
-    assert job3.name == "foo-name"
-    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
-    expected_times = [
-        datetime(1999, 2, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2000, 2, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2001, 2, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2002, 2, 1, 0, 0, tzinfo=ZoneInfo("UTC")),
-    ]
-    next_time = job3.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job3.trigger.get_next_fire_time(next_time, next_time)
+    def skipped_listener(event):
+        implementation.pause_job(event.job_id)
+        skipped.set()
 
-    # Test job 4: Feb 1 at 12:00
-    job4 = jobs[3]
-    assert job4.name == "foo-name"
-    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
-    expected_times = [
-        datetime(1999, 2, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2000, 2, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2001, 2, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2002, 2, 1, 12, 0, tzinfo=ZoneInfo("UTC")),
-    ]
-    next_time = job4.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job4.trigger.get_next_fire_time(next_time, next_time)
+    implementation.add_listener(skipped_listener, EVENT_JOB_MAX_INSTANCES)
+    with caplog.at_level(logging.WARNING):
+        scheduler.start()
+        try:
+            assert started.wait(5)
+            assert skipped.wait(5)
+        finally:
+            release.set()
+            implementation.shutdown(wait=True)
 
-    # Test job 5: Dec 31 at 0:00
-    job5 = jobs[4]
-    assert job5.name == "foo-name"
-    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
-    expected_times = [
-        datetime(1999, 12, 31, 0, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2000, 12, 31, 0, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2001, 12, 31, 0, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2002, 12, 31, 0, 0, tzinfo=ZoneInfo("UTC")),
-    ]
-    next_time = job5.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job5.trigger.get_next_fire_time(next_time, next_time)
-
-    # Test job 6: Dec 31 at 12:00
-    job6 = jobs[5]
-    assert job6.name == "foo-name"
-    start_time = datetime(1999, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC"))
-    expected_times = [
-        datetime(1999, 12, 31, 12, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2000, 12, 31, 12, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2001, 12, 31, 12, 0, tzinfo=ZoneInfo("UTC")),
-        datetime(2002, 12, 31, 12, 0, tzinfo=ZoneInfo("UTC")),
-    ]
-    next_time = job6.trigger.get_next_fire_time(None, start_time)
-    for expected in expected_times:
-        assert next_time == expected
-        next_time = job6.trigger.get_next_fire_time(next_time, next_time)
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert warnings[0].name == "yaesm.scheduler.backend"
+    assert "skipped: maximum number of running instances reached (1)" in warnings[0].getMessage()
+    assert execute.call_count == 1
 
 
-def test_add_backups_single_backup_single_timeframe(random_backup):
-    scheduler = yaesm.scheduler.Scheduler()
+def test_scheduler_adds_timer_jobs():
+    config, backup = configured_backup()
 
-    random_backup.timeframes = [yaesm.timeframe.FiveMinuteTimeframe(keep=10)]
+    scheduler = Scheduler(config)
+    jobs = scheduler._scheduler.get_jobs()
 
-    scheduler.add_backups([random_backup])
-    jobs = scheduler._apscheduler.get_jobs()
     assert len(jobs) == 1
-    assert jobs[0].name == f"{random_backup.name} (5minute)"
+    assert jobs[0].id == "home:hourly:0"
+    assert jobs[0].name == "home (hourly)"
+    assert isinstance(jobs[0].trigger, CronTrigger)
+    assert jobs[0].args[:4] == (backup, "hourly", config.backups_by_name, None)
+    assert jobs[0].args[4] is None
+    assert jobs[0].args[5] == Scheduler.timezone(config)
+    assert hasattr(jobs[0].args[6], "acquire")
 
 
-def test_add_backups_single_backup_multiple_timeframes(random_backup):
-    scheduler = yaesm.scheduler.Scheduler()
+def test_scheduler_defaults_to_system_timezone(monkeypatch):
+    timezone = ZoneInfo("Asia/Kathmandu")
+    monkeypatch.setattr(scheduler_module, "get_localzone", mock.Mock(return_value=timezone))
 
-    random_backup.timeframes = [
-        yaesm.timeframe.FiveMinuteTimeframe(keep=10),
-        yaesm.timeframe.HourlyTimeframe(keep=24, minutes=[0, 30]),
-        yaesm.timeframe.DailyTimeframe(keep=7, times=[(9, 0)]),
-    ]
+    assert Scheduler.timezone(Config({}, {})) is timezone
 
-    scheduler.add_backups([random_backup])
-    jobs = scheduler._apscheduler.get_jobs()
-    # 5minute: 1, hourly: 1, daily: 1 = 3 total
+
+def test_scheduler_applies_reloaded_timezone():
+    config, backup = configured_backup()
+    timezone = ZoneInfo("UTC")
+    config = Config({"scheduler": {"timezone": timezone}}, {"home": backup})
+    scheduler = Scheduler(config)
+
+    assert scheduler._scheduler.get_job("home:hourly:0").trigger.timezone is timezone
+
+    reloaded_timezone = ZoneInfo("America/New_York")
+    scheduler.replace_config(
+        Config({"scheduler": {"timezone": reloaded_timezone}}, {"home": backup})
+    )
+
+    assert scheduler._scheduler.get_job("home:hourly:0").trigger.timezone is reloaded_timezone
+
+
+def test_scheduler_ignores_on_demand_schedules():
+    config, _backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
+
+    scheduler = Scheduler(config)
+
+    assert scheduler._scheduler.get_jobs() == []
+
+
+def test_scheduler_jobs_for_same_backup_share_lock():
+    backup = Backup(
+        "home",
+        mock.Mock(),
+        mock.Mock(),
+        schedules=(
+            Schedule("hourly", CronSchedule("0 * * * *")),
+            Schedule("daily", CronSchedule("0 0 * * *")),
+            Schedule("manual", OnDemandSchedule()),
+        ),
+    )
+    scheduler = Scheduler(Config({}, {"home": backup}))
+    scheduler.enqueue_backup("home", "manual")
+
+    jobs = scheduler._scheduler.get_jobs()
+
     assert len(jobs) == 3
+    assert all(job.args[-1] is jobs[0].args[-1] for job in jobs)
+    assert hasattr(jobs[0].args[-1], "acquire")
 
 
-def test_add_backups_multiple_backups(random_backup_generator):
-    scheduler = yaesm.scheduler.Scheduler()
+def test_scheduler_jobs_for_different_backups_use_different_locks():
+    first_config, first = configured_backup("first")
+    _second_config, second = configured_backup("second")
+    jobs = Scheduler(Config({}, {"first": first, "second": second}))._scheduler.get_jobs()
+    locks = {job.args[0].name: job.args[-1] for job in jobs}
 
-    mock_backup1 = random_backup_generator()
-    mock_backup1.timeframes = [yaesm.timeframe.FiveMinuteTimeframe(keep=10)]
+    assert locks["first"] is not locks["second"]
 
-    mock_backup2 = random_backup_generator()
-    mock_backup2.timeframes = [yaesm.timeframe.HourlyTimeframe(keep=24, minutes=[0])]
 
-    scheduler.add_backups([mock_backup1, mock_backup2])
-    jobs = scheduler._apscheduler.get_jobs()
+def test_scheduler_enqueues_backup(monkeypatch, caplog):
+    config, backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
+    monkeypatch.setattr(
+        scheduler_module,
+        "uuid4",
+        mock.Mock(return_value=_REQUEST_ID),
+    )
+    scheduler = Scheduler(config)
+
+    with caplog.at_level(logging.INFO, logger="yaesm.scheduler"):
+        request_id = scheduler.enqueue_backup("home", "manual")
+
+    assert request_id == _REQUEST_ID
+    job = scheduler._scheduler.get_job(str(request_id))
+    assert job is not None
+    assert job.id == str(request_id)
+    assert job.name == "home (manual)"
+    assert isinstance(job.trigger, DateTrigger)
+    assert job.args[:4] == (backup, "manual", config.backups_by_name, request_id)
+    assert isinstance(job.args[4], queue.Queue)
+    assert job.args[5] == Scheduler.timezone(config)
+    assert hasattr(job.args[6], "acquire")
+    assert job.args[4].get_nowait() == {
+        "type": "log",
+        "message": "backup 'home' (manual) queued",
+    }
+    assert [
+        record.getMessage() for record in caplog.records if record.name == "yaesm.scheduler"
+    ] == ["backup 'home' (manual) queued"]
+
+
+def test_scheduler_enqueues_group_once_in_member_order(monkeypatch, caplog):
+    schedule = Schedule("manual", OnDemandSchedule())
+    _first_config, first = configured_backup("first", schedule)
+    _second_config, second = configured_backup("second", schedule)
+    config = Config(
+        {},
+        {"first": first, "second": second},
+        {"selected": BackupGroup("selected", ("second", "first"))},
+    )
+    monkeypatch.setattr(scheduler_module, "uuid4", mock.Mock(return_value=_REQUEST_ID))
+    scheduler = Scheduler(config)
+
+    with caplog.at_level(logging.INFO, logger="yaesm.scheduler"):
+        request_id = scheduler.enqueue_targets(("selected", "second"), "manual")
+
+    assert request_id == _REQUEST_ID
+    jobs = tuple(scheduler._scheduler.get_job(f"{request_id}:{index}") for index in range(2))
+    assert all(job is not None for job in jobs)
+    assert tuple(job.args[0] for job in jobs if job is not None) == (second, first)
+    assert jobs[0].args[4] is jobs[1].args[4]
+    messages = jobs[0].args[4]
+    assert messages.get_nowait() == {
+        "type": "log",
+        "message": "backup 'second' (manual) queued",
+    }
+    assert messages.get_nowait() == {
+        "type": "log",
+        "message": "backup 'first' (manual) queued",
+    }
+
+
+def test_scheduler_accepts_previous_backup_and_schedule_names():
+    schedule = Schedule("manual", OnDemandSchedule(), previous_names=("old-manual",))
+    backup = Backup(
+        "home",
+        mock.Mock(),
+        mock.Mock(),
+        schedules=(schedule,),
+        previous_names=("old-home",),
+    )
+    config = Config({}, {"home": backup})
+    scheduler = Scheduler(config)
+
+    request_id = scheduler.enqueue_backup("old-home", "old-manual")
+
+    job = scheduler._scheduler.get_job(str(request_id))
+    assert job is not None
+    assert job.args[:4] == (backup, "manual", config.backups_by_name, request_id)
+
+
+def test_scheduler_cleans_up_request_when_queueing_fails(monkeypatch):
+    config, _backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
+    scheduler = Scheduler(config)
+    monkeypatch.setattr(
+        scheduler._scheduler,
+        "add_job",
+        mock.Mock(side_effect=RuntimeError("failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="failed"):
+        scheduler.enqueue_backup("home")
+
+    assert scheduler._requests == {}
+
+
+def test_requested_jobs_wait_for_worker_capacity(monkeypatch):
+    monkeypatch.setattr(scheduler_module, "BlockingScheduler", BackgroundScheduler)
+    schedule = Schedule("manual", OnDemandSchedule())
+    _first_config, first = configured_backup("first", schedule)
+    _second_config, second = configured_backup("second", schedule)
+    scheduler = Scheduler(
+        Config({"scheduler": {"max_concurrent_backups": 1}}, {"first": first, "second": second})
+    )
+    executions = []
+
+    def execute(backup, *_args):
+        executions.append(backup.name)
+        if backup.name == "first":
+            # Keep the second job queued beyond APScheduler's default grace period.
+            time.sleep(1.1)
+        return mock.Mock()
+
+    monkeypatch.setattr(Backup, "execute", execute)
+    request_id = scheduler.enqueue_targets(("first", "second"))
+    messages = scheduler._requests[request_id].messages
+    get = messages.get
+    scheduler.start()
+    try:
+        # A lost result must fail this test instead of leaving it hanging.
+        with mock.patch.object(messages, "get", side_effect=lambda: get(timeout=5)):
+            responses = tuple(scheduler.request_messages(request_id))
+    finally:
+        scheduler.stop()
+
+    assert executions == ["first", "second"]
+    assert responses[-1] == {"type": "result", "ok": True, "request_id": str(request_id)}
+    assert messages.empty()
+
+
+def test_scheduler_selects_on_demand_schedule():
+    config, backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
+    scheduler = Scheduler(config)
+
+    request_id = scheduler.enqueue_backup("home")
+
+    job = scheduler._scheduler.get_job(str(request_id))
+    assert job is not None
+    assert job.args[:4] == (backup, "manual", config.backups_by_name, request_id)
+
+
+def test_scheduler_requires_on_demand_schedule():
+    config, _backup = configured_backup()
+    scheduler = Scheduler(config)
+
+    with pytest.raises(SchedulerError, match="backup 'home' has no on-demand schedule"):
+        scheduler.enqueue_backup("home")
+
+
+def test_scheduler_rejects_timer_schedule():
+    config, _backup = configured_backup()
+    scheduler = Scheduler(config)
+
+    with pytest.raises(SchedulerError, match="schedule 'hourly'.*is not on-demand"):
+        scheduler.enqueue_backup("home", "hourly")
+
+
+def test_scheduler_requires_explicit_name_for_multiple_on_demand_schedules():
+    backup = Backup(
+        "home",
+        mock.Mock(),
+        mock.Mock(),
+        schedules=(
+            Schedule("first", OnDemandSchedule()),
+            Schedule("second", OnDemandSchedule()),
+        ),
+    )
+    scheduler = Scheduler(Config({}, {"home": backup}))
+
+    with pytest.raises(SchedulerError, match="backup 'home' has multiple on-demand schedules"):
+        scheduler.enqueue_backup("home")
+
+
+def test_scheduler_rejects_unknown_backup_target():
+    config, _backup = configured_backup()
+    scheduler = Scheduler(config)
+
+    with pytest.raises(SchedulerError) as error:
+        scheduler.enqueue_backup("missing", "hourly")
+
+    assert error.value.format() == "unknown backup target: 'missing'"
+
+
+def test_scheduler_rejects_empty_target_selection():
+    config, _backup = configured_backup()
+
+    with pytest.raises(SchedulerError, match="no backup targets specified"):
+        Scheduler(config).enqueue_targets(())
+
+
+def test_scheduler_validates_group_schedules_before_queueing():
+    manual = Schedule("manual", OnDemandSchedule())
+    hourly = Schedule("hourly", CronSchedule("0 * * * *"))
+    _first_config, first = configured_backup("first", manual)
+    _second_config, second = configured_backup("second", hourly)
+    scheduler = Scheduler(
+        Config(
+            {},
+            {"first": first, "second": second},
+            {"selected": BackupGroup("selected", ("first", "second"))},
+        )
+    )
+    original_job_ids = {job.id for job in scheduler._scheduler.get_jobs()}
+
+    with pytest.raises(SchedulerError, match="backup 'second' has no schedule 'manual'"):
+        scheduler.enqueue_targets(("selected",), "manual")
+
+    assert scheduler._requests == {}
+    assert {job.id for job in scheduler._scheduler.get_jobs()} == original_job_ids
+
+
+def test_scheduler_rejects_unknown_schedule():
+    config, _backup = configured_backup()
+    scheduler = Scheduler(config)
+
+    with pytest.raises(
+        SchedulerError,
+        match="backup 'home' has no schedule 'missing'",
+    ):
+        scheduler.enqueue_backup("home", "missing")
+
+
+def test_scheduler_replaces_config():
+    first, _first_backup = configured_backup("first")
+    second, _second_backup = configured_backup("second")
+    scheduler = Scheduler(first)
+
+    scheduler.replace_config(second)
+
+    assert [job.id for job in scheduler._scheduler.get_jobs()] == ["second:hourly:0"]
+
+
+def test_scheduler_replaces_finished_timer_job():
+    first, _first_backup = configured_backup("first")
+    second, _second_backup = configured_backup("second")
+    scheduler = Scheduler(first)
+    scheduler._scheduler.remove_job("first:hourly:0")
+
+    scheduler.replace_config(second)
+
+    assert [job.id for job in scheduler._scheduler.get_jobs()] == ["second:hourly:0"]
+
+
+def test_scheduler_enqueues_from_replaced_config():
+    first, _first_backup = configured_backup("first", Schedule("manual", OnDemandSchedule()))
+    second, second_backup = configured_backup("second", Schedule("manual", OnDemandSchedule()))
+    scheduler = Scheduler(first)
+
+    scheduler.replace_config(second)
+    request_id = scheduler.enqueue_backup("second", "manual")
+
+    job = scheduler._scheduler.get_job(str(request_id))
+    assert job is not None
+    assert job.args[:4] == (second_backup, "manual", second.backups_by_name, request_id)
+
+
+def test_scheduler_reload_preserves_queued_backup():
+    first, first_backup = configured_backup("first", Schedule("manual", OnDemandSchedule()))
+    first_timezone = ZoneInfo("UTC")
+    first = Config({"scheduler": {"timezone": first_timezone}}, {"first": first_backup})
+    second, _second_backup = configured_backup("second")
+    scheduler = Scheduler(first)
+    request_id = scheduler.enqueue_backup("first", "manual")
+
+    scheduler.replace_config(second)
+
+    assert {job.id for job in scheduler._scheduler.get_jobs()} == {
+        str(request_id),
+        "second:hourly:0",
+    }
+    assert scheduler._scheduler.get_job(str(request_id)).args[5] is first_timezone
+
+
+def test_scheduler_reload_preserves_backup_lock():
+    first, _first_backup = configured_backup("home", Schedule("manual", OnDemandSchedule()))
+    second, _second_backup = configured_backup("home")
+    scheduler = Scheduler(first)
+    scheduler.enqueue_backup("home", "manual")
+
+    scheduler.replace_config(second)
+
+    jobs = scheduler._scheduler.get_jobs()
     assert len(jobs) == 2
+    assert jobs[0].args[-1] is jobs[1].args[-1]
 
 
-def test_add_backups_multiple_backups_multiple_timeframes(random_backup_generator):
-    scheduler = yaesm.scheduler.Scheduler()
+def test_scheduled_job_executes_backup(monkeypatch):
+    config, backup = configured_backup()
+    now = datetime(2026, 8, 28, 16, 30, tzinfo=timezone.utc)
+    configured_timezone = ZoneInfo("America/New_York")
+    execute = mock.Mock()
+    monkeypatch.setattr(Backup, "execute", execute)
+    monkeypatch.setattr(scheduler_module, "datetime", mock.Mock(now=lambda _timezone: now))
 
-    mock_backup1 = random_backup_generator()
-    mock_backup1.timeframes = [
-        yaesm.timeframe.FiveMinuteTimeframe(keep=10),
-        yaesm.timeframe.DailyTimeframe(keep=7, times=[(9, 0), (17, 0)]),
+    backup_lock = mock.MagicMock()
+    backup_lock.acquire.return_value = True
+    scheduler_module._execute_backup(
+        backup,
+        "hourly",
+        config.backups,
+        None,
+        None,
+        configured_timezone,
+        backup_lock,
+    )
+
+    execute.assert_called_once_with(
+        "hourly",
+        datetime(2026, 8, 28, 12, 30, tzinfo=configured_timezone),
+        config.backups,
+    )
+    assert backup_lock.mock_calls == [mock.call.acquire(blocking=False), mock.call.release()]
+
+
+def test_job_reports_waiting_for_another_execution(monkeypatch, caplog):
+    config, backup = configured_backup()
+    monkeypatch.setattr(Backup, "execute", mock.Mock())
+    backup_lock = mock.MagicMock()
+    backup_lock.acquire.side_effect = (False, True)
+
+    with caplog.at_level(logging.INFO, logger="yaesm.scheduler"):
+        scheduler_module._execute_backup(
+            backup,
+            "hourly",
+            config.backups,
+            None,
+            None,
+            ZoneInfo("UTC"),
+            backup_lock,
+        )
+
+    assert caplog.messages[:2] == [
+        "backup 'home' (hourly) waiting for another execution",
+        "backup 'home' (hourly) started",
+    ]
+    assert backup_lock.mock_calls == [
+        mock.call.acquire(blocking=False),
+        mock.call.acquire(),
+        mock.call.release(),
     ]
 
-    mock_backup2 = random_backup_generator()
-    mock_backup2.timeframes = [
-        yaesm.timeframe.HourlyTimeframe(keep=24, minutes=[0, 30]),
-        yaesm.timeframe.WeeklyTimeframe(keep=4, times=[(10, 0)], weekdays=["monday"]),
+
+def test_requested_job_streams_logs_and_result(monkeypatch, caplog):
+    config, backup = configured_backup()
+    messages: queue.Queue[ControlMessage] = queue.Queue()
+    execute = mock.Mock(
+        side_effect=lambda *_args: logging.getLogger("yaesm.test").info("copying data")
+    )
+    monkeypatch.setattr(Backup, "execute", execute)
+    monkeypatch.setattr(scheduler_module.time, "monotonic", mock.Mock(side_effect=(10, 75)))
+
+    with caplog.at_level(logging.INFO):
+        scheduler_module._execute_backup(
+            backup,
+            "hourly",
+            config.backups,
+            _REQUEST_ID,
+            messages,
+            ZoneInfo("UTC"),
+            mock.MagicMock(),
+        )
+
+    streamed = [messages.get_nowait() for _index in range(messages.qsize())]
+    assert streamed == [
+        {"type": "log", "message": "backup 'home' (hourly) started"},
+        {"type": "log", "message": "copying data"},
+        {
+            "type": "log",
+            "message": "backup 'home' (hourly) completed in 1m 5s: /backups/home",
+        },
+        {"type": "result", "ok": True, "request_id": str(_REQUEST_ID)},
+    ]
+    assert caplog.messages == [
+        "backup 'home' (hourly) started",
+        "copying data",
+        "backup 'home' (hourly) completed in 1m 5s: /backups/home",
     ]
 
-    scheduler.add_backups([mock_backup1, mock_backup2])
-    jobs = scheduler._apscheduler.get_jobs()
-    # backup1: 5minute(1) + daily(2) = 3
-    # backup2: hourly(1) + weekly(1) = 2
-    # total = 5
-    assert len(jobs) == 5
 
+def test_job_exposes_and_restores_backup_context(monkeypatch):
+    config, backup = configured_backup()
+    observed = None
 
-def test_add_backups_empty_list():
-    scheduler = yaesm.scheduler.Scheduler()
-    scheduler.add_backups([])
-    jobs = scheduler._apscheduler.get_jobs()
-    assert len(jobs) == 0
+    def execute(*_args):
+        nonlocal observed
+        observed = current_backup.get()
+        return mock.Mock()
 
+    monkeypatch.setattr(Backup, "execute", execute)
 
-def test_replace_backups(random_backup_generator):
-    scheduler = yaesm.scheduler.Scheduler()
-    unchanged = random_backup_generator()
-    changed = random_backup_generator()
-    removed = random_backup_generator()
-    added = random_backup_generator()
-    unchanged.timeframes = [yaesm.timeframe.FiveMinuteTimeframe(keep=10)]
-    changed.timeframes = [yaesm.timeframe.HourlyTimeframe(keep=24, minutes=[0])]
-    removed.timeframes = [yaesm.timeframe.DailyTimeframe(keep=7, times=[(1, 0)])]
-    added.timeframes = [yaesm.timeframe.DailyTimeframe(keep=7, times=[(2, 0)])]
-    scheduler.add_backups([unchanged, changed, removed])
-    unrelated = scheduler._apscheduler.add_job(lambda: None, "cron", hour=3)
-    old_jobs = {job.name: job for job in scheduler._apscheduler.get_jobs()}
-    removed_name = f"{removed.name} (daily)"
-
-    changed.timeframes = [yaesm.timeframe.HourlyTimeframe(keep=24, minutes=[30])]
-    scheduler.replace_backups([unchanged, changed, added])
-    jobs = {job.name: job for job in scheduler._apscheduler.get_jobs()}
-
-    unchanged_name = f"{unchanged.name} (5minute)"
-    changed_name = f"{changed.name} (hourly)"
-    assert set(jobs) == {unchanged_name, changed_name, f"{added.name} (daily)", unrelated.name}
-    assert jobs[unchanged_name].id == old_jobs[unchanged_name].id
-    assert jobs[changed_name].id == old_jobs[changed_name].id
-    start_time = datetime(1999, 1, 1, 12, 0, tzinfo=ZoneInfo("UTC"))
-    assert jobs[changed_name].trigger.get_next_fire_time(None, start_time) == datetime(
-        1999, 1, 1, 12, 30, tzinfo=ZoneInfo("UTC")
+    scheduler_module._execute_backup(
+        backup,
+        "hourly",
+        config.backups,
+        None,
+        None,
+        ZoneInfo("UTC"),
+        mock.MagicMock(),
     )
-    assert scheduler._job_name(old_jobs[removed_name].id) == removed_name
+
+    assert observed == "backup 'home' (hourly)"
+    assert current_backup.get() is None
 
 
-def test_start_logs(caplog):
-    caplog.set_level(logging.INFO)
-    scheduler = yaesm.scheduler.Scheduler()
-    scheduler._add_apscheduler_job(
-        "test job",
-        lambda: scheduler.stop(force=True),
-        "interval",
-        seconds=1,
-        start_date=datetime.now() + timedelta(seconds=0.1),
+def test_requested_job_streams_expected_failure(monkeypatch, caplog):
+    config, backup = configured_backup()
+    messages: queue.Queue[ControlMessage] = queue.Queue()
+    monkeypatch.setattr(Backup, "execute", mock.Mock(side_effect=BackupError("copy failed")))
+    monkeypatch.setattr(scheduler_module.time, "monotonic", mock.Mock(side_effect=(10, 75)))
+
+    with (
+        caplog.at_level(logging.ERROR, logger="yaesm.scheduler"),
+        pytest.raises(BackupError, match="copy failed"),
+    ):
+        scheduler_module._execute_backup(
+            backup,
+            "hourly",
+            config.backups,
+            _REQUEST_ID,
+            messages,
+            ZoneInfo("UTC"),
+            mock.MagicMock(),
+        )
+
+    streamed = [messages.get_nowait() for _index in range(messages.qsize())]
+    assert streamed == [
+        {
+            "type": "log",
+            "message": "backup 'home' (hourly) failed after 1m 5s: copy failed",
+        },
+        {
+            "type": "result",
+            "ok": False,
+            "error": "copy failed",
+            "error_logged": True,
+            "request_id": str(_REQUEST_ID),
+        },
+    ]
+    assert caplog.messages == ["backup 'home' (hourly) failed after 1m 5s: copy failed"]
+    assert caplog.records[-1].exc_info is None
+    assert current_backup.get() is None
+
+
+def test_requested_job_hides_unexpected_failure(monkeypatch, caplog):
+    config, backup = configured_backup()
+    messages: queue.Queue[ControlMessage] = queue.Queue()
+    monkeypatch.setattr(Backup, "execute", mock.Mock(side_effect=RuntimeError("secret")))
+    monkeypatch.setattr(scheduler_module.time, "monotonic", mock.Mock(side_effect=(10, 75)))
+
+    with (
+        caplog.at_level(logging.ERROR, logger="yaesm.scheduler"),
+        pytest.raises(RuntimeError, match="secret"),
+    ):
+        scheduler_module._execute_backup(
+            backup,
+            "hourly",
+            config.backups,
+            _REQUEST_ID,
+            messages,
+            ZoneInfo("UTC"),
+            mock.MagicMock(),
+        )
+
+    streamed = [messages.get_nowait() for _index in range(messages.qsize())]
+    assert streamed == [
+        {
+            "type": "log",
+            "message": "backup 'home' (hourly) failed after 1m 5s: unexpected error",
+        },
+        {
+            "type": "result",
+            "ok": False,
+            "error": "internal backup error",
+            "error_logged": True,
+            "request_id": str(_REQUEST_ID),
+        },
+    ]
+    assert all("secret" not in str(message) for message in streamed)
+    assert caplog.records[-1].exc_info is not None
+
+
+def test_scheduler_yields_request_messages(caplog):
+    config, _backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
+    scheduler = Scheduler(config)
+    with caplog.at_level(logging.INFO, logger="yaesm.scheduler"):
+        request_id = scheduler.enqueue_backup("home")
+    job = scheduler._scheduler.get_job(str(request_id))
+    assert job is not None
+    messages = job.args[4]
+    messages.put({"type": "log", "message": "starting"})
+    messages.put({"type": "result", "ok": True, "request_id": None})
+
+    assert tuple(scheduler.request_messages(request_id)) == (
+        {"type": "log", "message": "backup 'home' (manual) queued"},
+        {"type": "log", "message": "starting"},
+        {"type": "result", "ok": True, "request_id": str(request_id)},
     )
+    with pytest.raises(SchedulerError, match="unknown backup request"):
+        next(scheduler.request_messages(request_id))
+
+
+def test_request_logs_are_not_duplicated_by_overlapping_group_jobs(caplog):
+    messages: queue.Queue[ControlMessage] = queue.Queue()
+
+    with (
+        caplog.at_level(logging.INFO, logger="yaesm.scheduler"),
+        scheduler_module._stream_request_logs(_REQUEST_ID, messages),
+    ):
+        scheduler_module.logger.info("first")
+        with scheduler_module._stream_request_logs(_REQUEST_ID, messages):
+            scheduler_module.logger.info("overlap")
+        scheduler_module.logger.info("last")
+
+    assert tuple(messages.get_nowait() for _index in range(messages.qsize())) == (
+        {"type": "log", "message": "first"},
+        {"type": "log", "message": "overlap"},
+        {"type": "log", "message": "last"},
+    )
+    assert scheduler_module._active_request_log_streams == {}
+
+
+def test_scheduler_combines_group_results():
+    schedule = Schedule("manual", OnDemandSchedule())
+    _first_config, first = configured_backup("first", schedule)
+    _second_config, second = configured_backup("second", schedule)
+    scheduler = Scheduler(
+        Config(
+            {},
+            {"first": first, "second": second},
+            {"selected": BackupGroup("selected", ("first", "second"))},
+        )
+    )
+    request_id = scheduler.enqueue_targets(("selected",))
+    messages = scheduler._requests[request_id].messages
+    while not messages.empty():
+        messages.get_nowait()
+    messages.put({"type": "log", "message": "first finished"})
+    messages.put({"type": "result", "ok": True, "request_id": str(request_id)})
+    messages.put({"type": "log", "message": "second finished"})
+    messages.put({"type": "result", "ok": True, "request_id": str(request_id)})
+
+    assert tuple(scheduler.request_messages(request_id)) == (
+        {"type": "log", "message": "first finished"},
+        {"type": "log", "message": "second finished"},
+        {"type": "result", "ok": True, "request_id": str(request_id)},
+    )
+
+
+def test_scheduler_combines_multiple_group_failures():
+    schedule = Schedule("manual", OnDemandSchedule())
+    _first_config, first = configured_backup("first", schedule)
+    _second_config, second = configured_backup("second", schedule)
+    scheduler = Scheduler(
+        Config(
+            {},
+            {"first": first, "second": second},
+            {"selected": BackupGroup("selected", ("first", "second"))},
+        )
+    )
+    request_id = scheduler.enqueue_targets(("selected",))
+    messages = scheduler._requests[request_id].messages
+    while not messages.empty():
+        messages.get_nowait()
+    messages.put(
+        {
+            "type": "result",
+            "ok": False,
+            "error": "first failed",
+            "error_logged": True,
+            "request_id": str(request_id),
+        }
+    )
+    messages.put(
+        {
+            "type": "result",
+            "ok": False,
+            "error": "second failed",
+            "error_logged": False,
+            "request_id": str(request_id),
+        }
+    )
+
+    assert tuple(scheduler.request_messages(request_id)) == (
+        {
+            "type": "result",
+            "ok": False,
+            "error": "multiple backups failed:\n  - first failed\n  - second failed",
+            "error_logged": False,
+            "request_id": str(request_id),
+        },
+    )
+
+
+def test_scheduler_start_and_stop_delegate():
+    config, _backup = configured_backup()
+    scheduler = Scheduler(config)
+    implementation = mock.Mock()
+    scheduler._scheduler = implementation
+
+    implementation.running = False
     scheduler.start()
-    assert "scheduler started" in caplog.text
+    implementation.start.assert_called_once_with()
 
+    implementation.running = True
+    scheduler.stop()
+    implementation.shutdown.assert_called_once_with(wait=True)
 
-def test_job_fail_logs_instead_of_crashes(caplog):
-    scheduler = yaesm.scheduler.Scheduler()
-    call_count = [0]
-
-    def fail_func():
-        call_count[0] += 1
-        if call_count[0] <= 3:
-            raise Exception("TEST EXCEPTION")
-        scheduler.stop(force=True)
-
-    # Schedule a job to run immediately and repeatedly
-    start_date = datetime.now() + timedelta(seconds=0.5)
-    scheduler._add_apscheduler_job(
-        "test job", fail_func, "interval", seconds=0.3, start_date=start_date
-    )
-    # Start the scheduler (it will block until fail_func stops it)
+    scheduler.stop()
     scheduler.start()
-    assert call_count[0] == 4
-    assert "TEST EXCEPTION" in caplog.text
+    scheduler._stop_if_requested(mock.Mock())
+    implementation.shutdown.assert_called_once_with(wait=True)
+    implementation.start.assert_called_once_with()
 
 
-def test_overlapping_backup_logs_warning(caplog):
-    scheduler = yaesm.scheduler.Scheduler()
-    call_count = [0]
+def test_scheduler_rejects_work_after_stop():
+    config, _backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
+    scheduler = Scheduler(config)
+    scheduler.stop()
 
-    def slow_func():
-        call_count[0] += 1
-        if call_count[0] == 1:
-            # Still running when the next triggers fire, so those runs are
-            # skipped by Yaesm's max_instances=1 setting.
-            time.sleep(0.7)
-        else:
-            scheduler.stop(force=True)
+    with pytest.raises(SchedulerError, match="scheduler is stopping"):
+        scheduler.enqueue_backup("home")
+    with pytest.raises(SchedulerError, match="scheduler is stopping"):
+        scheduler.replace_config(config)
 
-    start_date = datetime.now() + timedelta(seconds=0.2)
-    scheduler._add_apscheduler_job(
-        "mybackup", slow_func, "interval", seconds=0.3, start_date=start_date
-    )
+
+def test_scheduler_honors_stop_requested_during_startup():
+    config, _backup = configured_backup()
+    scheduler = Scheduler(config)
+    scheduler.stop()
+
+    scheduler._scheduler.start()
+
+    assert not scheduler._scheduler.running
+
+
+def test_scheduler_stop_waits_for_running_backup(monkeypatch):
+    monkeypatch.setattr(scheduler_module, "BlockingScheduler", BackgroundScheduler)
+    config, _backup = configured_backup(schedule=Schedule("manual", OnDemandSchedule()))
+    started = Event()
+    release = Event()
+    shutdown_started = Event()
+    stopped = Event()
+
+    def execute_backup(*_args):
+        started.set()
+        assert release.wait(5)
+        return mock.Mock()
+
+    monkeypatch.setattr(Backup, "execute", execute_backup)
+    scheduler = Scheduler(config)
     scheduler.start()
-    assert "mybackup" in caplog.text
-    assert "skipped" in caplog.text
+    request_id = scheduler.enqueue_backup("home")
+    assert started.wait(5)
+    for _attempt in range(500):
+        if scheduler._scheduler.get_job(str(request_id)) is None:
+            break
+        time.sleep(0.01)
+    assert scheduler._scheduler.get_job(str(request_id)) is None
+
+    shutdown = scheduler._scheduler.shutdown
+
+    def observe_shutdown(*, wait=True):
+        shutdown_started.set()
+        return shutdown(wait=wait)
+
+    monkeypatch.setattr(scheduler._scheduler, "shutdown", observe_shutdown)
+
+    thread = Thread(target=lambda: (scheduler.stop(), stopped.set()))
+    thread.start()
+    try:
+        assert shutdown_started.wait(5)
+        assert not stopped.is_set()
+        release.set()
+        assert stopped.wait(5)
+    finally:
+        release.set()
+        thread.join(5)
+
+    assert not thread.is_alive()

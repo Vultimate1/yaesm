@@ -114,6 +114,7 @@ jobs:
         run: |
           apt-get install --yes --no-install-recommends ./dist/yaesm_*_all.deb
           yaesm --help
+          test "$(yaesm __complete --current=b --)" = backup
           systemd-analyze verify /usr/lib/systemd/system/yaesm.service
 
       - name: Upload Debian package

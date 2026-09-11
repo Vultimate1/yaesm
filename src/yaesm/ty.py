@@ -1,23 +1,26 @@
-"""yaesm.ty - Common type re-exports for annotation use.
+"""Common type re-exports for annotation use.
 
 Always import this module qualified:
     import yaesm.ty as ty
 """
 
-from collections.abc import Callable, Generator, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from datetime import datetime, timedelta
 from logging import Logger
 from pathlib import Path
 from re import Match, Pattern
 from subprocess import CompletedProcess
 from typing import (
+    TYPE_CHECKING,
     Any,
     ClassVar,
     Final,
+    Generic,
     Literal,
     NoReturn,
     Protocol,
     TypeAlias,
+    TypedDict,
     TypeVar,
     cast,
     final,
@@ -31,10 +34,13 @@ __all__ = [
     "CompletedProcess",
     "datetime",
     "Final",
+    "Generic",
     "Generator",
+    "Iterable",
     "Iterator",
     "Literal",
     "Logger",
+    "Mapping",
     "Match",
     "NoReturn",
     "Path",
@@ -42,7 +48,9 @@ __all__ = [
     "Protocol",
     "Sequence",
     "timedelta",
+    "TYPE_CHECKING",
     "TypeAlias",
+    "TypedDict",
     "TypeVar",
     "cast",
     "final",
