@@ -484,6 +484,10 @@ An init system should enforce a final stop timeout and forcibly terminate yaesm 
 
 Yaesm was developed by Connor Gallivan and Nicholas B. Hubbard through the University of Massachusetts Lowell Open Source Club.
 
+# AI USAGE
+
+This project was developed in part using AI tools.
+
 # LICENSE
 
 Yaesm is free software released under the GNU General Public License, version 3 or later. See the `LICENSE` file distributed with yaesm for the full license text.
