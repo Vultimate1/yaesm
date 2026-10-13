@@ -293,9 +293,10 @@ The `tar` driver uses the `tar` utility to transform a directory tree into an un
 
 ### CONFIGURATION
 
-Specify `tar` by name to use its default behavior. To override the default, its value is a mapping with the following setting:
+Specify `tar` by name to use its default behavior. To override the defaults, its value is a mapping with the following settings:
 
 - **`one_file_system`**: Whether `tar` should avoid crossing filesystem boundaries while reading the directory tree. The default is `true`.
+- **`tmpdir`**: Optional absolute path of the parent directory for temporary extraction directories. The directory must already exist and be writable on the system where the transform runs. When omitted or `null`, `mktemp` chooses its normal default (`TMPDIR`, otherwise `/tmp`). Choose a filesystem with enough space for the expanded archive.
 
 ### PIPELINE ROLES
 

@@ -3,7 +3,7 @@
 import voluptuous as vlp
 
 from yaesm.command import CommandStage
-from yaesm.driver.driverbase import DriverBase, DriverError, GlobalSettings
+from yaesm.driver.driverbase import DriverBase, GlobalSettings
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, CompressedStream
 from yaesm.ssh import SSHTarget
@@ -63,8 +63,7 @@ class ZstdDriver(DriverBase):
 
     def cap_detransform(self, source: CommandStream) -> CommandStream:
         """Undo one layer of Zstandard compression."""
-        if source.suffixes[-1:] != (ZstdStream.suffix,):
-            raise DriverError("zstd detransform requires a .zst suffix")
+        self._validate_suffix(source, ZstdStream.suffix)
 
         return CommandStream(
             (

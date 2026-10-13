@@ -12,6 +12,7 @@ from yaesm.command import Command, CommandResult, CommandRunner
 from yaesm.representation import (
     BlockDevice,
     ByteStream,
+    CommandStream,
     CompressedStream,
     DataProperty,
     EncryptedStream,
@@ -244,6 +245,11 @@ class DriverBase(abc.ABC):
             ssh=self._check_ssh(),
             validate=validate,
         )
+
+    def _validate_suffix(self, source: CommandStream, suffix: str) -> None:
+        """Require the expected outermost format suffix."""
+        if source.suffixes[-1:] != (suffix,):
+            raise DriverError(f"{self.name()} detransform requires a {suffix} suffix")
 
     @capability("cleanup", pipeline=False)
     def cap_cleanup(self, representation: Representation) -> None:
