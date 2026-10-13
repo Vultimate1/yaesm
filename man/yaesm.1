@@ -550,12 +550,37 @@ The driver works with GNU tar or bsdtar.\&
 .SS CONFIGURATION
 .PP
 Specify \fBtar\fR by name to use its default behavior.\&
-To override the default, its value is a mapping with the following\&
-setting:\&
+To override the defaults, its value is a mapping with the following\&
+settings:\&
 .IP \[bu] 2
 \fB\fBone_file_system\fB\fR: Whether \fBtar\fR should avoid\&
 crossing filesystem boundaries while reading the directory tree.\&
 The default is \fBtrue\fR.\&
+.IP \[bu] 2
+\fB\fBtmpdir\fB\fR: Optional absolute path of the parent\&
+directory for temporary extraction directories used when undoing a tar\&
+transformation.\&
+The directory must already exist and be writable on the system where the\&
+transform runs.\&
+When omitted or \fBnull\fR, yaesm runs \fBmktemp -d\fR without a\&
+template, leaving the choice of temporary directory to \fBmktemp\fR.\&
+This setting does not affect archive creation.\&
+.PP
+For example, to extract beneath an existing directory at\&
+\fB/srv/yaesm/tmp\fR:\&
+.IP
+.nf
+\fR\&
+transforms:\&
+  - tar:\&
+      tmpdir: /srv/yaesm/tmp\&
+\fR\&
+.fi
+.PP
+Choose a filesystem with enough space for the expanded archive.\&
+If the default temporary directory is on tmpfs, set \fBtmpdir\fR to\&
+a disk-backed location to avoid using memory for a large extraction.\&
+For an SSH transform, the configured path is on the remote host.\&
 .SS PIPELINE ROLES
 .SS TRANSFORM
 .PP
@@ -587,13 +612,27 @@ appended to the artifact filename.\&
 .SS gpg
 .PP
 The \fBgpg\fR driver uses the GnuPG \fBgpg\fR utility to encrypt\&
-a byte stream with an OpenPGP public key.\&
+a byte stream with an OpenPGP public key and decrypt it using\&
+\fBgpg-agent\fR.\&
 .SS CONFIGURATION
 .PP
 The \fBgpg\fR value is the absolute path of the OpenPGP public-key\&
 file used to encrypt the backup.\&
 The path is interpreted on the system where the transform runs, and the\&
 key does not need to be imported into a GnuPG keyring.\&
+Binary and ASCII-armored public-key exports are supported.\&
+.PP
+Decryption uses the GnuPG home of the account running the transform\&
+(\fBGNUPGHOME\fR, or \fB\[ti]/.gnupg\fR by default).\&
+Import the corresponding private key there separately.\&
+A passphrase-protected key must already be unlocked in that\&
+account\[aq]s \fBgpg-agent\fR; yaesm does not prompt for\&
+passphrases.\&
+A missing or locked key causes decryption to fail.\&
+Agent restarts and cache expiry can require unlocking the key again\&
+before an unattended run.\&
+For an SSH transform, this setup belongs to the remote account on the\&
+remote host.\&
 .SS PIPELINE ROLES
 .SS TRANSFORM
 .PP
