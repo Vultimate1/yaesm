@@ -884,7 +884,8 @@ def test_detransform_restores_stored_tar_zstd_gpg_backup(tmp_path, gpg_public_ke
     try:
         with detransform(stored, transforms) as result:
             assert isinstance(result, PathTree)
-            assert result.path.parent == scratch
+            assert result.path.parent.parent == scratch
+            assert result.path.parent.stat().st_mode & 0o777 == 0o700
             assert {
                 path.relative_to(result.path).as_posix() for path in result.path.rglob("*")
             } == {

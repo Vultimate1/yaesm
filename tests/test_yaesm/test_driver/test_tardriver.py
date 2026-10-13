@@ -13,7 +13,7 @@ from yaesm.check import CheckRole
 from yaesm.command import CommandError, CommandResult, CommandRunner, CommandStage
 from yaesm.driver.directorydriver import DirectoryDriver
 from yaesm.driver.driverbase import DriverError
-from yaesm.driver.tardriver import TarDriver, TarStream
+from yaesm.driver.tardriver import TarDriver, TarStream, TarTree
 from yaesm.errors import YaesmValueError
 from yaesm.pipeline import Pipeline, PipelineError
 from yaesm.representation import CommandStream, DataProperty, PathTree, UncompressedStream
@@ -153,14 +153,15 @@ def test_detransform_uses_configured_ssh_target(tmp_path, monkeypatch, configure
     template = (extracted.parent / ".yaesm-tar.XXXXXX",) if configured else ()
     assert commands == [
         (target.openssh_command(("mktemp", "-d", *template)), {"capture_output": True}),
+        (target.openssh_command(("mkdir", "--", extracted / "data")), {}),
     ]
     assert len(pipelines) == 1
     assert pipelines[0][:-1] == source.stages
     extraction = pipelines[0][-1]
     assert extraction.ssh == target
     assert extraction.command[:4] == ("tar", "-x", "-f", "-")
-    assert extraction.command[-2:] == ("-C", str(extracted))
-    assert tree == PathTree(extracted, target)
+    assert extraction.command[-2:] == ("-C", str(tree.path))
+    assert tree == TarTree(extracted / "data", target, temporary_directory=extracted)
 
 
 @pytest.mark.parametrize("configured", [False, True])
@@ -183,8 +184,30 @@ def test_detransform_creates_directory_in_selected_tmpdir(tmp_path, monkeypatch,
     assert len(directories) == 1
     assert directories[0].is_dir()
     assert not tuple(unused_parent.iterdir())
-    assert tree == PathTree(directories[0])
+    assert tree.temporary_directory == directories[0]
+    assert tree.path.parent == directories[0]
     assert (tree.path / "content").read_bytes() == content
+    driver.cap_cleanup(tree)
+
+
+def test_detransform_keeps_public_archive_inside_private_directory(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    source.chmod(0o755)
+    (source / "content").write_text("private backup content")
+    (source / "content").chmod(0o644)
+    driver = TarDriver(tmpdir=tmp_path)
+
+    tree = driver.cap_detransform(driver.cap_export(PathTree(source)))
+
+    try:
+        assert tree.path.parent == tree.temporary_directory
+        assert tree.temporary_directory.stat().st_mode & 0o777 == 0o700
+        assert (tree.path / "content").read_text() == "private backup content"
+    finally:
+        driver.cap_cleanup(tree)
+
+    assert not tree.temporary_directory.exists()
 
 
 @pytest.mark.parametrize("cleanup_fails", [False, True])
@@ -256,8 +279,10 @@ def test_capabilities_include_cleanup_detransform_and_export():
     assert driver.capability_metadata("export").base is None
 
 
-def test_cap_cleanup_removes_tree_without_following_symlinks(tmp_path):
-    tree = tmp_path / ".yaesm-tar.test"
+@pytest.mark.parametrize("mode", [0o555, 0o000])
+def test_cap_cleanup_removes_readonly_tree_without_following_symlinks(tmp_path, mode):
+    temporary_directory = tmp_path / ".yaesm-tar.test"
+    tree = temporary_directory / "data"
     nested = tree / "nested"
     nested.mkdir(parents=True)
     (nested / "content").write_text("extracted content")
@@ -265,17 +290,30 @@ def test_cap_cleanup_removes_tree_without_following_symlinks(tmp_path):
     original.mkdir()
     (original / "content").write_text("original content")
     (tree / "link").symlink_to(original, target_is_directory=True)
+    original.chmod(0o555)
+    nested.chmod(mode)
+    tree.chmod(mode)
 
-    TarDriver().cap_cleanup(PathTree(tree))
+    try:
+        TarDriver().cap_cleanup(TarTree(tree, temporary_directory=temporary_directory))
 
-    assert not tree.exists()
-    assert (original / "content").read_text() == "original content"
+        assert not temporary_directory.exists()
+        assert (original / "content").read_text() == "original content"
+        assert original.stat().st_mode & 0o777 == 0o555
+    finally:
+        original.chmod(0o700)
+        if tree.exists():
+            tree.chmod(0o700)
+            nested.chmod(0o700)
 
 
 def test_cap_cleanup_uses_representation_ssh_target(tmp_path, monkeypatch):
     driver_target = SSHTarget("ssh://driver", tmp_path / "key")
     tree_target = SSHTarget("ssh://extraction", tmp_path / "key")
-    tree = PathTree(Path("/scratch/.yaesm-tar.test"), tree_target)
+    temporary_directory = Path("/scratch/.yaesm-tar.test")
+    tree = TarTree(
+        temporary_directory / "data", tree_target, temporary_directory=temporary_directory
+    )
     driver = TarDriver(ssh=driver_target)
     calls = []
 
@@ -287,7 +325,24 @@ def test_cap_cleanup_uses_representation_ssh_target(tmp_path, monkeypatch):
 
     driver.cap_cleanup(tree)
 
-    assert calls == [tree_target.openssh_command(("rm", "-rf", "--", tree.path))]
+    assert calls == [
+        tree_target.openssh_command(
+            (
+                "find",
+                "-P",
+                temporary_directory,
+                "-type",
+                "d",
+                "-exec",
+                "chmod",
+                "u+rwx",
+                "--",
+                "{}",
+                ";",
+            )
+        ),
+        tree_target.openssh_command(("rm", "-rf", "--", temporary_directory)),
+    ]
 
 
 def test_tar_stream_representation():
@@ -398,6 +453,7 @@ def test_tar_roundtrip_with_gnu_tar_and_bsdtar(tmp_path, monkeypatch, executable
     )
 
     try:
+        assert tree.temporary_directory.stat().st_mode & 0o777 == 0o700
         assert (tree.path / "content").read_text() == "backup content"
         assert (tree.path / "nested" / "content").read_bytes() == content
         assert (tree.path / "empty").is_dir()
@@ -411,3 +467,4 @@ def test_tar_roundtrip_with_gnu_tar_and_bsdtar(tmp_path, monkeypatch, executable
         driver.cap_cleanup(tree)
 
     assert not tree.path.exists()
+    assert not tree.temporary_directory.exists()

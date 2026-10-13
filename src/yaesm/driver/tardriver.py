@@ -1,6 +1,7 @@
 """Tar archive driver."""
 
 import contextlib
+import dataclasses
 from pathlib import Path
 
 import voluptuous as vlp
@@ -17,6 +18,13 @@ class TarStream(UncompressedStream):
     """An uncompressed POSIX pax archive stream."""
 
     suffix = ".tar"
+
+
+@dataclasses.dataclass(frozen=True)
+class TarTree(PathTree):
+    """An extracted archive inside a private temporary directory."""
+
+    temporary_directory: ty.Path = dataclasses.field(kw_only=True)
 
 
 class TarDriver(DriverBase):
@@ -68,17 +76,36 @@ class TarDriver(DriverBase):
             }
         )
 
-    def cap_cleanup(self, representation: PathTree) -> None:
+    def cap_cleanup(self, representation: TarTree) -> None:
         """Remove a temporary extraction directory."""
+        # Repair each directory before descending, without following archive symlinks.
         self.runner.run(
             command_for_ssh(
                 representation.ssh,
-                ("rm", "-rf", "--", representation.path),
+                (
+                    "find",
+                    "-P",
+                    representation.temporary_directory,
+                    "-type",
+                    "d",
+                    "-exec",
+                    "chmod",
+                    "u+rwx",
+                    "--",
+                    "{}",
+                    ";",
+                ),
+            )
+        )
+        self.runner.run(
+            command_for_ssh(
+                representation.ssh,
+                ("rm", "-rf", "--", representation.temporary_directory),
             )
         )
 
     @capability("detransform", pipeline=False, temporary=True)
-    def cap_detransform(self, source: CommandStream) -> PathTree:
+    def cap_detransform(self, source: CommandStream) -> TarTree:
         self._validate_suffix(source, TarStream.suffix)
 
         command: list[str | ty.Path] = ["mktemp", "-d"]
@@ -92,9 +119,15 @@ class TarDriver(DriverBase):
         tmpdir = (result.stdout or "").removesuffix("\n")
         if not tmpdir:
             raise DriverError("mktemp did not return a temporary directory")
-        tree = PathTree(Path(tmpdir), self.ssh)
+        temporary_directory = Path(tmpdir)
+        tree = TarTree(
+            temporary_directory / "data",
+            self.ssh,
+            temporary_directory=temporary_directory,
+        )
 
         try:
+            self.runner.run(command_for_ssh(tree.ssh, ("mkdir", "--", tree.path)))
             self.runner.pipeline(
                 (
                     *source.stages,
