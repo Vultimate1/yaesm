@@ -1,6 +1,7 @@
 """Backup execution pipelines."""
 
 import collections
+import contextlib
 import dataclasses
 import inspect
 import logging
@@ -170,6 +171,22 @@ class Pipeline:
                         f"backup {operation.backup_name!r} failed while cleaning up "
                         f"{step.driver.name()}.{step.capability}"
                     ) from error
+
+
+@contextlib.contextmanager
+def detransform(
+    source: Representation,
+    transforms: ty.Sequence[DriverBase],
+) -> ty.Iterator[Representation]:
+    """Undo configured transforms, cleaning up after the result is consumed."""
+    with contextlib.ExitStack() as cleanup:
+        for driver in reversed(transforms):
+            source = driver.cap_detransform(source)
+
+            if driver.capability_metadata("detransform").temporary:
+                cleanup.callback(driver.cap_cleanup, source)
+
+        yield source
 
 
 def _exclude_artifact_roots(

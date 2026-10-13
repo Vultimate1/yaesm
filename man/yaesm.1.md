@@ -296,7 +296,17 @@ The `tar` driver uses the `tar` utility to transform a directory tree into an un
 Specify `tar` by name to use its default behavior. To override the defaults, its value is a mapping with the following settings:
 
 - **`one_file_system`**: Whether `tar` should avoid crossing filesystem boundaries while reading the directory tree. The default is `true`.
-- **`tmpdir`**: Optional absolute path of the parent directory for temporary extraction directories. The directory must already exist and be writable on the system where the transform runs. When omitted or `null`, `mktemp` chooses its normal default (`TMPDIR`, otherwise `/tmp`). Choose a filesystem with enough space for the expanded archive.
+- **`tmpdir`**: Optional absolute path of the parent directory for temporary extraction directories used when undoing a tar transformation. The directory must already exist and be writable on the system where the transform runs. When omitted or `null`, yaesm runs `mktemp -d` without a template, leaving the choice of temporary directory to `mktemp`. This setting does not affect archive creation.
+
+For example, to extract beneath an existing directory at `/srv/yaesm/tmp`:
+
+```yaml
+transforms:
+  - tar:
+      tmpdir: /srv/yaesm/tmp
+```
+
+Choose a filesystem with enough space for the expanded archive. If the default temporary directory is on tmpfs, set `tmpdir` to a disk-backed location to avoid using memory for a large extraction. For an SSH transform, the configured path is on the remote host.
 
 ### PIPELINE ROLES
 

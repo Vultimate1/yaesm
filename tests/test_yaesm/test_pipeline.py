@@ -3,6 +3,7 @@
 import logging
 import shlex
 import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from unittest import mock
@@ -16,12 +17,13 @@ from yaesm.backup import BackupArtifact, BackupOperation
 from yaesm.command import CommandError, CommandResult, CommandRunner, CommandStage
 from yaesm.config import parse_config
 from yaesm.driver.btrfsdriver import BtrfsDriver
+from yaesm.driver.directorydriver import DirectoryDriver
 from yaesm.driver.driverbase import DriverBase, DriverError, capability
 from yaesm.driver.filedriver import FileDriver
 from yaesm.driver.gpgdriver import GPGDriver
 from yaesm.driver.tardriver import TarDriver
 from yaesm.driver.zstddriver import ZstdDriver
-from yaesm.pipeline import IncrementalBase, Pipeline, PipelineError, PipelineStep
+from yaesm.pipeline import IncrementalBase, Pipeline, PipelineError, PipelineStep, detransform
 from yaesm.representation import (
     ByteStream,
     CommandStream,
@@ -775,6 +777,164 @@ def test_pipeline_rejects_temporary_capability_without_cleanup():
             DestinationDriver(),
             (SnapshotWithoutCleanupDriver(), ExportDriver()),
         )
+
+
+def test_detransform_without_transforms_preserves_source():
+    source = Representation()
+
+    with detransform(source, ()) as result:
+        assert result is source
+
+
+def test_detransform_reverses_configured_transforms(tmp_path):
+    source = CommandStream(
+        (CommandStage(("cat", "/backup.tar.zst.gpg")),),
+        suffixes=(".tar", ".zst", ".gpg"),
+    )
+    transforms = (ZstdDriver(), GPGDriver(tmp_path / "public.asc"))
+
+    with detransform(source, transforms) as result:
+        assert isinstance(result, CommandStream)
+        assert result.suffixes == (".tar",)
+        assert result.stages[:1] == source.stages
+        assert tuple(stage.command[0] for stage in result.stages) == ("cat", "gpg", "zstd")
+
+
+@pytest.fixture
+def gpg_public_key(tmp_path, monkeypatch):
+    for executable in ("gpg", "gpgconf"):
+        if shutil.which(executable) is None:
+            pytest.skip(f"{executable} is not installed")
+    home = tmp_path / "gnupg"
+    home.mkdir(mode=0o700)
+    monkeypatch.setenv("GNUPGHOME", str(home))
+    identity = "yaesm detransform test <detransform@example.invalid>"
+    try:
+        subprocess.run(
+            (
+                "gpg",
+                "--batch",
+                "--pinentry-mode",
+                "loopback",
+                "--passphrase",
+                "",
+                "--quick-generate-key",
+                identity,
+                "rsa2048",
+                "encr",
+                "0",
+            ),
+            capture_output=True,
+            check=True,
+        )
+        public_key = tmp_path / "public.asc"
+        public_key.write_bytes(
+            subprocess.run(
+                ("gpg", "--batch", "--armor", "--export", identity),
+                capture_output=True,
+                check=True,
+            ).stdout
+        )
+        yield public_key
+    finally:
+        subprocess.run(
+            ("gpgconf", "--homedir", str(home), "--kill", "all"),
+            capture_output=True,
+            check=False,
+        )
+
+
+@pytest.mark.parametrize("consumer_fails", [False, True], ids=("success", "consumer-error"))
+def test_detransform_restores_stored_tar_zstd_gpg_backup(tmp_path, gpg_public_key, consumer_fails):
+    for executable in ("tar", "zstd"):
+        if shutil.which(executable) is None:
+            pytest.skip(f"{executable} is not installed")
+    original = tmp_path / "original"
+    original.mkdir()
+    contents = {
+        "content": b"backup contents\x00\xff\n",
+        "nested directory/binary data": bytes(range(256)) * 16,
+        "empty file": b"",
+    }
+    for name, content in contents.items():
+        path = original / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    (original / "empty directory").mkdir()
+    (original / "link").symlink_to("nested directory/binary data")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    archives = tmp_path / "archives"
+    archives.mkdir()
+    transforms = (TarDriver(tmpdir=scratch), ZstdDriver(), GPGDriver(gpg_public_key))
+    destination = FileDriver(archives)
+    Pipeline(DirectoryDriver(original), destination, transforms).execute(
+        BackupOperation("home", "manual", datetime(2026, 8, 27, 12, 30))
+    )
+
+    # Restore a rediscovered artifact after the original data is gone.
+    artifacts = destination.cap_list("home")
+    assert len(artifacts) == 1
+    stored = artifacts[0].representation
+    assert stored.suffixes == (".tar", ".zst", ".gpg")
+    backup_bytes = stored.path.read_bytes()
+    shutil.rmtree(original)
+    consumer_error = RuntimeError("consumer failed")
+
+    try:
+        with detransform(stored, transforms) as result:
+            assert isinstance(result, PathTree)
+            assert result.path.parent == scratch
+            assert {
+                path.relative_to(result.path).as_posix() for path in result.path.rglob("*")
+            } == {
+                *contents,
+                "nested directory",
+                "empty directory",
+                "link",
+            }
+            for name, content in contents.items():
+                assert (result.path / name).read_bytes() == content
+            assert (result.path / "empty directory").is_dir()
+            assert (result.path / "link").is_symlink()
+            assert (result.path / "link").readlink() == Path("nested directory/binary data")
+            if consumer_fails:
+                raise consumer_error
+    except RuntimeError as error:
+        assert error is consumer_error
+    else:
+        assert not consumer_fails
+
+    assert list(scratch.iterdir()) == []
+    assert stored.path.read_bytes() == backup_bytes
+
+
+def test_detransform_cleans_up_in_reverse_order_if_later_transform_fails():
+    source = Representation()
+    intermediate = Representation()
+    extracted = Representation()
+    calls = mock.Mock()
+    first = mock.Mock(wraps=TarDriver())
+    first.cap_detransform.return_value = intermediate
+    second = mock.Mock(wraps=TarDriver())
+    second.cap_detransform.return_value = extracted
+    first.cap_cleanup = calls.first_cleanup
+    second.cap_cleanup = calls.second_cleanup
+    failing = mock.Mock(spec=DriverBase)
+    error = DriverError("detransform failed")
+    failing.cap_detransform.side_effect = error
+
+    with pytest.raises(DriverError) as caught, detransform(source, (failing, second, first)):
+        pytest.fail("The failed transformation must prevent consuming the result")
+
+    assert caught.value is error
+    first.cap_detransform.assert_called_once_with(source)
+    second.cap_detransform.assert_called_once_with(intermediate)
+    failing.cap_detransform.assert_called_once_with(extracted)
+    assert calls.mock_calls == [
+        mock.call.second_cleanup(extracted),
+        mock.call.first_cleanup(intermediate),
+    ]
 
 
 def test_pipeline_resolves_compatible_driver_capabilities():
