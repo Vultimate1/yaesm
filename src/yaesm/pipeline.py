@@ -177,7 +177,7 @@ class Pipeline:
 def detransform(
     source: Representation,
     transforms: ty.Sequence[DriverBase],
-) -> ty.Iterator[Representation]:
+) -> ty.Generator[Representation, None, None]:
     """Undo configured transforms, cleaning up after the result is consumed."""
     with contextlib.ExitStack() as cleanup:
         for driver in reversed(transforms):

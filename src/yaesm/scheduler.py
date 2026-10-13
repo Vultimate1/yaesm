@@ -405,7 +405,7 @@ _active_request_log_streams_lock = Lock()
 def _stream_request_logs(
     backup_request_id: UUID | None,
     messages: queue.Queue[ControlMessage] | None,
-) -> ty.Iterator[None]:
+) -> ty.Generator[None, None, None]:
     """Stream log messages for one control request."""
     if backup_request_id is None or messages is None:
         yield
