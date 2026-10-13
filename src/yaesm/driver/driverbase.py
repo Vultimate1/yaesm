@@ -78,18 +78,19 @@ class DriverBase(abc.ABC):
 
     The available capabilities are:
 
+    - ``cap_cleanup``: remove a temporary representation.
+    - ``cap_compress``: compress a byte stream.
+    - ``cap_delete``: delete stored backup artifacts.
+    - ``cap_detransform``: undo a transformation.
+    - ``cap_encrypt``: encrypt a byte stream.
+    - ``cap_export``: export a representation as a byte stream.
+    - ``cap_expose``: expose a block device as a readable tree.
+    - ``cap_import``: import a byte stream as a stored artifact.
+    - ``cap_list``: list stored backup artifacts.
+    - ``cap_snapshot``: create a point-in-time representation.
     - ``cap_source``: make source data available for a backup.
     - ``cap_store``: persist backup data as an artifact.
-    - ``cap_snapshot``: create a point-in-time representation.
-    - ``cap_expose``: expose a block device as a readable tree.
-    - ``cap_export``: export a representation as a byte stream.
-    - ``cap_import``: import a byte stream as a stored artifact.
-    - ``cap_compress``: compress a byte stream.
-    - ``cap_encrypt``: encrypt a byte stream.
-    - ``cap_list``: list stored backup artifacts.
-    - ``cap_delete``: delete stored backup artifacts.
     - ``cap_unchanged``: determine whether source matches the previous artifact.
-    - ``cap_cleanup``: remove a temporary representation.
     """
 
     def __init__(
@@ -244,6 +245,69 @@ class DriverBase(abc.ABC):
             validate=validate,
         )
 
+    @capability("cleanup", pipeline=False)
+    def cap_cleanup(self, representation: Representation) -> None:
+        """Remove a temporary representation produced by this driver."""
+        raise NotImplementedError(f"{self.name()} driver does not provide the cleanup capability")
+
+    @capability("compress", adds=(DataProperty.COMPRESSED,))
+    def cap_compress(self, source: ByteStream) -> CompressedStream:
+        """Compress a byte stream."""
+        raise NotImplementedError(f"{self.name()} driver does not provide the compress capability")
+
+    @capability("delete", pipeline=False)
+    def cap_delete(
+        self,
+        artifacts: ty.Sequence[bckp.BackupArtifact[Representation]],
+    ) -> None:
+        """Delete stored backup artifacts."""
+        raise NotImplementedError(f"{self.name()} driver does not provide the delete capability")
+
+    @capability("detransform", pipeline=False)
+    def cap_detransform(self, source: Representation) -> Representation:
+        """Undo a transformation."""
+        raise NotImplementedError(
+            f"{self.name()} driver does not provide the detransform capability"
+        )
+
+    @capability("encrypt", adds=(DataProperty.ENCRYPTED,))
+    def cap_encrypt(self, source: ByteStream) -> EncryptedStream:
+        """Encrypt a byte stream."""
+        raise NotImplementedError(f"{self.name()} driver does not provide the encrypt capability")
+
+    @capability("export", base="source")
+    def cap_export(self, source: Representation, base: Representation | None = None) -> ByteStream:
+        """Export source data, using the base only after validating its compatibility."""
+        raise NotImplementedError(f"{self.name()} driver does not provide the export capability")
+
+    @capability("expose")
+    def cap_expose(self, source: BlockDevice) -> ReadableTree:
+        """Expose a block device as a readable directory tree."""
+        raise NotImplementedError(f"{self.name()} driver does not provide the expose capability")
+
+    @capability("import", base="destination")
+    def cap_import(
+        self,
+        source: ByteStream,
+        operation: bckp.BackupOperation,
+        base: Representation | None = None,
+    ) -> bckp.BackupArtifact:
+        """Import a stream, using the base only after validating its compatibility."""
+        raise NotImplementedError(f"{self.name()} driver does not provide the import capability")
+
+    @capability("list", pipeline=False)
+    def cap_list(
+        self,
+        backup_name: str,
+    ) -> ty.Sequence[bckp.BackupArtifact[Representation]]:
+        """Return artifacts owned by this driver for a backup, newest first."""
+        raise NotImplementedError(f"{self.name()} driver does not provide the list capability")
+
+    @capability("snapshot", adds=(DataProperty.SNAPSHOT,), temporary=True)
+    def cap_snapshot(self, source: Representation) -> Representation:
+        """Create a point-in-time representation of source data."""
+        raise NotImplementedError(f"{self.name()} driver does not provide the snapshot capability")
+
     @capability("source")
     def cap_source(self) -> Representation:
         """Make source data available in a supported representation."""
@@ -259,57 +323,6 @@ class DriverBase(abc.ABC):
         """Persist source, using the base only after validating its compatibility."""
         raise NotImplementedError(f"{self.name()} driver does not provide the store capability")
 
-    @capability("snapshot", adds=(DataProperty.SNAPSHOT,), temporary=True)
-    def cap_snapshot(self, source: Representation) -> Representation:
-        """Create a point-in-time representation of source data."""
-        raise NotImplementedError(f"{self.name()} driver does not provide the snapshot capability")
-
-    @capability("expose")
-    def cap_expose(self, source: BlockDevice) -> ReadableTree:
-        """Expose a block device as a readable directory tree."""
-        raise NotImplementedError(f"{self.name()} driver does not provide the expose capability")
-
-    @capability("export", base="source")
-    def cap_export(self, source: Representation, base: Representation | None = None) -> ByteStream:
-        """Export source data, using the base only after validating its compatibility."""
-        raise NotImplementedError(f"{self.name()} driver does not provide the export capability")
-
-    @capability("import", base="destination")
-    def cap_import(
-        self,
-        source: ByteStream,
-        operation: bckp.BackupOperation,
-        base: Representation | None = None,
-    ) -> bckp.BackupArtifact:
-        """Import a stream, using the base only after validating its compatibility."""
-        raise NotImplementedError(f"{self.name()} driver does not provide the import capability")
-
-    @capability("compress", adds=(DataProperty.COMPRESSED,))
-    def cap_compress(self, source: ByteStream) -> CompressedStream:
-        """Compress a byte stream."""
-        raise NotImplementedError(f"{self.name()} driver does not provide the compress capability")
-
-    @capability("encrypt", adds=(DataProperty.ENCRYPTED,))
-    def cap_encrypt(self, source: ByteStream) -> EncryptedStream:
-        """Encrypt a byte stream."""
-        raise NotImplementedError(f"{self.name()} driver does not provide the encrypt capability")
-
-    @capability("list", pipeline=False)
-    def cap_list(
-        self,
-        backup_name: str,
-    ) -> ty.Sequence[bckp.BackupArtifact[Representation]]:
-        """Return artifacts owned by this driver for a backup, newest first."""
-        raise NotImplementedError(f"{self.name()} driver does not provide the list capability")
-
-    @capability("delete", pipeline=False)
-    def cap_delete(
-        self,
-        artifacts: ty.Sequence[bckp.BackupArtifact[Representation]],
-    ) -> None:
-        """Delete stored backup artifacts."""
-        raise NotImplementedError(f"{self.name()} driver does not provide the delete capability")
-
     @capability("unchanged", pipeline=False)
     def cap_unchanged(
         self,
@@ -318,8 +331,3 @@ class DriverBase(abc.ABC):
     ) -> bool:
         """Return whether source matches the previous stored artifact."""
         raise NotImplementedError(f"{self.name()} driver does not provide the unchanged capability")
-
-    @capability("cleanup", pipeline=False)
-    def cap_cleanup(self, representation: Representation) -> None:
-        """Remove a temporary representation produced by this driver."""
-        raise NotImplementedError(f"{self.name()} driver does not provide the cleanup capability")
