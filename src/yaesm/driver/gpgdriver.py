@@ -1,4 +1,4 @@
-"""GnuPG encryption driver."""
+"""GnuPG encryption and decryption driver."""
 
 import os
 from pathlib import Path
@@ -21,7 +21,7 @@ class GPGStream(EncryptedStream):
 
 
 class GPGDriver(DriverBase):
-    """Encrypt byte streams for a public key using GnuPG."""
+    """Encrypt byte streams for a public key and decrypt them using gpg-agent."""
 
     def __init__(
         self,
@@ -68,6 +68,22 @@ class GPGDriver(DriverBase):
                     str(self.public_key),
                 ),
             ),
+        )
+
+    def cap_detransform(self, source: CommandStream) -> CommandStream:
+        """Undo one encryption layer using gpg-agent without prompting."""
+        self._validate_suffix(source, GPGStream.suffix)
+        command = (
+            self.executable_name(),
+            "--batch",
+            "--no-tty",
+            "--pinentry-mode",
+            "error",
+            "--decrypt",
+        )
+        return CommandStream(
+            (*source.stages, CommandStage(command, self.ssh)),
+            suffixes=source.suffixes[:-1],
         )
 
     def cap_encrypt(self, source: CommandStream) -> GPGStream:

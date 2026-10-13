@@ -320,11 +320,13 @@ As a transform, the `zstd` driver compresses the byte stream produced by the pre
 
 ## gpg
 
-The `gpg` driver uses the GnuPG `gpg` utility to encrypt a byte stream with an OpenPGP public key.
+The `gpg` driver uses the GnuPG `gpg` utility to encrypt a byte stream with an OpenPGP public key and decrypt it using `gpg-agent`.
 
 ### CONFIGURATION
 
-The `gpg` value is the absolute path of the OpenPGP public-key file used to encrypt the backup. The path is interpreted on the system where the transform runs, and the key does not need to be imported into a GnuPG keyring.
+The `gpg` value is the absolute path of the OpenPGP public-key file used to encrypt the backup. The path is interpreted on the system where the transform runs, and the key does not need to be imported into a GnuPG keyring. Binary and ASCII-armored public-key exports are supported.
+
+Decryption uses the GnuPG home of the account running the transform (`GNUPGHOME`, or `~/.gnupg` by default). Import the corresponding private key there separately. A passphrase-protected key must already be unlocked in that account's `gpg-agent`; yaesm does not prompt for passphrases. A missing or locked key causes decryption to fail. Agent restarts and cache expiry can require unlocking the key again before an unattended run. For an SSH transform, this setup belongs to the remote account on the remote host.
 
 ### PIPELINE ROLES
 

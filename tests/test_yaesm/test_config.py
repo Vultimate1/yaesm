@@ -1163,6 +1163,8 @@ def test_parse_config_builds_encrypted_tar_archive_pipeline():
     assert backup.destination.location == Path("/archives")
     assert isinstance(backup.transforms[0], TarDriver)
     assert not backup.transforms[0].one_file_system
+    assert isinstance(backup.transforms[1], GPGDriver)
+    assert backup.transforms[1].public_key == Path("/public-key.asc")
     assert tuple(
         (step.driver.name(), step.capability)
         for step in Pipeline(backup.source, backup.destination, backup.transforms).steps

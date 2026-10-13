@@ -15,7 +15,7 @@ from yaesm.backup import BackupArtifact, BackupOperation
 from yaesm.check import CheckResult, CheckRole
 from yaesm.command import Command, CommandError, CommandResult, CommandRunner, CommandStage
 from yaesm.driver.btrfsdriver import BtrfsDriver
-from yaesm.driver.driverbase import DriverBase
+from yaesm.driver.driverbase import DriverBase, DriverError
 from yaesm.driver.gpgdriver import GPGDriver, GPGStream
 from yaesm.errors import YaesmValueError
 from yaesm.pipeline import Pipeline
@@ -281,11 +281,50 @@ def test_cap_encrypt_runs_gpg_where_the_public_key_is_stored(tmp_path):
     )
 
 
-def test_capability_advertises_only_encryption(tmp_path):
+def test_capabilities_include_encryption_and_decryption(tmp_path):
     driver = GPGDriver(tmp_path / "backup-key.asc")
 
-    assert driver.capabilities() == {"encrypt"}
+    assert driver.capabilities() == {"encrypt", "detransform"}
     assert driver.capability_metadata("encrypt").adds == {DataProperty.ENCRYPTED}
+    assert driver.capability_metadata("detransform").temporary is False
+    assert driver.capability_metadata("detransform").pipeline is False
+
+
+@pytest.mark.parametrize("suffixes", [(), (".tar",), (".gpg", ".zst")])
+def test_detransform_rejects_invalid_suffixes_before_running_commands(tmp_path, suffixes):
+    driver = GPGDriver(tmp_path / "public.asc")
+    driver.runner = runner = RecordingRunner()
+
+    with pytest.raises(DriverError, match=r"requires a \.gpg suffix"):
+        driver.cap_detransform(CommandStream(suffixes=suffixes))
+
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize("remote", [False, True])
+@pytest.mark.parametrize("suffixes", [(".gpg",), (".tar", ".gpg", ".gpg")])
+def test_detransform_appends_agent_decryption_stage(tmp_path, remote, suffixes):
+    target = SSHTarget("ssh://decryption", tmp_path / "identity") if remote else None
+    driver = GPGDriver(tmp_path / "public.asc", target)
+    driver.runner = runner = RecordingRunner()
+    source = CommandStream(
+        (CommandStage(("cat", "/archive.gpg"), SSHTarget("ssh://source", tmp_path / "identity")),),
+        suffixes=suffixes,
+    )
+
+    stream = driver.cap_detransform(source)
+
+    assert stream == CommandStream(
+        (
+            *source.stages,
+            CommandStage(
+                ("gpg", "--batch", "--no-tty", "--pinentry-mode", "error", "--decrypt"),
+                target,
+            ),
+        ),
+        suffixes=suffixes[:-1],
+    )
+    assert runner.calls == []
 
 
 def test_gpg_stream_is_encrypted_command_stream():
@@ -343,6 +382,92 @@ def test_gpg_checks_exported_public_key(tmp_path: ty.Path, armored: bool) -> Non
     results = tuple(check.run() for check in GPGDriver(public_key).check(CheckRole.TRANSFORM))
 
     assert all(result.passed for result in results)
+
+
+@pytest.fixture
+def isolated_gpg_home(tmp_path, monkeypatch):
+    _require_gpg()
+    home = tmp_path / "gnupg"
+    monkeypatch.setenv("GNUPGHOME", str(home))
+    try:
+        yield home
+    finally:
+        if home.exists():
+            subprocess.run(
+                ("gpgconf", "--homedir", str(home), "--kill", "all"),
+                capture_output=True,
+                check=False,
+            )
+
+
+@pytest.mark.parametrize("armored", [False, True], ids=("binary", "armored"))
+def test_gpg_roundtrip(tmp_path, isolated_gpg_home, armored):
+    identity = "yaesm roundtrip <roundtrip@example.invalid>"
+    _generate_key(isolated_gpg_home, identity)
+    public_key = tmp_path / "public key"
+    _export_public_key(isolated_gpg_home, identity, public_key, armored)
+    driver = GPGDriver(public_key)
+    content = b"encrypted backup content\x00\xff\n"
+    original = tmp_path / "original"
+    original.write_bytes(content)
+    source = CommandStream(
+        (CommandStage(("cat", original)),),
+        suffixes=(".tar", ".zst"),
+    )
+
+    restored = driver.cap_detransform(driver.cap_encrypt(source))
+
+    assert restored.suffixes == source.suffixes
+    output = tmp_path / "restored"
+    driver.runner.pipeline((*restored.stages, ("dd", f"of={output}", "bs=1048576")))
+    assert output.read_bytes() == content
+
+
+def test_gpg_detransform_requires_unlocked_agent(tmp_path, isolated_gpg_home):
+    identity = "yaesm protected key <protected@example.invalid>"
+    passphrase = "yaesm test passphrase"
+    _generate_key(isolated_gpg_home, identity, passphrase=passphrase)
+    public_key = tmp_path / "public.asc"
+    _export_public_key(isolated_gpg_home, identity, public_key, True)
+    driver = GPGDriver(public_key)
+    content = "agent protected backup"
+    encrypted = driver.cap_encrypt(CommandStream((CommandStage(("printf", content)),)))
+    ciphertext = tmp_path / "backup.gpg"
+    driver.runner.pipeline((*encrypted.stages, ("dd", f"of={ciphertext}")))
+
+    # Unlock the test key outside yaesm, populating the agent's passphrase cache.
+    subprocess.run(
+        (
+            "gpg",
+            "--batch",
+            "--no-tty",
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase-fd",
+            "0",
+            "--decrypt",
+            str(ciphertext),
+        ),
+        input=passphrase.encode(),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    restored = driver.cap_detransform(
+        CommandStream((CommandStage(("cat", ciphertext)),), suffixes=(".gpg",))
+    )
+
+    assert driver.runner.pipeline(restored.stages, capture_output=True).stdout == content
+
+    # Restart only the isolated test agent to clear its cached passphrase.
+    subprocess.run(
+        ("gpgconf", "--homedir", str(isolated_gpg_home), "--kill", "gpg-agent"),
+        capture_output=True,
+        check=True,
+    )
+    with pytest.raises(CommandError) as error:
+        driver.runner.pipeline(restored.stages)
+    assert error.value.command == restored.stages[-1].command
 
 
 @pytest.mark.parametrize("armored", [False, True], ids=("binary-key", "armored-key"))
@@ -461,7 +586,12 @@ def _require_gpg() -> None:
         pytest.skip("GnuPG is not installed")
 
 
-def _generate_key(gpg_home: ty.Path, identity: str) -> None:
+def _generate_key(
+    gpg_home: ty.Path,
+    identity: str,
+    *,
+    passphrase: str = "",
+) -> None:
     gpg_home.mkdir(mode=0o700)
     subprocess.run(
         (
@@ -471,14 +601,15 @@ def _generate_key(gpg_home: ty.Path, identity: str) -> None:
             str(gpg_home),
             "--pinentry-mode",
             "loopback",
-            "--passphrase",
-            "",
+            "--passphrase-fd",
+            "0",
             "--quick-generate-key",
             identity,
             "rsa2048",
             "encr",
             "0",
         ),
+        input=passphrase.encode(),
         capture_output=True,
         check=True,
     )
