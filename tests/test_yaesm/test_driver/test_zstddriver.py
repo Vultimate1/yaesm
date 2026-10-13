@@ -9,6 +9,7 @@ import yaesm.command as command_module
 import yaesm.ty as ty
 from yaesm.check import CheckRole
 from yaesm.command import CommandResult, CommandRunner, CommandStage
+from yaesm.driver.driverbase import DriverError
 from yaesm.driver.zstddriver import ZstdDriver, ZstdStream
 from yaesm.errors import YaesmValueError
 from yaesm.representation import CommandStream, CompressedStream, DataProperty
@@ -115,10 +116,18 @@ def test_cap_compress_runs_on_configured_ssh(tmp_path):
     )
 
 
-def test_capability_advertises_only_compression():
+@pytest.mark.parametrize("suffixes", [(), (".tar",), (".zst", ".gpg")])
+def test_cap_detransform_rejects_invalid_suffixes(suffixes):
+    source = CommandStream(suffixes=suffixes)
+
+    with pytest.raises(DriverError, match=r"requires a \.zst suffix"):
+        ZstdDriver().cap_detransform(source)
+
+
+def test_capability_advertises_compression_and_detransform():
     driver = ZstdDriver()
 
-    assert driver.capabilities() == {"compress"}
+    assert driver.capabilities() == {"compress", "detransform"}
     assert driver.capability_metadata("compress").adds == {DataProperty.COMPRESSED}
 
 
@@ -127,18 +136,19 @@ def test_zstd_stream_is_compressed_command_stream():
     assert ZstdStream.suffix == ".zst"
 
 
-def test_zstd_compresses_and_restores_stream():
+@pytest.mark.parametrize("suffixes", [(), (".tar",), (".zst",)])
+def test_zstd_compresses_and_restores_stream(suffixes):
     if shutil.which("zstd") is None:
         pytest.skip("Zstandard is not installed")
-    source = CommandStream((CommandStage(("printf", "%s", "compressed backup content")),))
-    stream = ZstdDriver().cap_compress(source)
-
-    result = CommandRunner().pipeline(
-        (
-            *stream.stages,
-            ("zstd", "--decompress", "--stdout", "--quiet"),
-        ),
-        capture_output=True,
+    source = CommandStream(
+        (CommandStage(("printf", "%s", "compressed backup content")),),
+        suffixes=suffixes,
     )
+    driver = ZstdDriver()
+    compressed = driver.cap_compress(source)
+    restored = driver.cap_detransform(compressed)
+
+    result = CommandRunner().pipeline(restored.stages, capture_output=True)
 
     assert result.stdout == "compressed backup content"
+    assert restored.suffixes == source.suffixes
