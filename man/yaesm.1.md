@@ -293,9 +293,20 @@ The `tar` driver uses the `tar` utility to transform a directory tree into an un
 
 ### CONFIGURATION
 
-Specify `tar` by name to use its default behavior. To override the default, its value is a mapping with the following setting:
+Specify `tar` by name to use its default behavior. To override the defaults, its value is a mapping with the following settings:
 
 - **`one_file_system`**: Whether `tar` should avoid crossing filesystem boundaries while reading the directory tree. The default is `true`.
+- **`tmpdir`**: Optional absolute path of the parent directory for temporary extraction directories used when undoing a tar transformation. The directory must already exist and be writable on the system where the transform runs. When omitted or `null`, yaesm runs `mktemp -d` without a template, leaving the choice of temporary directory to `mktemp`. This setting does not affect archive creation.
+
+For example, to extract beneath an existing directory at `/srv/yaesm/tmp`:
+
+```yaml
+transforms:
+  - tar:
+      tmpdir: /srv/yaesm/tmp
+```
+
+Choose a filesystem with enough space for the expanded archive. If the default temporary directory is on tmpfs, set `tmpdir` to a disk-backed location to avoid using memory for a large extraction. For an SSH transform, the configured path is on the remote host.
 
 ### PIPELINE ROLES
 
@@ -319,11 +330,13 @@ As a transform, the `zstd` driver compresses the byte stream produced by the pre
 
 ## gpg
 
-The `gpg` driver uses the GnuPG `gpg` utility to encrypt a byte stream with an OpenPGP public key.
+The `gpg` driver uses the GnuPG `gpg` utility to encrypt a byte stream with an OpenPGP public key and decrypt it using `gpg-agent`.
 
 ### CONFIGURATION
 
-The `gpg` value is the absolute path of the OpenPGP public-key file used to encrypt the backup. The path is interpreted on the system where the transform runs, and the key does not need to be imported into a GnuPG keyring.
+The `gpg` value is the absolute path of the OpenPGP public-key file used to encrypt the backup. The path is interpreted on the system where the transform runs, and the key does not need to be imported into a GnuPG keyring. Binary and ASCII-armored public-key exports are supported.
+
+Decryption uses the GnuPG home of the account running the transform (`GNUPGHOME`, or `~/.gnupg` by default). Import the corresponding private key there separately. A passphrase-protected key must already be unlocked in that account's `gpg-agent`; yaesm does not prompt for passphrases. A missing or locked key causes decryption to fail. Agent restarts and cache expiry can require unlocking the key again before an unattended run. For an SSH transform, this setup belongs to the remote account on the remote host.
 
 ### PIPELINE ROLES
 

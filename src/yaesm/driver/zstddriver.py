@@ -60,3 +60,23 @@ class ZstdDriver(DriverBase):
             ),
             suffixes=(*source.suffixes, ZstdStream.suffix),
         )
+
+    def cap_detransform(self, source: CommandStream) -> CommandStream:
+        """Undo one layer of Zstandard compression."""
+        self._validate_suffix(source, ZstdStream.suffix)
+
+        return CommandStream(
+            (
+                *source.stages,
+                CommandStage(
+                    (
+                        "zstd",
+                        "--decompress",
+                        "--stdout",
+                        "--quiet",
+                    ),
+                    self.ssh,
+                ),
+            ),
+            suffixes=source.suffixes[:-1],
+        )

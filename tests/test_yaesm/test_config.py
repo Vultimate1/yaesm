@@ -664,7 +664,7 @@ def test_parse_config_builds_complete_backup():
             source={"driver": {"btrfs": "/home"}, "remote": True},
             destination={"driver": {"file": "/backups"}, "remote": True},
             transforms=[
-                {"driver": "tar", "remote": True},
+                {"driver": {"tar": {"tmpdir": "/scratch"}}, "remote": True},
                 {"driver": {"zstd": 7}, "remote": True},
                 {"driver": {"gpg": "/root/backup-key.asc"}, "remote": True},
             ],
@@ -691,6 +691,7 @@ def test_parse_config_builds_complete_backup():
     assert backup.destination.ssh is backup.source.ssh
     assert isinstance(backup.transforms[0], TarDriver)
     assert backup.transforms[0].ssh is backup.source.ssh
+    assert backup.transforms[0].tmpdir == Path("/scratch")
     assert isinstance(backup.transforms[1], ZstdDriver)
     assert backup.transforms[1].level == 7
     assert backup.transforms[1].ssh is backup.source.ssh
@@ -1162,6 +1163,8 @@ def test_parse_config_builds_encrypted_tar_archive_pipeline():
     assert backup.destination.location == Path("/archives")
     assert isinstance(backup.transforms[0], TarDriver)
     assert not backup.transforms[0].one_file_system
+    assert isinstance(backup.transforms[1], GPGDriver)
+    assert backup.transforms[1].public_key == Path("/public-key.asc")
     assert tuple(
         (step.driver.name(), step.capability)
         for step in Pipeline(backup.source, backup.destination, backup.transforms).steps

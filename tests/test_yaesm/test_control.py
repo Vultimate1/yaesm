@@ -22,7 +22,7 @@ from yaesm.errors import YaesmError
 
 
 @contextmanager
-def running_server(path: ty.Path, handler: ControlHandler) -> ty.Iterator[None]:
+def running_server(path: ty.Path, handler: ControlHandler) -> ty.Generator[None, None, None]:
     server = ControlServer(path, handler)
     server.start()
     try:

@@ -23,6 +23,9 @@ class SecondOffsetTimezone(tzinfo):
     def dst(self, _value):
         return timedelta()
 
+    def tzname(self, _value):
+        return "UTC+00:00:30"
+
 
 class SourceDriver(DriverBase):
     @classmethod
