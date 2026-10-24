@@ -16,8 +16,8 @@ from pathlib import Path
 
 from yaesm.config import BackupTargetError, Config, ConfigError, parse_config
 from yaesm.names import ALL_TARGET_NAME
+from yaesm.query import FindQuery
 from yaesm.schedule import OnDemandSchedule
-from yaesm.subcommand.findsubcommand import FindQuery
 from yaesm.subcommand.subcommandbase import SubcommandBase, TargetSelectionMode
 
 
