@@ -12,10 +12,11 @@ from yaesm.driver.rsyncdriver import RsyncDriverError
 from yaesm.driver.zfsdriver import ZFSDriverError
 from yaesm.errors import YaesmError, YaesmValueError
 from yaesm.pipeline import PipelineError
+from yaesm.query import FindQueryError
 from yaesm.scheduler import SchedulerError
 from yaesm.ssh import SSHTargetError
 from yaesm.subcommand.checksubcommand import CheckError
-from yaesm.subcommand.findsubcommand import FindError, FindQueryError
+from yaesm.subcommand.findsubcommand import FindError
 from yaesm.subcommand.runsubcommand import RunError
 
 
@@ -32,7 +33,7 @@ from yaesm.subcommand.runsubcommand import RunError
         (SchedulerError, (YaesmError,)),
         (CheckError, (YaesmError,)),
         (FindError, (YaesmValueError, YaesmError, ValueError)),
-        (FindQueryError, (FindError, YaesmValueError, YaesmError, ValueError)),
+        (FindQueryError, (YaesmValueError, YaesmError, ValueError)),
         (RunError, (YaesmError,)),
         (YaesmValueError, (YaesmError, ValueError)),
         (SSHTargetError, (YaesmValueError, YaesmError, ValueError)),
@@ -85,7 +86,7 @@ def test_all_expected_errors_can_be_caught_together(error):
         (SchedulerError, "yaesm.scheduler"),
         (CheckError, "yaesm.subcommand.checksubcommand"),
         (FindError, "yaesm.subcommand.findsubcommand"),
-        (FindQueryError, "yaesm.subcommand.findsubcommand"),
+        (FindQueryError, "yaesm.query"),
         (RunError, "yaesm.subcommand.runsubcommand"),
         (YaesmValueError, "yaesm.errors"),
         (DriverError, "yaesm.driver.driverbase"),
