@@ -10,7 +10,7 @@ import pytest
 from yaesm.backup import Backup, BackupArtifact, BackupOperation
 from yaesm.config import BackupGroup, BackupTargetError, Config
 from yaesm.errors import YaesmError, YaesmValueError
-from yaesm.query import FindQuery, FindQueryError
+from yaesm.query import ArtifactQuery, ArtifactQueryError
 from yaesm.representation import Representation
 from yaesm.schedule import CronSchedule, Schedule
 from yaesm.subcommand import findsubcommand
@@ -59,8 +59,8 @@ def test_find_errors_are_expected_value_errors():
 
 
 def test_find_reexports_canonical_query_error():
-    with pytest.raises(findsubcommand.FindQueryError):
-        FindQuery(["after"])
+    with pytest.raises(findsubcommand.ArtifactQueryError):
+        ArtifactQuery(["after"])
 
 
 def test_find_arguments_with_positional_query():
@@ -274,6 +274,29 @@ def test_find_filters_schedules(capsys):
     ]
 
 
+@pytest.mark.parametrize(
+    ("tokens", "hour"),
+    [(("newest",), 11), (("oldest",), 10), (("closest", "2026-08-20T12:00"), 11)],
+)
+def test_find_filters_schedules_before_selecting_artifacts(capsys, tokens, hour):
+    artifacts = (
+        artifact(12),
+        artifact(11, schedule="daily"),
+        artifact(10, schedule="daily"),
+        artifact(9),
+    )
+    backup, _destination = configured_backup("home", artifacts)
+
+    assert (
+        FindSubcommand().main(
+            find_config({"home": backup}), arguments("home", *tokens, "-s", "daily")
+        )
+        == 0
+    )
+
+    assert capsys.readouterr().out == f"locator:{artifact(hour, schedule='daily').name}\n"
+
+
 def test_find_returns_success_without_matches(capsys):
     backup, _destination = configured_backup("home", (artifact(12),))
 
@@ -296,6 +319,7 @@ def test_find_rejects_unknown_backup_target():
     ("tokens", "message"),
     [
         (("after",), "invalid query"),
+        (("newest", "--query", "after"), "invalid query"),
         (("after", "not-a-time"), "invalid time: not-a-time"),
     ],
 )
@@ -308,7 +332,7 @@ def test_find_rejects_invalid_query_before_listing(tokens, message):
             arguments("home", *tokens),
         )
 
-    assert isinstance(caught.value.__cause__, FindQueryError)
+    assert isinstance(caught.value.__cause__, ArtifactQueryError)
     assert message in str(caught.value.__cause__)
     assert caught.value.format() == f"cannot search backups\n  {caught.value.__cause__}"
     destination.cap_list.assert_not_called()

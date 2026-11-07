@@ -71,7 +71,7 @@ def _complete(
 def test_completes_visible_subcommands_and_parser_options():
     candidates = _complete([], "")
 
-    assert {"backup", "check", "find", "run", "--config", "--log-level"} <= set(candidates)
+    assert {"backup", "check", "diff", "find", "run", "--config", "--log-level"} <= set(candidates)
     assert "__complete" not in candidates
     assert _complete(["check"], "--config-o") == ["--config-only"]
     assert _complete(["backup", "home"], "--control") == ["--control-socket"]
@@ -129,8 +129,9 @@ def test_completes_schedule_alias_for_single_backup(completion_config: Path):
     assert _complete(words, "a") == ["adhoc"]
 
 
-def test_completes_find_schedules_and_queries(completion_config: Path):
-    words = ["--config", str(completion_config), "find", "pair"]
+@pytest.mark.parametrize("subcommand", ["find", "diff"])
+def test_completes_schedules_and_queries(completion_config: Path, subcommand: str):
+    words = ["--config", str(completion_config), subcommand, "pair"]
 
     assert _complete(words, "cl") == ["closest"]
     assert _complete([*words, "--query"], "old") == ["oldest"]

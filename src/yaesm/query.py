@@ -1,18 +1,21 @@
-"""Querys for selecting specific backups."""
+"""Queries and shared selection of backup artifacts."""
 
+import argparse
 import enum
 from datetime import datetime, time, timedelta, timezone, tzinfo
 
 import yaesm.ty as ty
-from yaesm.backup import BackupArtifact
+from yaesm.backup import Backup, BackupArtifact
+from yaesm.config import Config
 from yaesm.errors import YaesmValueError
+from yaesm.scheduler import Scheduler
 
 
-class FindQueryError(YaesmValueError):
-    """Raised when a find query is invalid."""
+class ArtifactQueryError(YaesmValueError):
+    """Raised when an artifact query is invalid."""
 
 
-class FindQuery:
+class ArtifactQuery:
     """Parse and apply a query to artifacts ordered newest to oldest."""
 
     Type = enum.Enum(
@@ -27,7 +30,7 @@ class FindQuery:
             "CLOSEST": "closest",
         },
         module=__name__,
-        qualname="FindQuery.Type",
+        qualname="ArtifactQuery.Type",
     )
 
     def __init__(
@@ -65,7 +68,7 @@ class FindQuery:
                     )
                 )
             case _:
-                raise FindQueryError(
+                raise ArtifactQueryError(
                     "invalid query; expected all, newest, oldest, after TIME, before TIME, "
                     "between TIME TIME, or closest TIME"
                 )
@@ -113,6 +116,27 @@ class FindQuery:
                 raise AssertionError(f"unknown find query type: {self.type}")
 
     @staticmethod
+    def select_artifacts(
+        backup: Backup,
+        artifacts: ty.Sequence[BackupArtifact],
+        queries: ty.Sequence["ArtifactQuery"],
+        schedules: ty.Sequence[str] = (),
+    ) -> list[BackupArtifact]:
+        """Filter artifacts by schedule and query, preserving order without duplicate matches."""
+        if schedules:
+            schedule_names = {
+                name: schedule.name for schedule in backup.schedules for name in schedule.names
+            }
+            selected_schedules = {schedule_names.get(name, name) for name in schedules}
+            artifacts = tuple(
+                artifact
+                for artifact in artifacts
+                if artifact.operation.schedule_name in selected_schedules
+            )
+        matches = {artifact.name for query in queries for artifact in query.select(artifacts)}
+        return [artifact for artifact in artifacts if artifact.name in matches]
+
+    @staticmethod
     def _parse_time(value: str, now: datetime, zone: tzinfo) -> datetime:
         if value.startswith("now-") and value[-1:] in {"m", "h", "d"}:
             amount = value[4:-1]
@@ -121,7 +145,7 @@ class FindQuery:
                     seconds = {"m": 60, "h": 3600, "d": 86400}[value[-1]]
                     return now.astimezone(timezone.utc) - timedelta(seconds=int(amount) * seconds)
                 except OverflowError as error:
-                    raise FindQueryError(f"invalid time: {value}") from error
+                    raise ArtifactQueryError(f"invalid time: {value}") from error
 
         try:
             parsed = None
@@ -133,13 +157,13 @@ class FindQuery:
                 parsed = datetime.combine(now.date(), time.fromisoformat(value))
             if parsed is not None:
                 if parsed.tzinfo is None or parsed.utcoffset() is None:
-                    parsed = FindQuery._localize(parsed, zone, value)
+                    parsed = ArtifactQuery._localize(parsed, zone, value)
                 return parsed.astimezone(timezone.utc)
-        except FindQueryError:
+        except ArtifactQueryError:
             raise
         except ValueError as error:
-            raise FindQueryError(f"invalid time: {value}") from error
-        raise FindQueryError(f"invalid time: {value}")
+            raise ArtifactQueryError(f"invalid time: {value}") from error
+        raise ArtifactQueryError(f"invalid time: {value}")
 
     @staticmethod
     def _localize(value: datetime, zone: tzinfo, original: str) -> datetime:
@@ -154,5 +178,52 @@ class FindQuery:
         }
         if len(candidates) != 1:
             reason = "ambiguous; include a UTC offset" if candidates else "does not exist"
-            raise FindQueryError(f"invalid time: {original} is {reason}")
+            raise ArtifactQueryError(f"invalid time: {original} is {reason}")
         return next(iter(candidates.values()))
+
+
+def add_query_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add shared query and schedule selection arguments."""
+    parser.add_argument("query", nargs="*", metavar="QUERY")
+    parser.add_argument(
+        "--query",
+        "-q",
+        dest="additional_queries",
+        action="append",
+        nargs="+",
+        default=[],
+        metavar="QUERY",
+        help="add another query",
+    )
+    parser.add_argument(
+        "--schedule",
+        "--schedules",
+        "-s",
+        dest="schedules",
+        action="extend",
+        type=lambda value: tuple(dict.fromkeys(filter(None, map(str.strip, value.split(","))))),
+        default=[],
+        metavar="SCHEDULE[,SCHEDULE...]",
+        help="limit results to schedules",
+    )
+
+
+def query_artifacts(
+    config: Config, arguments: argparse.Namespace
+) -> ty.Iterator[tuple[Backup, tuple[BackupArtifact, ...]]]:
+    """Yield each selected backup and its matching artifacts, newest first.
+
+    Validate all queries before listing artifacts. Apply schedule filters before
+    queries, combine query matches without duplicates, and default to all artifacts.
+    """
+    backups = config.backups_for_targets(*arguments.targets.names)
+    raw_queries = ([arguments.query] if arguments.query else []) + arguments.additional_queries
+    now = datetime.now(timezone.utc)
+    zone = Scheduler.timezone(config)
+    queries = tuple(ArtifactQuery(query, now, zone) for query in raw_queries or ((),))
+
+    for backup in backups:
+        artifacts = ArtifactQuery.select_artifacts(
+            backup, backup.artifacts(), queries, arguments.schedules
+        )
+        yield backup, tuple(artifacts)

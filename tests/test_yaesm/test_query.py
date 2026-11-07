@@ -1,19 +1,30 @@
 """Tests for yaesm.query."""
 
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from yaesm.backup import BackupArtifact, BackupOperation
+from yaesm.backup import Backup, BackupArtifact, BackupOperation
 from yaesm.errors import YaesmError, YaesmValueError
-from yaesm.query import FindQuery, FindQueryError
+from yaesm.query import ArtifactQuery, ArtifactQueryError
 from yaesm.representation import Representation
+from yaesm.schedule import CronSchedule, Schedule
 
 
-def artifact(hour: int) -> BackupArtifact:
+def artifact(
+    hour: int,
+    minute: int = 0,
+    schedule: str = "hourly",
+    backup_name: str = "home",
+) -> BackupArtifact:
     return BackupArtifact(
-        BackupOperation("home", "hourly", datetime(2026, 8, 20, hour)),
+        BackupOperation(
+            backup_name,
+            schedule,
+            datetime(2026, 8, 20, hour, minute),
+        ),
         Representation(),
     )
 
@@ -22,23 +33,24 @@ def hours(artifacts) -> list[int]:
     return [item.operation.created_at.hour for item in artifacts]
 
 
-def test_find_query_error_is_expected_value_error():
+def test_query_error_is_an_expected_value_error():
     assert all(
-        issubclass(FindQueryError, parent) for parent in (YaesmError, YaesmValueError, ValueError)
+        issubclass(ArtifactQueryError, parent)
+        for parent in (YaesmError, YaesmValueError, ValueError)
     )
 
 
 @pytest.mark.parametrize(
     ("tokens", "query_type"),
     [
-        ([], FindQuery.Type.ALL),
-        (["all"], FindQuery.Type.ALL),
-        (["newest"], FindQuery.Type.NEWEST),
-        (["oldest"], FindQuery.Type.OLDEST),
+        ([], ArtifactQuery.Type.ALL),
+        (["all"], ArtifactQuery.Type.ALL),
+        (["newest"], ArtifactQuery.Type.NEWEST),
+        (["oldest"], ArtifactQuery.Type.OLDEST),
     ],
 )
-def test_find_query_without_times(tokens, query_type):
-    query = FindQuery(tokens)
+def test_query_without_times(tokens, query_type):
+    query = ArtifactQuery(tokens)
 
     assert query.type is query_type
     assert query.target is None
@@ -51,50 +63,50 @@ def test_find_query_without_times(tokens, query_type):
     [
         (
             ["after", "now-2h"],
-            FindQuery.Type.AFTER,
+            ArtifactQuery.Type.AFTER,
             datetime(2026, 8, 20, 10, 34, tzinfo=timezone.utc),
         ),
         (
             ["before", "now-30m"],
-            FindQuery.Type.BEFORE,
+            ArtifactQuery.Type.BEFORE,
             datetime(2026, 8, 20, 12, 4, tzinfo=timezone.utc),
         ),
         (
             ["closest", "now-7d"],
-            FindQuery.Type.CLOSEST,
+            ArtifactQuery.Type.CLOSEST,
             datetime(2026, 8, 13, 12, 34, tzinfo=timezone.utc),
         ),
         (
             ["after", "2026-07-04T14:30"],
-            FindQuery.Type.AFTER,
+            ArtifactQuery.Type.AFTER,
             datetime(2026, 7, 4, 14, 30, tzinfo=timezone.utc),
         ),
         (
             ["before", "2026-07-04"],
-            FindQuery.Type.BEFORE,
+            ArtifactQuery.Type.BEFORE,
             datetime(2026, 7, 4, tzinfo=timezone.utc),
         ),
         (
             ["closest", "08:15"],
-            FindQuery.Type.CLOSEST,
+            ArtifactQuery.Type.CLOSEST,
             datetime(2026, 8, 20, 8, 15, tzinfo=timezone.utc),
         ),
     ],
 )
-def test_find_query_with_target(tokens, query_type, expected):
-    query = FindQuery(tokens, now=datetime(2026, 8, 20, 12, 34, 56, 123456))
+def test_query_with_target(tokens, query_type, expected):
+    query = ArtifactQuery(tokens, now=datetime(2026, 8, 20, 12, 34, 56, 123456))
 
     assert query.type is query_type
     assert query.target == expected
 
 
-def test_find_query_between_normalizes_endpoints():
-    query = FindQuery(
+def test_query_between_normalizes_endpoints():
+    query = ArtifactQuery(
         ["between", "2026-08-20T10:00", "now-3d"],
         now=datetime(2026, 8, 20, 12),
     )
 
-    assert query.type is FindQuery.Type.BETWEEN
+    assert query.type is ArtifactQuery.Type.BETWEEN
     assert query.start == datetime(2026, 8, 17, 12, tzinfo=timezone.utc)
     assert query.end == datetime(2026, 8, 20, 10, tzinfo=timezone.utc)
 
@@ -113,30 +125,30 @@ def test_find_query_between_normalizes_endpoints():
         ("2026-11-01T05:30Z", datetime(2026, 11, 1, 5, 30, tzinfo=timezone.utc)),
     ],
 )
-def test_find_query_accepts_explicit_utc_offsets(value, expected):
-    query = FindQuery(["after", value], zone=ZoneInfo("America/New_York"))
+def test_query_accepts_explicit_utc_offsets(value, expected):
+    query = ArtifactQuery(["after", value], zone=ZoneInfo("America/New_York"))
 
     assert query.target == expected
 
 
-def test_find_query_rejects_ambiguous_local_time():
-    with pytest.raises(FindQueryError, match="ambiguous; include a UTC offset"):
-        FindQuery(
+def test_query_rejects_ambiguous_local_time():
+    with pytest.raises(ArtifactQueryError, match="ambiguous; include a UTC offset"):
+        ArtifactQuery(
             ["after", "2026-11-01T01:30"],
             zone=ZoneInfo("America/New_York"),
         )
 
 
-def test_find_query_rejects_nonexistent_local_time():
-    with pytest.raises(FindQueryError, match="does not exist"):
-        FindQuery(
+def test_query_rejects_nonexistent_local_time():
+    with pytest.raises(ArtifactQueryError, match="does not exist"):
+        ArtifactQuery(
             ["after", "2026-03-08T02:30"],
             zone=ZoneInfo("America/New_York"),
         )
 
 
-def test_find_query_supports_non_hour_timezone_offsets():
-    query = FindQuery(
+def test_query_supports_non_hour_timezone_offsets():
+    query = ArtifactQuery(
         ["after", "2026-08-20T12:00"],
         zone=ZoneInfo("Asia/Kathmandu"),
     )
@@ -144,9 +156,9 @@ def test_find_query_supports_non_hour_timezone_offsets():
     assert query.target == datetime(2026, 8, 20, 6, 15, tzinfo=timezone.utc)
 
 
-def test_find_query_relative_time_is_elapsed_time_across_dst():
+def test_query_relative_time_is_elapsed_time_across_dst():
     now = datetime(2026, 3, 9, 4, 30, tzinfo=timezone.utc)
-    query = FindQuery(["after", "now-1d"], now, ZoneInfo("America/New_York"))
+    query = ArtifactQuery(["after", "now-1d"], now, ZoneInfo("America/New_York"))
 
     assert query.target == now - timedelta(days=1)
 
@@ -162,9 +174,9 @@ def test_find_query_relative_time_is_elapsed_time_across_dst():
         ["between", "now-1d", "now-2d", "now-3d"],
     ],
 )
-def test_find_query_rejects_invalid_grammar(tokens):
-    with pytest.raises(FindQueryError, match="invalid query"):
-        FindQuery(tokens)
+def test_query_rejects_invalid_grammar(tokens):
+    with pytest.raises(ArtifactQueryError, match="invalid query"):
+        ArtifactQuery(tokens)
 
 
 @pytest.mark.parametrize(
@@ -181,9 +193,9 @@ def test_find_query_rejects_invalid_grammar(tokens):
         "8:15",
     ],
 )
-def test_find_query_rejects_invalid_times(value):
-    with pytest.raises(FindQueryError, match="invalid time"):
-        FindQuery(["after", value], now=datetime(2026, 8, 20, 12))
+def test_query_rejects_invalid_times(value):
+    with pytest.raises(ArtifactQueryError, match="invalid time"):
+        ArtifactQuery(["after", value], now=datetime(2026, 8, 20, 12))
 
 
 @pytest.mark.parametrize(
@@ -203,10 +215,10 @@ def test_find_query_rejects_invalid_times(value):
         (["closest", "2026-08-20T08:00"], [9]),
     ],
 )
-def test_find_query_selects_artifacts(tokens, expected_hours):
+def test_query_selects_artifacts(tokens, expected_hours):
     artifacts = [artifact(hour) for hour in (12, 11, 10, 9)]
 
-    assert hours(FindQuery(tokens).select(artifacts)) == expected_hours
+    assert hours(ArtifactQuery(tokens).select(artifacts)) == expected_hours
 
 
 @pytest.mark.parametrize(
@@ -221,5 +233,86 @@ def test_find_query_selects_artifacts(tokens, expected_hours):
         ["closest", "2026-08-20T10:00"],
     ],
 )
-def test_find_query_selects_nothing_from_empty_list(tokens):
-    assert FindQuery(tokens).select([]) == []
+def test_query_selects_nothing_from_empty_list(tokens):
+    assert ArtifactQuery(tokens).select([]) == []
+
+
+@pytest.fixture
+def backup():
+    return Backup(
+        "home",
+        mock.Mock(),
+        mock.Mock(),
+        schedules=(Schedule("nightly", CronSchedule("0 1 * * *"), previous_names=("daily",)),),
+    )
+
+
+@pytest.mark.parametrize(
+    ("tokens", "expected_hours"),
+    [
+        ((["all"],), [12, 11, 10]),
+        ((["oldest"], ["newest"], ["newest"]), [12, 10]),
+        ((["after", "2026-08-20T10:00"], ["newest"]), [12, 11]),
+        ((["after", "2026-08-21"],), []),
+        ((), []),
+    ],
+)
+def test_select_artifacts_combines_queries_in_artifact_order(backup, tokens, expected_hours):
+    artifacts = [artifact(hour) for hour in (12, 11, 10)]
+    original = tuple(artifacts)
+    queries = tuple(ArtifactQuery(query) for query in tokens)
+
+    selected = ArtifactQuery.select_artifacts(backup, artifacts, queries)
+
+    assert hours(selected) == expected_hours
+    assert tuple(artifacts) == original
+
+
+@pytest.mark.parametrize(
+    ("schedules", "expected_hours"),
+    [
+        ((), [12, 11, 10]),
+        (("nightly",), [11]),
+        (("daily",), [11]),
+        (("daily", "nightly"), [11]),
+        (("daily", "weekly"), [11, 10]),
+        (("weekly",), [10]),
+        (("missing",), []),
+    ],
+)
+def test_select_artifacts_filters_schedules_and_aliases(backup, schedules, expected_hours):
+    artifacts = [artifact(12), artifact(11, schedule="nightly"), artifact(10, schedule="weekly")]
+    original = tuple(artifacts)
+
+    selected = ArtifactQuery.select_artifacts(backup, artifacts, (ArtifactQuery([]),), schedules)
+
+    assert hours(selected) == expected_hours
+    assert tuple(artifacts) == original
+
+
+@pytest.mark.parametrize(
+    ("tokens", "expected_hour"),
+    [
+        (["newest"], 11),
+        (["oldest"], 9),
+        (["closest", "2026-08-20T10:00"], 11),
+    ],
+)
+def test_select_artifacts_filters_schedules_before_applying_queries(backup, tokens, expected_hour):
+    artifacts = (
+        artifact(12),
+        artifact(11, schedule="nightly"),
+        artifact(10),
+        artifact(9, schedule="nightly"),
+        artifact(8),
+    )
+
+    selected = ArtifactQuery.select_artifacts(
+        backup, artifacts, (ArtifactQuery(tokens),), ("daily",)
+    )
+
+    assert hours(selected) == [expected_hour]
+
+
+def test_select_artifacts_handles_empty_artifacts(backup):
+    assert ArtifactQuery.select_artifacts(backup, (), (ArtifactQuery([]),)) == []

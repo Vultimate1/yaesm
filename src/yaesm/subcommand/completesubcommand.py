@@ -16,7 +16,7 @@ from pathlib import Path
 
 from yaesm.config import BackupTargetError, Config, ConfigError, parse_config
 from yaesm.names import ALL_TARGET_NAME
-from yaesm.query import FindQuery
+from yaesm.query import ArtifactQuery
 from yaesm.schedule import OnDemandSchedule
 from yaesm.subcommand.subcommandbase import SubcommandBase, TargetSelectionMode
 
@@ -268,7 +268,7 @@ def completion_candidates(words: list[str], current: str, default_config: Path) 
         if action.nargs == "?" and isinstance(action.const, str):
             return _matching([action.const], partial)
         if action.dest == "additional_queries" and scan.value_count == 0:
-            return _matching([query.value for query in FindQuery.Type], partial)
+            return _matching([query.value for query in ArtifactQuery.Type], partial)
         if action.dest in {"schedule", "schedules"}:
             value = configured()
             if value is None or not scan.positionals:
@@ -324,8 +324,10 @@ def completion_candidates(words: list[str], current: str, default_config: Path) 
         value = configured()
         targets = [] if value is None else sorted(value.targets_by_name)
         return _comma_candidates(targets, current, exclusive=ALL_TARGET_NAME) + options
-    if subcommand == "find" and len(scan.positionals) == 1:
-        return _matching([query.value for query in FindQuery.Type], current) + options
+    if len(scan.positionals) == 1 and any(
+        action.dest == "query" and not action.option_strings for action in subparser._actions
+    ):
+        return _matching([query.value for query in ArtifactQuery.Type], current) + options
     return options
 
 
