@@ -16,6 +16,7 @@ from yaesm.query import ArtifactQueryError
 from yaesm.scheduler import SchedulerError
 from yaesm.ssh import SSHTargetError
 from yaesm.subcommand.checksubcommand import CheckError
+from yaesm.subcommand.diffsubcommand import DiffError
 from yaesm.subcommand.findsubcommand import FindError
 from yaesm.subcommand.runsubcommand import RunError
 
@@ -32,6 +33,7 @@ from yaesm.subcommand.runsubcommand import RunError
         (ControlError, (YaesmError,)),
         (SchedulerError, (YaesmError,)),
         (CheckError, (YaesmError,)),
+        (DiffError, (YaesmValueError, YaesmError, ValueError)),
         (FindError, (YaesmValueError, YaesmError, ValueError)),
         (ArtifactQueryError, (YaesmValueError, YaesmError, ValueError)),
         (RunError, (YaesmError,)),
@@ -58,6 +60,7 @@ def test_error_hierarchy(error_type, parents):
         ControlError("control"),
         SchedulerError("scheduler"),
         CheckError("check"),
+        DiffError("diff"),
         FindError("find"),
         ArtifactQueryError("query"),
         RunError("run"),
@@ -85,6 +88,7 @@ def test_all_expected_errors_can_be_caught_together(error):
         (ControlError, "yaesm.control"),
         (SchedulerError, "yaesm.scheduler"),
         (CheckError, "yaesm.subcommand.checksubcommand"),
+        (DiffError, "yaesm.subcommand.diffsubcommand"),
         (FindError, "yaesm.subcommand.findsubcommand"),
         (ArtifactQueryError, "yaesm.query"),
         (RunError, "yaesm.subcommand.runsubcommand"),
