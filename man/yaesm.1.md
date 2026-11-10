@@ -411,21 +411,22 @@ The checks depend on the drivers in each pipeline and may cover required utiliti
 ### SYNOPSIS
 
 ```text
-yaesm [OPTIONS] diff TARGET[,TARGET...] [QUERY...] [--query QUERY...] [--schedule SCHEDULE[,SCHEDULE...]] [-0]
+yaesm [OPTIONS] diff TARGET[,TARGET...] [QUERY...] [--against-dir PATH] [--query QUERY...] [--schedule SCHEDULE[,SCHEDULE...]] [-0]
 ```
 
 ### DESCRIPTION
 
-The `diff` subcommand compares selected backups with their configured current source directories. For example, `yaesm diff home newest` compares the newest `home` backup with the source configured for `home`, regardless of the current working directory. Targets, queries, schedule filters, time values, ordering, and the default `all` query work as described for [`find`](#find).
+The `diff` subcommand compares selected backups with their configured current source directories by default. For example, `yaesm diff home newest` compares the newest `home` backup with the source configured for `home`, regardless of the current working directory. Use `--against-dir PATH` to compare with an explicit local directory instead: `yaesm diff home newest --against-dir /tmp/restored-home`. Relative paths are resolved from the current working directory. The configured source is not accessed in this mode. Targets, queries, schedule filters, time values, ordering, and the default `all` query work as described for [`find`](#find).
 
-Each output record contains a status followed by a path relative to the tree root. `added` means the path exists only in the current source; `removed` means it exists only in the backup; `changed` means its contents, entry type, or symlink target differ. Traversal is recursive and includes empty directories. A type change is reported once at the changed path. Symlinks are not followed. Permissions, ownership, timestamps, and extended attributes are not compared.
+Each output record contains a status followed by a path relative to the tree root. `added` means the path exists only in the comparison directory (the current source or `--against-dir`); `removed` means it exists only in the backup; `changed` means its contents, entry type, or symlink target differ. Traversal is recursive and includes empty directories. A type change is reported once at the changed path. Symlinks are not followed. Permissions, ownership, timestamps, and extended attributes are not compared.
 
-When several backups are selected, each nonempty group of differences starts with the artifact's destination locator followed by a colon. Identical trees and queries without matches produce no output. Differences are a successful result with exit status 0, as is finding no differences. Read failures produce an error rather than being treated as missing paths.
+When several backups are selected, each is compared separately with the same `--against-dir` directory, or its own configured source when the option is omitted. Each nonempty group of differences starts with the artifact's destination locator followed by a colon. Identical trees and queries without matches produce no output. Differences are a successful result with exit status 0, as is finding no differences. Read failures produce an error rather than being treated as missing paths.
 
-This initial implementation requires local directory trees, including local rsync and Btrfs backups and archives that the configured transforms can unpack to a local directory. Temporary extracted files are cleaned up after comparison. Remote trees, ZFS datasets, and backups whose source is another backup are not supported. Destination storage directories nested inside the source and excluded paths carried by either tree are omitted from both sides. Driver-specific copy filters are not reapplied; paths absent from the backup because of those filters can appear as added.
+This implementation requires local directory trees, including local rsync and Btrfs backups and archives that the configured transforms can unpack to a local directory. Temporary extracted files are cleaned up after comparison. Remote trees and ZFS datasets are not supported. Default source comparisons also require a local directory source; use `--against-dir` when the configured source is unavailable or is another backup. Destination storage directories nested inside the configured source are omitted in source mode. Excluded paths carried by either tree and temporary extraction directories are omitted from both sides in either mode. Driver-specific copy filters are not reapplied; paths absent from the backup because of those filters can appear as added.
 
 ### OPTIONS
 
+- **`--against-dir PATH`**: Compare each selected backup with this local directory instead of its configured source. An existing directory is required when there are matching backups.
 - **`-q QUERY...`, `--query QUERY...`**: Add a query, as for `find`.
 - **`-s SCHEDULE[,SCHEDULE...]`, `--schedule SCHEDULE[,SCHEDULE...]`, `--schedules SCHEDULE[,SCHEDULE...]`**: Filter by schedule before applying queries, as for `find`.
 - **`-0`**: Separate output records, including artifact headings, with NUL bytes instead of newlines. Use this for filenames containing newlines.

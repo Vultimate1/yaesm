@@ -145,6 +145,16 @@ def test_completes_paths(tmp_path: Path):
     assert _complete(["--config"], str(config)[:-4]) == [str(config)]
 
 
+def test_completes_diff_reference_directory(tmp_path: Path):
+    reference = tmp_path / "reference"
+    reference.mkdir()
+    prefix = str(reference)[:-3]
+
+    assert _complete(["diff", "home"], "--against-") == ["--against-dir"]
+    assert _complete(["diff", "home", "--against-dir"], prefix) == [f"{reference}/"]
+    assert _complete(["diff", "home"], f"--against-dir={prefix}") == [f"--against-dir={reference}/"]
+
+
 def test_hidden_completion_subcommand_is_not_in_help(capsys: pytest.CaptureFixture[str]):
     with pytest.raises(SystemExit) as error:
         yaesm.main.main(["--help"])

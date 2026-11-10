@@ -6,6 +6,7 @@ import dataclasses
 import enum
 import os
 import stat
+from functools import partial
 from pathlib import Path
 
 import yaesm.ty as ty
@@ -27,19 +28,25 @@ class DiffMode(enum.Enum):
     """Select what a stored backup is compared against."""
 
     SOURCE = "source"
+    DIRECTORY = "directory"
 
 
 class DiffSubcommand(SubcommandBase):
-    """List differences between stored backups and their current sources."""
+    """List differences between stored backups and their source or another local directory."""
 
     target_selection = TargetSelectionMode.REQUIRED
 
     def main(self, config: Config, arguments: argparse.Namespace) -> int:
-        match arguments.mode:
+        mode = DiffMode.SOURCE if arguments.against_dir is None else DiffMode.DIRECTORY
+        match mode:
             case DiffMode.SOURCE:
                 prepare_comparison = source_comparison
+            case DiffMode.DIRECTORY:
+                prepare_comparison = partial(
+                    directory_comparison, reference=PathTree(arguments.against_dir)
+                )
             case _:
-                raise DiffError(f"unsupported diff mode: {arguments.mode!r}")
+                raise DiffError(f"unsupported diff mode: {mode!r}")
 
         try:
             selections = [
@@ -67,7 +74,12 @@ class DiffSubcommand(SubcommandBase):
     def add_argparser_arguments(cls, parser: argparse.ArgumentParser) -> None:
         """Add shared backup selection arguments."""
         add_query_arguments(parser)
-        parser.set_defaults(mode=DiffMode.SOURCE)
+        parser.add_argument(
+            "--against-dir",
+            type=Path,
+            metavar="PATH",
+            help="compare with this local directory instead of the configured source",
+        )
         parser.add_argument(
             "-0", dest="null", action="store_true", help="separate results with NUL bytes"
         )
@@ -95,17 +107,28 @@ def source_comparison(
     if not isinstance(source, PathTree) or source.ssh is not None:
         raise DiffError("comparison currently requires a local directory source")
     source = exclude_artifact_roots(source, backup.destination, backup.name)
+    with directory_comparison(backup, artifact, source) as trees:
+        yield trees
+
+
+@contextlib.contextmanager
+def directory_comparison(
+    backup: Backup, artifact: BackupArtifact, reference: PathTree
+) -> ty.Generator[tuple[PathTree, PathTree], None, None]:
+    """Prepare a backup and reference directory, cleaning up any temporary extraction."""
+    if not stat.S_ISDIR(reference.path.stat().st_mode):
+        raise DiffError(f"comparison path is not a directory: {reference.path}")
     with detransform(artifact.representation, backup.transforms) as tree:
         if not isinstance(tree, PathTree):
             raise DiffError("stored backup does not provide a directory tree")
         if isinstance(tree, TarTree) and tree.ssh is None:
-            # Do not report our own temporary extraction as added source content.
+            # Do not report our own temporary extraction as added content.
             with contextlib.suppress(ValueError):
-                temporary = tree.temporary_directory.resolve().relative_to(source.path.resolve())
-                source = dataclasses.replace(
-                    source, excluded_paths=(*source.excluded_paths, temporary)
+                temporary = tree.temporary_directory.resolve().relative_to(reference.path.resolve())
+                reference = dataclasses.replace(
+                    reference, excluded_paths=(*reference.excluded_paths, temporary)
                 )
-        yield tree, source
+        yield tree, reference
 
 
 def compare_trees(before: PathTree, after: PathTree) -> ty.Iterator[tuple[str, Path]]:

@@ -20,7 +20,7 @@ from yaesm.query import ArtifactQueryError
 from yaesm.representation import PathTree, Representation
 from yaesm.schedule import CronSchedule, Schedule
 from yaesm.ssh import SSHTarget
-from yaesm.subcommand.diffsubcommand import DiffError, DiffMode, DiffSubcommand, compare_trees
+from yaesm.subcommand.diffsubcommand import DiffError, DiffSubcommand, compare_trees
 from yaesm.subcommand.findsubcommand import FindSubcommand
 
 
@@ -45,7 +45,7 @@ def test_diff_accepts_the_same_selection_arguments_as_find(values):
     expected = find_parser.parse_args(values)
     actual = diff_parser.parse_args(values)
 
-    assert actual.mode is DiffMode.SOURCE
+    assert actual.against_dir is None
     assert actual.targets == expected.targets
     assert actual.query == expected.query
     assert actual.additional_queries == expected.additional_queries
@@ -72,6 +72,27 @@ def arguments(*values):
     parser = argparse.ArgumentParser()
     DiffSubcommand.configure_argparser(parser)
     return parser.parse_args(values)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        ("home", "newest", "--against-dir", "reference tree"),
+        ("--against-dir", "reference tree", "home", "newest"),
+        ("home", "newest", "--against-dir=reference tree"),
+    ],
+)
+def test_diff_parses_reference_directory_without_changing_selection(values):
+    parsed = arguments(*values)
+    assert parsed.against_dir == Path("reference tree")
+    assert parsed.targets.names == ("home",)
+    assert parsed.query == ["newest"]
+
+
+def test_diff_requires_reference_directory_argument():
+    with pytest.raises(SystemExit) as caught:
+        arguments("home", "--against-dir")
+    assert caught.value.code == 2
 
 
 @pytest.fixture
@@ -122,12 +143,60 @@ def test_diff_compares_newest_with_configured_source(backup, capsys, monkeypatch
     assert (backup.source.location / "changed").read_text() == "new"
 
 
-@pytest.mark.parametrize("target", ["home", "old-home", "group", "@all", "home,old-home"])
-def test_diff_uses_shared_selection_and_labels_multiple_results(backup, capsys, target):
+@pytest.mark.parametrize("relative", [False, True])
+def test_diff_compares_reference_directory_without_accessing_source(
+    backup, capsys, monkeypatch, tmp_path, relative
+):
     config = config_for(backup)
-    (backup.source.location / "added").write_text("new")
+    newest = backup.artifacts()[0].representation.path
+    (newest / "changed").write_text("old")
+    (newest / "removed").write_text("old")
+    reference = tmp_path / "reference tree"
+    reference.mkdir()
+    (reference / "changed").write_text("new")
+    (reference / "added").write_text("new")
+    monkeypatch.setattr(
+        backup.source, "cap_source", mock.Mock(side_effect=AssertionError("Must not read source"))
+    )
+    monkeypatch.chdir(tmp_path)
+    path = reference.name if relative else str(reference)
 
-    assert DiffSubcommand().main(config, arguments(target)) == 0
+    assert DiffSubcommand().main(config, arguments("home", "newest", "--against-dir", path)) == 0
+    assert capsys.readouterr().out == "added   added\nchanged changed\nremoved removed\n"
+    assert (newest / "changed").read_text() == "old"
+    assert (newest / "removed").read_text() == "old"
+    assert not (newest / "added").exists()
+    assert (reference / "changed").read_text() == "new"
+    assert not (reference / "removed").exists()
+
+
+@pytest.mark.parametrize("exists", [False, True])
+def test_diff_rejects_invalid_reference_before_extracting(backup, monkeypatch, tmp_path, exists):
+    config = config_for(backup)
+    reference = tmp_path / "not-a-directory"
+    if exists:
+        reference.write_text("file")
+    extract = mock.Mock(side_effect=AssertionError("Must validate directory before extraction"))
+    monkeypatch.setattr("yaesm.subcommand.diffsubcommand.detransform", extract)
+
+    with pytest.raises(DiffError) as caught:
+        DiffSubcommand().main(config, arguments("home", "newest", "--against-dir", str(reference)))
+    assert str(reference) in caught.value.format()
+    extract.assert_not_called()
+
+
+@pytest.mark.parametrize("against_dir", [False, True])
+@pytest.mark.parametrize("target", ["home", "old-home", "group", "@all", "home,old-home"])
+def test_diff_uses_shared_selection_and_labels_multiple_results(
+    backup, capsys, tmp_path, target, against_dir
+):
+    config = config_for(backup)
+    reference = tmp_path / "reference" if against_dir else backup.source.location
+    reference.mkdir(exist_ok=True)
+    (reference / "added").write_text("new")
+    options = ("--against-dir", str(reference)) if against_dir else ()
+
+    assert DiffSubcommand().main(config, arguments(target, *options)) == 0
 
     expected = "".join(
         f"{artifact.representation.path}:\nadded   added\n" for artifact in backup.artifacts()
@@ -156,12 +225,14 @@ def test_diff_null_separates_paths_containing_newlines(backup, capsys):
     assert capsys.readouterr().out == "added   new\nfile\0"
 
 
-def test_diff_no_matches_does_not_access_source(backup, capsys, monkeypatch):
+@pytest.mark.parametrize("against_dir", [False, True])
+def test_diff_no_matches_does_not_access_source(backup, capsys, monkeypatch, against_dir):
     config = config_for(backup)
     source = mock.Mock(side_effect=AssertionError("Must not access the source"))
     monkeypatch.setattr(backup.source, "cap_source", source)
 
-    assert DiffSubcommand().main(config, arguments("home", "after", "2099-01-01")) == 0
+    options = ("--against-dir", "missing-reference") if against_dir else ()
+    assert DiffSubcommand().main(config, arguments("home", "after", "2099-01-01", *options)) == 0
     assert capsys.readouterr().out == ""
 
 
@@ -204,12 +275,18 @@ def test_diff_reports_unsupported_sources(backup, remote):
     assert "local directory source" in caught.value.format()
 
 
-def test_diff_reports_backup_sources(backup):
+@pytest.mark.parametrize("against_dir", [False, True])
+def test_diff_requires_reference_directory_for_backup_sources(backup, capsys, against_dir):
     config = config_for(backup)
     copy = dataclasses.replace(backup, name="copy", source=BackupSource("home"), previous_names=())
     config = Config({}, {"home": backup, "copy": copy})
     artifacts = backup.destination.cap_list.return_value
     backup.destination.cap_list.side_effect = lambda _name: artifacts
+    if against_dir:
+        parsed = arguments("copy", "newest", "--against-dir", str(backup.source.location))
+        assert DiffSubcommand().main(config, parsed) == 0
+        assert capsys.readouterr().out == ""
+        return
     with pytest.raises(DiffError) as caught:
         DiffSubcommand().main(config, arguments("copy", "newest"))
     assert "requires a directory source" in caught.value.format()
@@ -246,9 +323,12 @@ def test_diff_reports_unreadable_files(backup):
         DiffSubcommand().main(config, arguments("home", "newest"))
 
 
+@pytest.mark.parametrize("against_dir", [False, True])
 @pytest.mark.parametrize("failure", [None, "read", "output"])
 @pytest.mark.parametrize("scratch_inside_source", [False, True])
-def test_diff_compares_tar_archives_and_cleans_up(tmp_path, capsys, failure, scratch_inside_source):
+def test_diff_compares_tar_archives_and_cleans_up(
+    tmp_path, capsys, failure, scratch_inside_source, against_dir
+):
     source, storage = tmp_path / "source", tmp_path / "storage"
     source.mkdir()
     storage.mkdir()
@@ -264,20 +344,22 @@ def test_diff_compares_tar_archives_and_cleans_up(tmp_path, capsys, failure, scr
     (source / "file").write_text("new")
     backup = Backup("home", source_driver, destination, transforms)
     config = Config({}, {"home": backup})
+    options = ("--against-dir", str(source)) if against_dir else ()
+    parsed = arguments("home", "newest", *options)
     if failure == "read":
         with (
             mock.patch("builtins.open", side_effect=PermissionError("cannot read file")),
             pytest.raises(DiffError, match="cannot read file"),
         ):
-            DiffSubcommand().main(config, arguments("home", "newest"))
+            DiffSubcommand().main(config, parsed)
     elif failure == "output":
         with (
             mock.patch("builtins.print", side_effect=BrokenPipeError("cannot write output")),
             pytest.raises(DiffError, match="cannot write output"),
         ):
-            DiffSubcommand().main(config, arguments("home", "newest"))
+            DiffSubcommand().main(config, parsed)
     else:
-        assert DiffSubcommand().main(config, arguments("home", "newest")) == 0
+        assert DiffSubcommand().main(config, parsed) == 0
         assert capsys.readouterr().out == "changed file\n"
     assert list(scratch.iterdir()) == []
 
