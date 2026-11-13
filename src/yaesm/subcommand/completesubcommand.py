@@ -267,7 +267,7 @@ def completion_candidates(words: list[str], current: str, default_config: Path) 
             return _path_candidates(partial)
         if action.nargs == "?" and isinstance(action.const, str):
             return _matching([action.const], partial)
-        if action.dest == "additional_queries" and scan.value_count == 0:
+        if action.dest in {"additional_queries", "against_backup"} and scan.value_count == 0:
             return _matching([query.value for query in ArtifactQuery.Type], partial)
         if action.dest in {"schedule", "schedules"}:
             value = configured()

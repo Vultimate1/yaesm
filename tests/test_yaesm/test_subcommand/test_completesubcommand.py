@@ -150,9 +150,16 @@ def test_completes_diff_reference_directory(tmp_path: Path):
     reference.mkdir()
     prefix = str(reference)[:-3]
 
-    assert _complete(["diff", "home"], "--against-") == ["--against-dir"]
+    assert _complete(["diff", "home"], "--against-") == ["--against-dir", "--against-backup"]
     assert _complete(["diff", "home", "--against-dir"], prefix) == [f"{reference}/"]
     assert _complete(["diff", "home"], f"--against-dir={prefix}") == [f"--against-dir={reference}/"]
+
+
+def test_completes_diff_reference_query():
+    words = ["diff", "home", "oldest"]
+    assert _complete([*words, "--against-backup"], "new") == ["newest"]
+    assert _complete(words, "--against-backup=cl") == ["--against-backup=closest"]
+    assert _complete([*words, "--against-backup", "closest"], "new") == []
 
 
 def test_hidden_completion_subcommand_is_not_in_help(capsys: pytest.CaptureFixture[str]):

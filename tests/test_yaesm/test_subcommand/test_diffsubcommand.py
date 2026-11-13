@@ -46,6 +46,7 @@ def test_diff_accepts_the_same_selection_arguments_as_find(values):
     actual = diff_parser.parse_args(values)
 
     assert actual.against_dir is None
+    assert actual.against_backup is None
     assert actual.targets == expected.targets
     assert actual.query == expected.query
     assert actual.additional_queries == expected.additional_queries
@@ -89,9 +90,23 @@ def test_diff_parses_reference_directory_without_changing_selection(values):
     assert parsed.query == ["newest"]
 
 
-def test_diff_requires_reference_directory_argument():
+@pytest.mark.parametrize("option", ["--against-dir", "--against-backup"])
+def test_diff_requires_reference_argument(option):
     with pytest.raises(SystemExit) as caught:
-        arguments("home", "--against-dir")
+        arguments("home", option)
+    assert caught.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ("--against-dir", ".", "--against-backup", "newest"),
+        ("--against-backup", "newest", "--against-dir", "."),
+    ],
+)
+def test_diff_rejects_multiple_reference_modes(options):
+    with pytest.raises(SystemExit) as caught:
+        arguments("home", "oldest", *options)
     assert caught.value.code == 2
 
 
@@ -170,6 +185,75 @@ def test_diff_compares_reference_directory_without_accessing_source(
     assert not (reference / "removed").exists()
 
 
+@pytest.mark.parametrize("query", [("newest",), ("closest", "2026-08-20T12:00Z")])
+def test_diff_compares_backups_without_accessing_source(backup, capsys, monkeypatch, query):
+    config = config_for(backup)
+    newest, oldest = (artifact.representation.path for artifact in backup.artifacts())
+    (oldest / "changed").write_text("old")
+    (oldest / "removed").write_text("old")
+    (newest / "changed").write_text("new")
+    (newest / "added").write_text("new")
+    monkeypatch.setattr(
+        backup.source, "cap_source", mock.Mock(side_effect=AssertionError("Must not read source"))
+    )
+    parsed = arguments("home", "oldest", "-q", "oldest", "--against-backup", *query)
+
+    assert DiffSubcommand().main(config, parsed) == 0
+    assert capsys.readouterr().out == "added   added\nchanged changed\nremoved removed\n"
+    assert (oldest / "changed").read_text() == "old"
+    assert (newest / "changed").read_text() == "new"
+
+
+def test_diff_uses_each_targets_reference_backup(tmp_path, capsys):
+    backups = {}
+    expected = []
+    for name in ("home", "work"):
+        storage = tmp_path / name
+        for hour in (10, 12):
+            operation = BackupOperation(name, "hourly", datetime(2026, 8, 20, hour))
+            tree = storage / operation.artifact_name
+            tree.mkdir(parents=True)
+            if hour == 12:
+                (tree / name).write_text("new")
+            else:
+                expected.append(f"{tree}:\nadded   {name}\n")
+        backups[name] = Backup(name, DirectoryDriver(tmp_path / "missing"), RsyncDriver(storage))
+    config = Config({}, backups, {"pair": BackupGroup("pair", ("home", "work"))})
+
+    parsed = arguments("pair", "oldest", "--against-backup", "newest")
+    assert DiffSubcommand().main(config, parsed) == 0
+    assert capsys.readouterr().out == "".join(expected)
+
+
+def test_diff_filters_reference_backups_by_schedule_alias(backup, capsys):
+    config = config_for(backup)
+    (backup.artifacts()[0].representation.path / "newer").write_text("new")
+    parsed = arguments("old-home", "oldest", "-s", "daily", "--against-backup", "all")
+
+    assert DiffSubcommand().main(config, parsed) == 0
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize(
+    ("query", "message"),
+    [
+        (("after", "2099-01-01"), "exactly one match for 'home'; found 0"),
+        (("all",), "exactly one match for 'home'; found 2"),
+        (("after",), "invalid query"),
+    ],
+)
+def test_diff_rejects_invalid_reference_queries(backup, capsys, monkeypatch, query, message):
+    config = config_for(backup)
+    extract = mock.Mock(side_effect=AssertionError("Must validate reference before extraction"))
+    monkeypatch.setattr("yaesm.subcommand.diffsubcommand.detransform", extract)
+
+    with pytest.raises(DiffError) as caught:
+        DiffSubcommand().main(config, arguments("home", "oldest", "--against-backup", *query))
+    assert message in caught.value.format()
+    assert capsys.readouterr().out == ""
+    extract.assert_not_called()
+
+
 @pytest.mark.parametrize("exists", [False, True])
 def test_diff_rejects_invalid_reference_before_extracting(backup, monkeypatch, tmp_path, exists):
     config = config_for(backup)
@@ -225,13 +309,14 @@ def test_diff_null_separates_paths_containing_newlines(backup, capsys):
     assert capsys.readouterr().out == "added   new\nfile\0"
 
 
-@pytest.mark.parametrize("against_dir", [False, True])
-def test_diff_no_matches_does_not_access_source(backup, capsys, monkeypatch, against_dir):
+@pytest.mark.parametrize(
+    "options", [(), ("--against-dir", "missing-reference"), ("--against-backup", "all")]
+)
+def test_diff_no_matches_does_not_access_source(backup, capsys, monkeypatch, options):
     config = config_for(backup)
     source = mock.Mock(side_effect=AssertionError("Must not access the source"))
     monkeypatch.setattr(backup.source, "cap_source", source)
 
-    options = ("--against-dir", "missing-reference") if against_dir else ()
     assert DiffSubcommand().main(config, arguments("home", "after", "2099-01-01", *options)) == 0
     assert capsys.readouterr().out == ""
 
@@ -312,6 +397,25 @@ def test_diff_reports_unsupported_artifacts(backup, remote):
     ) in caught.value.format()
 
 
+@pytest.mark.parametrize("remote", [False, True])
+def test_diff_reports_unsupported_reference_backups(backup, remote):
+    config = config_for(backup)
+    newest, oldest = backup.artifacts()
+    representation = (
+        RsyncTree(Path("/must-not-read"), SSHTarget("ssh://example.invalid", Path("/key")))
+        if remote
+        else Representation()
+    )
+    backup.destination.cap_list.side_effect = lambda name: (
+        (dataclasses.replace(newest, representation=representation), oldest)
+        if name == "home"
+        else ()
+    )
+    with pytest.raises(DiffError) as caught:
+        DiffSubcommand().main(config, arguments("home", "oldest", "--against-backup", "newest"))
+    assert "reference backup does not provide a local directory tree" in caught.value.format()
+
+
 def test_diff_reports_unreadable_files(backup):
     config = config_for(backup)
     (backup.artifacts()[0].representation.path / "file").write_text("old")
@@ -323,11 +427,11 @@ def test_diff_reports_unreadable_files(backup):
         DiffSubcommand().main(config, arguments("home", "newest"))
 
 
-@pytest.mark.parametrize("against_dir", [False, True])
+@pytest.mark.parametrize("mode", ["source", "directory", "backup"])
 @pytest.mark.parametrize("failure", [None, "read", "output"])
 @pytest.mark.parametrize("scratch_inside_source", [False, True])
 def test_diff_compares_tar_archives_and_cleans_up(
-    tmp_path, capsys, failure, scratch_inside_source, against_dir
+    tmp_path, capsys, failure, scratch_inside_source, mode
 ):
     source, storage = tmp_path / "source", tmp_path / "storage"
     source.mkdir()
@@ -342,10 +446,18 @@ def test_diff_compares_tar_archives_and_cleans_up(
         BackupOperation("home", "hourly", datetime(2026, 8, 20, 12))
     )
     (source / "file").write_text("new")
+    if mode == "backup":
+        Pipeline(source_driver, destination, transforms).execute(
+            BackupOperation("home", "hourly", datetime(2026, 8, 20, 13))
+        )
     backup = Backup("home", source_driver, destination, transforms)
     config = Config({}, {"home": backup})
-    options = ("--against-dir", str(source)) if against_dir else ()
-    parsed = arguments("home", "newest", *options)
+    options = {
+        "source": (),
+        "directory": ("--against-dir", str(source)),
+        "backup": ("--against-backup", "newest"),
+    }
+    parsed = arguments("home", "oldest", *options[mode])
     if failure == "read":
         with (
             mock.patch("builtins.open", side_effect=PermissionError("cannot read file")),

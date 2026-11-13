@@ -29,15 +29,36 @@ class DiffMode(enum.Enum):
 
     SOURCE = "source"
     DIRECTORY = "directory"
+    BACKUP = "backup"
 
 
 class DiffSubcommand(SubcommandBase):
-    """List differences between stored backups and their source or another local directory."""
+    """List differences between stored backups and their source, a directory, or another backup."""
 
     target_selection = TargetSelectionMode.REQUIRED
 
     def main(self, config: Config, arguments: argparse.Namespace) -> int:
+        try:
+            selections = [
+                (backup, artifact)
+                for backup, artifacts in query_artifacts(config, arguments)
+                for artifact in artifacts
+            ]
+            references = {}
+            if arguments.against_backup is not None:
+                reference_arguments = argparse.Namespace(**vars(arguments))
+                reference_arguments.query = arguments.against_backup
+                reference_arguments.additional_queries = []
+                references = {
+                    backup.name: artifacts
+                    for backup, artifacts in query_artifacts(config, reference_arguments)
+                }
+        except ArtifactQueryError as error:
+            raise DiffError("cannot compare backups") from error
+
         mode = DiffMode.SOURCE if arguments.against_dir is None else DiffMode.DIRECTORY
+        if arguments.against_backup is not None:
+            mode = DiffMode.BACKUP
         match mode:
             case DiffMode.SOURCE:
                 prepare_comparison = source_comparison
@@ -45,17 +66,10 @@ class DiffSubcommand(SubcommandBase):
                 prepare_comparison = partial(
                     directory_comparison, reference=PathTree(arguments.against_dir)
                 )
+            case DiffMode.BACKUP:
+                prepare_comparison = partial(backup_comparison, references=references)
             case _:
                 raise DiffError(f"unsupported diff mode: {mode!r}")
-
-        try:
-            selections = [
-                (backup, artifact)
-                for backup, artifacts in query_artifacts(config, arguments)
-                for artifact in artifacts
-            ]
-        except ArtifactQueryError as error:
-            raise DiffError("cannot compare backups") from error
 
         multiple = len(selections) > 1
         end = "\0" if arguments.null else "\n"
@@ -74,11 +88,18 @@ class DiffSubcommand(SubcommandBase):
     def add_argparser_arguments(cls, parser: argparse.ArgumentParser) -> None:
         """Add shared backup selection arguments."""
         add_query_arguments(parser)
-        parser.add_argument(
+        reference = parser.add_mutually_exclusive_group()
+        reference.add_argument(
             "--against-dir",
             type=Path,
             metavar="PATH",
             help="compare with this local directory instead of the configured source",
+        )
+        reference.add_argument(
+            "--against-backup",
+            nargs="+",
+            metavar="QUERY",
+            help="compare with exactly one matching backup per target",
         )
         parser.add_argument(
             "-0", dest="null", action="store_true", help="separate results with NUL bytes"
@@ -129,6 +150,23 @@ def directory_comparison(
                     reference, excluded_paths=(*reference.excluded_paths, temporary)
                 )
         yield tree, reference
+
+
+@contextlib.contextmanager
+def backup_comparison(
+    backup: Backup, artifact: BackupArtifact, references: dict[str, tuple[BackupArtifact, ...]]
+) -> ty.Generator[tuple[PathTree, PathTree], None, None]:
+    """Prepare both stored backups, keeping extracted trees alive during comparison."""
+    matches = references[backup.name]
+    if len(matches) != 1:
+        raise DiffError(
+            f"--against-backup requires exactly one match for {backup.name!r}; found {len(matches)}"
+        )
+    with detransform(matches[0].representation, backup.transforms) as reference:
+        if not isinstance(reference, PathTree) or reference.ssh is not None:
+            raise DiffError("reference backup does not provide a local directory tree")
+        with directory_comparison(backup, artifact, reference) as trees:
+            yield trees
 
 
 def compare_trees(before: PathTree, after: PathTree) -> ty.Iterator[tuple[str, Path]]:
