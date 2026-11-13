@@ -20,7 +20,7 @@ from yaesm.query import ArtifactQueryError
 from yaesm.representation import PathTree, Representation
 from yaesm.schedule import CronSchedule, Schedule
 from yaesm.ssh import SSHTarget
-from yaesm.subcommand.diffsubcommand import DiffError, DiffSubcommand, compare_trees
+from yaesm.subcommand.diffsubcommand import DiffError, DiffSubcommand, compare_file, compare_trees
 from yaesm.subcommand.findsubcommand import FindSubcommand
 
 
@@ -90,7 +90,7 @@ def test_diff_parses_reference_directory_without_changing_selection(values):
     assert parsed.query == ["newest"]
 
 
-@pytest.mark.parametrize("option", ["--against-dir", "--against-backup"])
+@pytest.mark.parametrize("option", ["--against-dir", "--against-backup", "--file"])
 def test_diff_requires_reference_argument(option):
     with pytest.raises(SystemExit) as caught:
         arguments("home", option)
@@ -183,6 +183,48 @@ def test_diff_compares_reference_directory_without_accessing_source(
     assert not (newest / "added").exists()
     assert (reference / "changed").read_text() == "new"
     assert not (reference / "removed").exists()
+
+
+@pytest.mark.parametrize("mode", ["source", "directory", "backup"])
+def test_diff_file_uses_same_relative_path_in_each_mode(
+    backup, capsys, tmp_path, monkeypatch, mode
+):
+    config = config_for(backup)
+    newest, oldest = (artifact.representation.path for artifact in backup.artifacts())
+    reference = {
+        "source": backup.source.location,
+        "directory": tmp_path / "reference",
+        "backup": newest,
+    }[mode]
+    options = {
+        "source": (),
+        "directory": ("--against-dir", str(reference)),
+        "backup": ("--against-backup", "newest"),
+    }[mode]
+    for root, changed in ((oldest, "old"), (reference, "new")):
+        (root / "nested").mkdir(parents=True)
+        (root / "nested/file").write_text(f"0\n1\n2\n3\n{changed}\n5\n6\n7\n8\n")
+    monkeypatch.chdir(tmp_path)
+    parsed = arguments("home", "oldest", "--file", "nested/file", *options)
+
+    assert DiffSubcommand().main(config, parsed) == 0
+    assert capsys.readouterr().out == (
+        "--- a/nested/file\n+++ b/nested/file\n@@ -2,7 +2,7 @@\n"
+        " 1\n 2\n 3\n-old\n+new\n 5\n 6\n 7\n"
+    )
+
+
+def test_diff_file_keeps_headings_and_null_separators(backup, capsys):
+    config = config_for(backup)
+    newest, oldest = (artifact.representation.path for artifact in backup.artifacts())
+    (oldest / "file").write_text("old\n")
+    (newest / "file").write_text("new\n")
+    parsed = arguments("home", "--against-backup", "newest", "--file", "file", "-0")
+
+    assert DiffSubcommand().main(config, parsed) == 0
+    assert capsys.readouterr().out == (
+        f"{oldest}:\0--- a/file\0+++ b/file\0@@ -1 +1 @@\0-old\0+new\0"
+    )
 
 
 @pytest.mark.parametrize("query", [("newest",), ("closest", "2026-08-20T12:00Z")])
@@ -428,10 +470,11 @@ def test_diff_reports_unreadable_files(backup):
 
 
 @pytest.mark.parametrize("mode", ["source", "directory", "backup"])
+@pytest.mark.parametrize("file_diff", [False, True])
 @pytest.mark.parametrize("failure", [None, "read", "output"])
 @pytest.mark.parametrize("scratch_inside_source", [False, True])
 def test_diff_compares_tar_archives_and_cleans_up(
-    tmp_path, capsys, failure, scratch_inside_source, mode
+    tmp_path, capsys, failure, scratch_inside_source, mode, file_diff
 ):
     source, storage = tmp_path / "source", tmp_path / "storage"
     source.mkdir()
@@ -458,6 +501,8 @@ def test_diff_compares_tar_archives_and_cleans_up(
         "backup": ("--against-backup", "newest"),
     }
     parsed = arguments("home", "oldest", *options[mode])
+    if file_diff:
+        parsed.file = Path("file")
     if failure == "read":
         with (
             mock.patch("builtins.open", side_effect=PermissionError("cannot read file")),
@@ -472,7 +517,12 @@ def test_diff_compares_tar_archives_and_cleans_up(
             DiffSubcommand().main(config, parsed)
     else:
         assert DiffSubcommand().main(config, parsed) == 0
-        assert capsys.readouterr().out == "changed file\n"
+        assert capsys.readouterr().out == (
+            "--- a/file\n+++ b/file\n@@ -1 +1 @@\n"
+            "-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n"
+            if file_diff
+            else "changed file\n"
+        )
     assert list(scratch.iterdir()) == []
 
 
@@ -482,6 +532,97 @@ def trees(tmp_path):
     before.mkdir()
     after.mkdir()
     return PathTree(before), PathTree(after)
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "expected"),
+    [
+        (b"same\n", b"same\n", []),
+        (b"\x00\xff", b"\x00\xff", []),
+        (None, b"new\n", ["--- /dev/null", "+++ b/file", "@@ -0,0 +1 @@", "+new"]),
+        (b"old\n", None, ["--- a/file", "+++ /dev/null", "@@ -1 +0,0 @@", "-old"]),
+        (None, b"", ["added   file"]),
+        (b"", None, ["removed file"]),
+        (b"old\0", b"new\0", ["changed file (binary)"]),
+        (b"\xff", b"\xfe", ["changed file (binary)"]),
+        (None, b"\xff", ["added   file (binary)"]),
+        (b"\xff", None, ["removed file (binary)"]),
+        (
+            b"same\n",
+            b"same",
+            [
+                "--- a/file",
+                "+++ b/file",
+                "@@ -1 +1 @@",
+                "-same",
+                "+same",
+                "\\ No newline at end of file",
+            ],
+        ),
+        (
+            b"old\r\n",
+            b"new\r\n",
+            ["--- a/file", "+++ b/file", "@@ -1 +1 @@", "-old\r", "+new\r"],
+        ),
+    ],
+)
+def test_file_diff_content_and_missing_sides(trees, old, new, expected):
+    for tree, content in zip(trees, (old, new), strict=True):
+        if content is not None:
+            (tree.path / "file").write_bytes(content)
+    assert list(compare_file(trees[0], trees[1], Path("file"))) == expected
+
+
+def test_file_diff_missing_on_both_sides_is_an_error(trees):
+    with pytest.raises(DiffError, match="missing from both trees"):
+        list(compare_file(trees[0], trees[1], Path("missing/file")))
+
+
+@pytest.mark.parametrize("kind", ["directory", "fifo", "symlink-parent"])
+def test_file_diff_rejects_nonfiles_without_reading_them(trees, kind):
+    before, _ = trees
+    path = before.path / "entry"
+    relative = Path("entry")
+    if kind == "directory":
+        path.mkdir()
+    elif kind == "fifo":
+        os.mkfifo(path)
+    else:
+        path.symlink_to(before.path)
+        relative /= "file"
+    with (
+        mock.patch("builtins.open", side_effect=AssertionError("Must not read this path")),
+        pytest.raises(DiffError),
+    ):
+        list(compare_file(trees[0], trees[1], relative))
+
+
+@pytest.mark.parametrize("path", ["/etc/passwd", "../file", "nested/../file", ".", ""])
+def test_file_diff_requires_a_relative_file_path(trees, path):
+    with pytest.raises(DiffError, match="relative to the backup root"):
+        list(compare_file(trees[0], trees[1], Path(path)))
+
+
+def test_file_diff_compares_link_targets_and_types_without_following(trees):
+    before, after = trees
+    for tree in trees:
+        (tree.path / "file").symlink_to("missing")
+    with mock.patch("builtins.open", side_effect=AssertionError("Must not follow a symlink")):
+        assert list(compare_file(trees[0], trees[1], Path("file"))) == []
+        (after.path / "file").unlink()
+        (after.path / "file").symlink_to("elsewhere")
+        assert list(compare_file(trees[0], trees[1], Path("file"))) == ["changed file"]
+        (after.path / "file").unlink()
+        assert list(compare_file(trees[0], trees[1], Path("file"))) == ["removed file"]
+    (after.path / "file").write_text("missing")
+    assert list(compare_file(trees[0], trees[1], Path("file"))) == ["changed file"]
+
+
+def test_file_diff_respects_excluded_subtrees(trees):
+    before, after = trees
+    before = dataclasses.replace(before, excluded_paths=(Path("ignored"),))
+    with mock.patch("builtins.open", side_effect=AssertionError("Must not read excluded files")):
+        assert list(compare_file(before, after, Path("ignored/file"))) == []
 
 
 def test_reports_content_changes_in_relative_path_order(trees):
@@ -617,15 +758,17 @@ def test_never_opens_special_files(trees):
 
 
 @pytest.mark.parametrize("side", [0, 1])
-def test_missing_tree_is_an_error_not_an_empty_directory(trees, side):
+@pytest.mark.parametrize("file_diff", [False, True])
+def test_missing_tree_is_an_error_not_an_empty_directory(trees, side, file_diff):
     trees[side].path.rmdir()
     with pytest.raises(FileNotFoundError):
-        list(compare_trees(*trees))
+        list(compare_file(trees[0], trees[1], Path("file")) if file_diff else compare_trees(*trees))
 
 
 @pytest.mark.parametrize("side", [0, 1])
-def test_rejects_remote_trees_before_accessing_local_paths(trees, side):
+@pytest.mark.parametrize("file_diff", [False, True])
+def test_rejects_remote_trees_before_accessing_local_paths(trees, side, file_diff):
     trees = list(trees)
     trees[side] = PathTree(Path("/must-not-read"), SSHTarget("ssh://example.invalid", Path("/key")))
     with pytest.raises(DiffError, match="local trees"):
-        list(compare_trees(*trees))
+        list(compare_file(trees[0], trees[1], Path("file")) if file_diff else compare_trees(*trees))

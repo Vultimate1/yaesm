@@ -3,6 +3,7 @@
 import argparse
 import contextlib
 import dataclasses
+import difflib
 import enum
 import os
 import stat
@@ -77,7 +78,12 @@ class DiffSubcommand(SubcommandBase):
             try:
                 with prepare_comparison(backup, artifact) as (before, after):
                     heading = backup.destination.format_locator(artifact) if multiple else None
-                    _print_differences(compare_trees(before, after), heading=heading, end=end)
+                    differences = (
+                        compare_file(before, after, arguments.file)
+                        if arguments.file is not None
+                        else (f"{status:<8}{path}" for status, path in compare_trees(before, after))
+                    )
+                    _print_differences(differences, heading=heading, end=end)
             except OSError as error:
                 raise DiffError(f"cannot compare backup {backup.name!r}: {error}") from error
             except YaesmError as error:
@@ -102,19 +108,23 @@ class DiffSubcommand(SubcommandBase):
             help="compare with exactly one matching backup per target",
         )
         parser.add_argument(
+            "--file",
+            type=Path,
+            metavar="PATH",
+            help="show changes to one file relative to both roots",
+        )
+        parser.add_argument(
             "-0", dest="null", action="store_true", help="separate results with NUL bytes"
         )
 
 
-def _print_differences(
-    differences: ty.Iterable[tuple[str, ty.Path]], *, heading: str | None, end: str
-) -> None:
+def _print_differences(differences: ty.Iterable[str], *, heading: str | None, end: str) -> None:
     """Print relative changes, adding an artifact heading only for nonempty results."""
-    for status, path in differences:
+    for record in differences:
         if heading is not None:
             print(f"{heading}:", end=end)
             heading = None
-        print(f"{status:<8}{path}", end=end)
+        print(record, end=end)
 
 
 @contextlib.contextmanager
@@ -167,6 +177,68 @@ def backup_comparison(
             raise DiffError("reference backup does not provide a local directory tree")
         with directory_comparison(backup, artifact, reference) as trees:
             yield trees
+
+
+def compare_file(before: PathTree, after: PathTree, path: Path) -> ty.Iterator[str]:
+    """Yield a unified text diff or a status record for one relative file."""
+    if path.is_absolute() or ".." in path.parts or not path.parts:
+        raise DiffError("--file must name a file relative to the backup root, without '..'")
+    if before.ssh is not None or after.ssh is not None:
+        raise DiffError("file comparison currently requires local trees")
+    if any(
+        excluded == path or excluded in path.parents
+        for excluded in (*before.excluded_paths, *after.excluded_paths)
+    ):
+        return
+    old, new = _read_file(before.path, path), _read_file(after.path, path)
+    if old is None and new is None:
+        raise DiffError(f"file is missing from both trees: {path}")
+    if old == new:
+        return
+    status = "added" if old is None else "removed" if new is None else "changed"
+    record = f"{status:<8}{path}"
+    if isinstance(old, str) or isinstance(new, str) or not (old or new):
+        yield record
+        return
+    left, right = old or b"", new or b""
+    try:
+        old_text, new_text = left.decode("utf-8"), right.decode("utf-8")
+    except UnicodeDecodeError:
+        yield f"{record} (binary)"
+        return
+    if "\0" in old_text or "\0" in new_text:
+        yield f"{record} (binary)"
+        return
+    for line in difflib.unified_diff(
+        old_text.splitlines(keepends=True),
+        new_text.splitlines(keepends=True),
+        fromfile=f"a/{path}" if old is not None else "/dev/null",
+        tofile=f"b/{path}" if new is not None else "/dev/null",
+    ):
+        yield line.removesuffix("\n")
+        if not line.endswith("\n"):
+            yield r"\ No newline at end of file"
+
+
+def _read_file(root: Path, relative: Path) -> bytes | str | None:
+    """Return file bytes, a symlink's target string, or None when the path is missing."""
+    if not stat.S_ISDIR(root.stat().st_mode):
+        raise DiffError(f"comparison root is not a directory: {root}")
+    path = root
+    for part in relative.parts:
+        path /= part
+        try:
+            mode = stat.S_IFMT(path.lstat().st_mode)
+        except FileNotFoundError:
+            return None
+        if path != root / relative and mode != stat.S_IFDIR:
+            raise DiffError(f"file path traverses a symlink or non-directory: {path}")
+    if mode == stat.S_IFLNK:
+        return os.readlink(path)
+    if mode == stat.S_IFREG:
+        with open(path, "rb") as stream:
+            return stream.read()
+    raise DiffError(f"--file requires a regular file or symlink: {path}")
 
 
 def compare_trees(before: PathTree, after: PathTree) -> ty.Iterator[tuple[str, Path]]:

@@ -162,6 +162,15 @@ def test_completes_diff_reference_query():
     assert _complete([*words, "--against-backup", "closest"], "new") == []
 
 
+def test_completes_diff_relative_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    (tmp_path / "nested").mkdir()
+    (tmp_path / "nested/file").touch()
+    monkeypatch.chdir(tmp_path)
+
+    assert _complete(["diff", "home"], "--fi") == ["--file"]
+    assert _complete(["diff", "home", "--file"], "nested/fi") == ["nested/file"]
+
+
 def test_hidden_completion_subcommand_is_not_in_help(capsys: pytest.CaptureFixture[str]):
     with pytest.raises(SystemExit) as error:
         yaesm.main.main(["--help"])
