@@ -268,9 +268,9 @@ def test_keep_for_rejects_nonpositive_duration(duration):
 
 def test_retention_policy_configuration_schema_is_required():
     with pytest.raises(TypeError):
-        PolicyWithoutConfiguration()  # ty: ignore[call-non-callable]
+        PolicyWithoutConfiguration()  # ty: ignore[abstract-class-instantiation]
 
 
 def test_retention_policy_name_is_required():
     with pytest.raises(TypeError):
-        PolicyWithoutName()  # ty: ignore[call-non-callable]
+        PolicyWithoutName()  # ty: ignore[abstract-class-instantiation]

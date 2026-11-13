@@ -151,9 +151,9 @@ class ArtifactQuery:
             parsed = None
             if len(value) == 10:
                 parsed = datetime.fromisoformat(value)
-            if len(value) in {16, 17, 21, 22} and value[10] == "T":
+            if len(value) in {16, 17, 21, 22} and value[10] == "T" and 0 <= int(value[11:13]) <= 23:
                 parsed = datetime.fromisoformat(value)
-            if len(value) == 5 and value[2] == ":":
+            if len(value) == 5 and value[2] == ":" and 0 <= int(value[:2]) <= 23:
                 parsed = datetime.combine(now.date(), time.fromisoformat(value))
             if parsed is not None:
                 if parsed.tzinfo is None or parsed.utcoffset() is None:
