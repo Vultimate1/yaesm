@@ -101,7 +101,7 @@ class Pipeline:
         try:
             for step in self.steps:
                 if step.capability != "source" and isinstance(value, PathTree):
-                    value = _exclude_artifact_roots(
+                    value = exclude_artifact_roots(
                         value,
                         self.destination,
                         operation.backup_name,
@@ -189,11 +189,12 @@ def detransform(
         yield source
 
 
-def _exclude_artifact_roots(
+def exclude_artifact_roots(
     source: PathTree,
     destination: DriverBase,
     backup_name: str,
 ) -> PathTree:
+    """Exclude the destination's storage directories from a source tree."""
     excluded_paths = list(source.excluded_paths)
     for root in destination.artifact_roots():
         if not same_endpoint(source.ssh, root.ssh):

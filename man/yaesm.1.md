@@ -406,6 +406,61 @@ The checks depend on the drivers in each pipeline and may cover required utiliti
 - **`--config-only`**: Stop after validating the configuration, without running driver checks.
 - **`-q`, `--quiet`**: Show only failed checks.
 
+## diff
+
+### SYNOPSIS
+
+```text
+yaesm [OPTIONS] diff TARGET[,TARGET...] [QUERY...] [--against-dir PATH | --against-backup QUERY...] [--file PATH] [--query QUERY...] [--schedule SCHEDULE[,SCHEDULE...]] [-0]
+```
+
+### DESCRIPTION
+
+`diff` compares backups with their current sources, a local directory, or another backup. Targets, queries, and schedule filters work as described for [`find`](#find). With no query, it selects all backups.
+
+```sh
+# Compare the newest backup with its configured source
+yaesm diff home newest
+
+# Compare with a local directory
+yaesm diff home newest --against-dir /tmp/restored-home
+
+# Show changes from the oldest backup to the newest
+yaesm diff home oldest --against-backup newest
+
+# Show changes to one file
+yaesm diff home newest --file .config/app/config.toml
+```
+
+The default source comes from the configuration, regardless of the working directory. Either `--against-*` option replaces that source without accessing it. The two options cannot be combined.
+
+By default, output lists paths relative to the roots being compared:
+
+- `added`: exists only in the source or other reference.
+- `removed`: exists only in the selected backup.
+- `changed`: contents, file type, or symlink target differ.
+
+Comparison is recursive and includes empty directories. Type changes are reported once at the changed path. Symlinks are compared by their targets without following them. Permissions, ownership, timestamps, and extended attributes are ignored.
+
+`--file PATH` compares the same relative file on both sides and works with every comparison mode. UTF-8 text without NUL bytes produces a unified diff with three context lines. The `a/` label means the selected backup; `b/` means the reference. Binary files, symlinks, and additions or deletions of empty files use status lines; binary lines include `(binary)`.
+
+A file missing on one side is an addition or deletion, using `/dev/null` in text diffs. Missing on both sides is an error. `--file` rejects directories, special files, absolute paths, `..`, and paths through symlinked directories.
+
+When comparing several backups, each nonempty result starts with the backup's destination path or locator. No differences or no matching backups means no output. Differences are a successful result (exit status 0); read failures are errors.
+
+Both sides must be local directory trees, such as rsync or Btrfs backups, or archives that Yaesm can unpack. Extracted files are removed afterward. Remote trees and ZFS datasets are unsupported. If the configured source is unavailable or is another backup, use an `--against-*` option.
+
+Tree exclusions apply to both sides, including with `--file`. Temporary extraction directories are excluded, as are backup storage directories inside the source in source mode. Driver copy filters are not reapplied, so files omitted by those filters may appear as added.
+
+### OPTIONS
+
+- **`--against-dir PATH`**: Compare with this local directory. Relative paths start at the working directory. The directory must exist when backups are selected.
+- **`--against-backup QUERY...`**: Compare with one matching backup of the same target, using the shared schedule filters. For each target being compared, zero or multiple reference matches are errors.
+- **`--file PATH`**: Show changes to one file. The path is relative to both roots.
+- **`-q QUERY...`, `--query QUERY...`**: Add a query to the backup selection, as for `find`. Does not affect `--against-backup`.
+- **`-s SCHEDULE[,SCHEDULE...]`, `--schedule SCHEDULE[,SCHEDULE...]`, `--schedules SCHEDULE[,SCHEDULE...]`**: Filter by schedule before applying queries, as for `find`.
+- **`-0`**: End each output record, including headings and diff lines, with NUL instead of a newline. Omit this for standard unified diff output.
+
 ## find
 
 ### SYNOPSIS

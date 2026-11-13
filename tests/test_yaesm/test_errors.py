@@ -12,10 +12,12 @@ from yaesm.driver.rsyncdriver import RsyncDriverError
 from yaesm.driver.zfsdriver import ZFSDriverError
 from yaesm.errors import YaesmError, YaesmValueError
 from yaesm.pipeline import PipelineError
+from yaesm.query import ArtifactQueryError
 from yaesm.scheduler import SchedulerError
 from yaesm.ssh import SSHTargetError
 from yaesm.subcommand.checksubcommand import CheckError
-from yaesm.subcommand.findsubcommand import FindError, FindQueryError
+from yaesm.subcommand.diffsubcommand import DiffError
+from yaesm.subcommand.findsubcommand import FindError
 from yaesm.subcommand.runsubcommand import RunError
 
 
@@ -31,8 +33,9 @@ from yaesm.subcommand.runsubcommand import RunError
         (ControlError, (YaesmError,)),
         (SchedulerError, (YaesmError,)),
         (CheckError, (YaesmError,)),
+        (DiffError, (YaesmValueError, YaesmError, ValueError)),
         (FindError, (YaesmValueError, YaesmError, ValueError)),
-        (FindQueryError, (FindError, YaesmValueError, YaesmError, ValueError)),
+        (ArtifactQueryError, (YaesmValueError, YaesmError, ValueError)),
         (RunError, (YaesmError,)),
         (YaesmValueError, (YaesmError, ValueError)),
         (SSHTargetError, (YaesmValueError, YaesmError, ValueError)),
@@ -57,8 +60,9 @@ def test_error_hierarchy(error_type, parents):
         ControlError("control"),
         SchedulerError("scheduler"),
         CheckError("check"),
+        DiffError("diff"),
         FindError("find"),
-        FindQueryError("query"),
+        ArtifactQueryError("query"),
         RunError("run"),
         YaesmValueError("value"),
         SSHTargetError("SSH target"),
@@ -84,8 +88,9 @@ def test_all_expected_errors_can_be_caught_together(error):
         (ControlError, "yaesm.control"),
         (SchedulerError, "yaesm.scheduler"),
         (CheckError, "yaesm.subcommand.checksubcommand"),
+        (DiffError, "yaesm.subcommand.diffsubcommand"),
         (FindError, "yaesm.subcommand.findsubcommand"),
-        (FindQueryError, "yaesm.subcommand.findsubcommand"),
+        (ArtifactQueryError, "yaesm.query"),
         (RunError, "yaesm.subcommand.runsubcommand"),
         (YaesmValueError, "yaesm.errors"),
         (DriverError, "yaesm.driver.driverbase"),

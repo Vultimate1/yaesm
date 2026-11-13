@@ -26,6 +26,7 @@ def test_subcommands_are_discovered():
         "__complete",
         "backup",
         "check",
+        "diff",
         "find",
         "run",
     )

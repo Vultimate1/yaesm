@@ -278,7 +278,7 @@ def test_unsupported_capability_error_names_driver(capability):
 
 def test_driver_configuration_schema_is_required():
     with pytest.raises(TypeError):
-        DriverWithoutConfiguration()  # ty: ignore[call-non-callable]
+        DriverWithoutConfiguration()  # ty: ignore[abstract-class-instantiation]
 
 
 def test_driver_check_is_inherited():

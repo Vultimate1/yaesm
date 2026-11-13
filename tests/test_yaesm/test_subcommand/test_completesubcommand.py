@@ -71,7 +71,7 @@ def _complete(
 def test_completes_visible_subcommands_and_parser_options():
     candidates = _complete([], "")
 
-    assert {"backup", "check", "find", "run", "--config", "--log-level"} <= set(candidates)
+    assert {"backup", "check", "diff", "find", "run", "--config", "--log-level"} <= set(candidates)
     assert "__complete" not in candidates
     assert _complete(["check"], "--config-o") == ["--config-only"]
     assert _complete(["backup", "home"], "--control") == ["--control-socket"]
@@ -129,8 +129,9 @@ def test_completes_schedule_alias_for_single_backup(completion_config: Path):
     assert _complete(words, "a") == ["adhoc"]
 
 
-def test_completes_find_schedules_and_queries(completion_config: Path):
-    words = ["--config", str(completion_config), "find", "pair"]
+@pytest.mark.parametrize("subcommand", ["find", "diff"])
+def test_completes_schedules_and_queries(completion_config: Path, subcommand: str):
+    words = ["--config", str(completion_config), subcommand, "pair"]
 
     assert _complete(words, "cl") == ["closest"]
     assert _complete([*words, "--query"], "old") == ["oldest"]
@@ -142,6 +143,32 @@ def test_completes_paths(tmp_path: Path):
     config.touch()
 
     assert _complete(["--config"], str(config)[:-4]) == [str(config)]
+
+
+def test_completes_diff_reference_directory(tmp_path: Path):
+    reference = tmp_path / "reference"
+    reference.mkdir()
+    prefix = str(reference)[:-3]
+
+    assert _complete(["diff", "home"], "--against-") == ["--against-dir", "--against-backup"]
+    assert _complete(["diff", "home", "--against-dir"], prefix) == [f"{reference}/"]
+    assert _complete(["diff", "home"], f"--against-dir={prefix}") == [f"--against-dir={reference}/"]
+
+
+def test_completes_diff_reference_query():
+    words = ["diff", "home", "oldest"]
+    assert _complete([*words, "--against-backup"], "new") == ["newest"]
+    assert _complete(words, "--against-backup=cl") == ["--against-backup=closest"]
+    assert _complete([*words, "--against-backup", "closest"], "new") == []
+
+
+def test_completes_diff_relative_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    (tmp_path / "nested").mkdir()
+    (tmp_path / "nested/file").touch()
+    monkeypatch.chdir(tmp_path)
+
+    assert _complete(["diff", "home"], "--fi") == ["--file"]
+    assert _complete(["diff", "home", "--file"], "nested/fi") == ["nested/file"]
 
 
 def test_hidden_completion_subcommand_is_not_in_help(capsys: pytest.CaptureFixture[str]):
